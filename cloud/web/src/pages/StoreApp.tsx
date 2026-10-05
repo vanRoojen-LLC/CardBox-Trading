@@ -12,6 +12,7 @@ import Rates from './Rates'
 import Staff from './Staff'
 import Store from './Store'
 import Admin from './Admin'
+import HelpFeedback from '../HelpFeedback'
 
 export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => Promise<void> }) {
   const signOut = useSignOut(onSignOut)
@@ -61,6 +62,7 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
             </select>
           )}
           <span>{me.name}</span>
+          <HelpFeedback />
           <button className="small ghost" onClick={signOut}>Sign out</button>
         </div>
       </header>

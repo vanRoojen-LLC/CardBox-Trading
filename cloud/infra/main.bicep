@@ -33,6 +33,12 @@ param clubSyncEnabled bool = false
 @description('Client ids allowed to sync (CardBox\'s machine-to-machine Auth0 application), comma separated.')
 param clubSyncClientIds string = 'WB4mbh9ky62gjPZHFOHBQCXhYytIie7K'
 
+@description('File Help & feedback reports as GitHub issues, with the token in the vault secret github-issues-token. deploy.sh turns this on when that secret exists.')
+param githubIssues bool = false
+
+@description('Repository (owner/name) that Help & feedback reports are filed in.')
+param githubIssuesRepo string = 'vanRoojen-LLC/OCC_PRICER'
+
 @description('Verified email of the platform owner.')
 param ownerEmail string = 'toby@vanroojen.com'
 
@@ -188,7 +194,9 @@ var env = [
 // Sign-in settings only the web app needs, not the catalog import job.
 var webSecrets = concat(secrets, [
   { name: 'auth0-client-secret', keyVaultUrl: '${vault.properties.vaultUri}secrets/auth0-client-secret', identity: identity.id }
-])
+], githubIssues ? [
+  { name: 'github-issues-token', keyVaultUrl: '${vault.properties.vaultUri}secrets/github-issues-token', identity: identity.id }
+] : [])
 var webEnv = concat(env, [
   { name: 'AUTH0_DOMAIN', value: auth0Domain }
   { name: 'AUTH0_CLIENT_ID', value: auth0ClientId }
@@ -197,7 +205,10 @@ var webEnv = concat(env, [
   { name: 'CARDBOX_ENABLED', value: string(cardboxEnabled) }
   { name: 'CLUB_SYNC_ENABLED', value: string(clubSyncEnabled) }
   { name: 'CLUB_SYNC_CLIENT_IDS', value: clubSyncClientIds }
-])
+  { name: 'GITHUB_ISSUES_REPO', value: githubIssuesRepo }
+], githubIssues ? [
+  { name: 'GITHUB_ISSUES_TOKEN', secretRef: 'github-issues-token' }
+] : [])
 
 resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
   name: '${prefix}-app'
