@@ -37,6 +37,12 @@ public class ClubLinksController {
         return sync.notMatched(CurrentUser.of(request).tenantId(), id);
     }
 
+    /** The Club scans (photo and detail of each card) behind a synced inventory line. */
+    @GetMapping("/scans/{lineId}")
+    public List<Map<String, Object>> scans(@PathVariable UUID lineId, HttpServletRequest request) {
+        return sync.scans(CurrentUser.of(request).tenantId(), lineId);
+    }
+
     @PutMapping("/{id}")
     public List<Map<String, Object>> retarget(@PathVariable UUID id, @Valid @RequestBody TargetBody body, HttpServletRequest request) {
         UUID tenant = requireOwner(request).tenantId();

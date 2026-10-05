@@ -3,6 +3,7 @@ package com.cardpricer.cloud.clubsync;
 import com.cardpricer.cloud.inventory.InventoryRepository;
 import com.cardpricer.cloud.web.ApiException;
 import com.cardpricer.util.CardConstants;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
 import org.springframework.http.HttpStatus;
@@ -22,13 +23,17 @@ public class ClubSync {
     /** One Club card as Club sees it now. {@code quantity} counts Club's extra copies of it too. */
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     public record Upsert(String itemId, Long version, String game, String scryfallId, String finish, Integer quantity,
-                         String condition, String name, String setCode, String collectorNumber) {}
+                         String condition, String name, String setCode, String collectorNumber,
+                         String storageId, String imageUrl, JsonNode details) {}
 
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     public record Removal(String itemId, Long version) {}
 
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     public record LinkedBy(String accountId, String auth0Sub, String email, String name) {}
+
+    /** What a scanned card turns into for Trading: a known card and finish, or the reason it can't be used. */
+    public record Match(UUID cardId, String finish, String reason) {}
 
     public static final int MAX_BATCH = 500;
     private static final String MAGIC = "magic-the-gathering";
@@ -47,10 +52,7 @@ public class ClubSync {
     /** Creates the link, or refreshes its name and who linked it. Linking a paused collection again resumes it. */
     @Transactional
     public Map<String, Object> link(String collectionId, String storeId, String collectionName, LinkedBy by) {
-        var tenants = jdbc.queryForList("SELECT id FROM tenants WHERE cardbox_store_id = ?", UUID.class, storeId);
-        if (tenants.isEmpty())
-            throw ApiException.notFound("cardbox.trading has no store for this CardBox store yet. A store manager signs in to cardbox.trading once to set it up.");
-        UUID tenant = tenants.getFirst();
+        UUID tenant = tenantFor(storeId);
         String name = collectionName == null || collectionName.isBlank() ? "Collection" : collectionName.trim();
         var existing = find(collectionId);
         if (existing != null) {
@@ -95,27 +97,25 @@ public class ClubSync {
                 throw ApiException.badRequest("Every item needs item_id and version");
             if (u.quantity() != null && (u.quantity() < 1 || u.quantity() > 9999))
                 throw ApiException.badRequest("quantity must be between 1 and 9999 (send a removal for none)");
-            String finish = finish(u.finish());
-            UUID card = parse(u.scryfallId());
             // A card Trading's list doesn't have yet keeps its id and goes in once the nightly import adds it.
-            String reason = !MAGIC.equals(u.game()) ? "Only Magic cards go into Trading inventory"
-                    : card == null ? "No Scryfall id"
-                    : finish == null ? "Unknown finish " + u.finish()
-                    : null;
-            if (reason != null || !known.contains(card))
-                notMatched.add(Map.of("item_id", u.itemId(), "reason", reason != null ? reason : NOT_IN_LIST));
+            Match match = match(u);
+            if (match.reason() != null || !known.contains(match.cardId()))
+                notMatched.add(Map.of("item_id", u.itemId(), "reason", match.reason() != null ? match.reason() : NOT_IN_LIST));
             int changed = jdbc.update("""
                     INSERT INTO club_link_items (link_id, item_id, version, removed, card_id, finish, condition, quantity, game,
-                                                 name, set_code, collector_number, unmatched_reason)
-                    VALUES (?, ?, ?, false, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                 name, set_code, collector_number, unmatched_reason, storage_id, image_url, details)
+                    VALUES (?, ?, ?, false, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
                     ON CONFLICT (link_id, item_id) DO UPDATE SET version = EXCLUDED.version, removed = false,
                         card_id = EXCLUDED.card_id, finish = EXCLUDED.finish, condition = EXCLUDED.condition,
                         quantity = EXCLUDED.quantity, game = EXCLUDED.game, name = EXCLUDED.name, set_code = EXCLUDED.set_code,
-                        collector_number = EXCLUDED.collector_number, unmatched_reason = EXCLUDED.unmatched_reason, updated_at = now()
+                        collector_number = EXCLUDED.collector_number, unmatched_reason = EXCLUDED.unmatched_reason,
+                        storage_id = EXCLUDED.storage_id, image_url = EXCLUDED.image_url, details = EXCLUDED.details, updated_at = now()
                     WHERE club_link_items.version < EXCLUDED.version""",
-                    linkId, u.itemId(), u.version(), reason == null ? card : null, finish == null ? "normal" : finish,
-                    condition(u.condition()), u.quantity() == null ? 1 : u.quantity(), text(u.game()), text(u.name()),
-                    text(u.setCode()), text(u.collectorNumber()), reason);
+                    linkId, u.itemId(), u.version(), match.reason() == null ? match.cardId() : null,
+                    match.finish() == null ? "normal" : match.finish(), condition(u.condition()),
+                    u.quantity() == null ? 1 : u.quantity(), text(u.game()), text(u.name()), text(u.setCode()),
+                    text(u.collectorNumber()), match.reason(), spotIn((UUID) link.get("tenant_id"), u.storageId()),
+                    imageUrl(u.imageUrl()), details(u.details()));
             if (changed > 0) applied++; else skipped++;
             if (snapshotId != null)
                 jdbc.update("UPDATE club_link_items SET snapshot_id = ? WHERE link_id = ? AND item_id = ?", snapshotId, linkId, u.itemId());
@@ -222,6 +222,52 @@ public class ClubSync {
                 ORDER BY lower(i.name), i.set_code, i.collector_number LIMIT 200""", NOT_IN_LIST, linkId);
     }
 
+    /** The Club scans behind one synced inventory line: each card's photo and detail. */
+    public List<Map<String, Object>> scans(UUID tenant, UUID lineId) {
+        var lines = jdbc.queryForList("SELECT * FROM inventory_items WHERE id = ? AND tenant_id = ?", lineId, tenant);
+        if (lines.isEmpty()) throw ApiException.notFound("That card is no longer in inventory");
+        var line = lines.getFirst();
+        if (line.get("club_link_id") == null) return List.of();
+        return jdbc.queryForList("""
+                SELECT i.item_id AS "itemId", i.quantity, i.image_url AS image, i.details::text AS details
+                FROM club_link_items i JOIN club_links l ON l.id = i.link_id
+                LEFT JOIN storage_spots s ON s.id = i.storage_id AND s.tenant_id = l.tenant_id
+                WHERE i.link_id = ? AND NOT i.removed AND i.card_id = ? AND i.finish = ?
+                  AND coalesce(i.condition, l.default_condition) = ?
+                  AND coalesce(s.location_id, l.location_id) = ? AND coalesce(s.id, l.storage_id) IS NOT DISTINCT FROM ?
+                ORDER BY i.item_id LIMIT 200""",
+                line.get("club_link_id"), line.get("card_id"), line.get("finish"), line.get("condition"),
+                line.get("location_id"), line.get("storage_id"));
+    }
+
+    /** A CardBox store's open locations and storage spots, for Club to tag scans with. */
+    public Map<String, Object> storage(String storeId) {
+        UUID tenant = tenantFor(storeId);
+        var spots = inventory.spots(tenant);
+        List<Map<String, Object>> locations = new ArrayList<>();
+        for (var l : jdbc.queryForList("SELECT id, name FROM locations WHERE tenant_id = ? AND archived_at IS NULL ORDER BY created_at", tenant)) {
+            List<Map<String, Object>> tree = new ArrayList<>();
+            for (var s : spots) {
+                if (!s.locationId().equals(l.get("id"))) continue;
+                Map<String, Object> spot = new LinkedHashMap<>();
+                spot.put("id", s.id());
+                spot.put("parent_id", s.parentId());
+                spot.put("label", s.label());
+                spot.put("name", s.name());
+                tree.add(spot);
+            }
+            locations.add(Map.of("id", l.get("id"), "name", l.get("name"), "spots", tree));
+        }
+        return Map.of("locations", locations);
+    }
+
+    public UUID tenantFor(String storeId) {
+        var tenants = jdbc.queryForList("SELECT id FROM tenants WHERE cardbox_store_id = ?", UUID.class, storeId);
+        if (tenants.isEmpty())
+            throw ApiException.notFound("cardbox.trading has no store for this CardBox store yet. A store manager signs in to cardbox.trading once to set it up.");
+        return tenants.getFirst();
+    }
+
     /** At sign-in: links made by this person to stores where CardBox no longer gives them a role are paused. */
     public void pauseWithoutRole(String sub, Collection<UUID> storesWithRole) {
         jdbc.update("""
@@ -238,11 +284,15 @@ public class ClubSync {
         jdbc.update("""
                 INSERT INTO inventory_items (id, tenant_id, location_id, storage_id, card_id, name, set_code, collector_number,
                                              rarity, lang, finish, condition, quantity, club_link_id)
-                SELECT gen_random_uuid(), l.tenant_id, l.location_id, l.storage_id, c.id, c.name, c.set_code, c.collector_number,
+                SELECT gen_random_uuid(), l.tenant_id, coalesce(s.location_id, l.location_id), coalesce(s.id, l.storage_id),
+                       c.id, c.name, c.set_code, c.collector_number,
                        c.rarity, c.lang, i.finish, coalesce(i.condition, l.default_condition), sum(i.quantity), l.id
                 FROM club_link_items i JOIN club_links l ON l.id = i.link_id JOIN cards c ON c.id = i.card_id
+                -- A card scanned into a spot sits there; otherwise at the collection's target.
+                LEFT JOIN storage_spots s ON s.id = i.storage_id AND s.tenant_id = l.tenant_id
                 WHERE i.link_id = ? AND NOT i.removed
-                GROUP BY l.tenant_id, l.location_id, l.storage_id, l.id, c.id, i.finish, coalesce(i.condition, l.default_condition)""",
+                GROUP BY l.tenant_id, coalesce(s.location_id, l.location_id), coalesce(s.id, l.storage_id), l.id, c.id, i.finish,
+                         coalesce(i.condition, l.default_condition)""",
                 linkId);
         jdbc.update("UPDATE club_links SET last_synced_at = now() WHERE id = ?", linkId);
     }
@@ -341,7 +391,36 @@ public class ClubSync {
         return rows.getFirst();
     }
 
-    private Set<UUID> knownCards(List<Upsert> upserts) {
+    /** Magic only, with a Scryfall id and a finish Trading knows. Whether Trading has the card yet is checked apart. */
+    public static Match match(Upsert u) {
+        String finish = finish(u.finish());
+        UUID card = parse(u.scryfallId());
+        String reason = !MAGIC.equals(u.game()) ? "Only Magic cards go into Trading inventory"
+                : card == null ? "No Scryfall id"
+                : finish == null ? "Unknown finish " + u.finish()
+                : null;
+        return new Match(card, finish, reason);
+    }
+
+    /** The spot, if it is one of this store's; anything else counts as no spot. */
+    public UUID spotIn(UUID tenant, String id) {
+        UUID spot = parse(id);
+        if (spot == null) return null;
+        Integer found = jdbc.queryForObject("SELECT count(*) FROM storage_spots WHERE id = ? AND tenant_id = ?", Integer.class, spot, tenant);
+        return found != null && found > 0 ? spot : null;
+    }
+
+    /** Only https links are shown as images. */
+    public static String imageUrl(String url) {
+        return url != null && url.startsWith("https://") && url.length() <= 2000 ? url : null;
+    }
+
+    /** Free-form detail (grading, serial number, notes) as Club sent it, if it is a JSON object of modest size. */
+    public static String details(JsonNode details) {
+        return details != null && details.isObject() && details.toString().length() <= 4000 ? details.toString() : null;
+    }
+
+    public Set<UUID> knownCards(List<Upsert> upserts) {
         UUID[] ids = upserts.stream().map(u -> parse(u.scryfallId())).filter(Objects::nonNull).distinct().toArray(UUID[]::new);
         if (ids.length == 0) return Set.of();
         return new HashSet<>(jdbc.queryForList("SELECT id FROM cards WHERE id = ANY (?)", UUID.class, (Object) ids));
@@ -352,7 +431,7 @@ public class ClubSync {
     }
 
     /** Scryfall's finish names (nonfoil, foil, etched) or Trading's; null if neither. */
-    private static String finish(String finish) {
+    static String finish(String finish) {
         if (finish == null || finish.isBlank()) return "normal";
         return switch (finish.trim().toLowerCase()) {
             case "nonfoil", "normal" -> "normal";
@@ -363,13 +442,13 @@ public class ClubSync {
     }
 
     /** A condition Trading knows, or null (the link's default applies). */
-    private static String condition(String condition) {
+    public static String condition(String condition) {
         if (condition == null) return null;
         String c = condition.trim().toUpperCase();
         return Arrays.asList(CardConstants.CONDITIONS).contains(c) ? c : null;
     }
 
-    private static UUID parse(String id) {
+    static UUID parse(String id) {
         if (id == null) return null;
         try {
             return UUID.fromString(id.trim());

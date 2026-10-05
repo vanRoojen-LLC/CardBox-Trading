@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api, CONDITIONS, FINISHES, money, type Card, type Money, type StoreLocation } from '../api'
 import { flatTree, pathText, type PathPart, type Spot } from '../storage'
 import SearchIcon from '../SearchIcon'
@@ -58,7 +59,10 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
     <section>
       <div className="page-head">
         <h1>Inventory</h1>
-        <button className={adding ? 'secondary' : ''} onClick={() => setAdding(!adding)}>{adding ? 'Done adding' : 'Add cards'}</button>
+        <span className="row-actions">
+          <Link to="/app/inventory/counts">Re-inventory</Link>
+          <button className={adding ? 'secondary' : ''} onClick={() => setAdding(!adding)}>{adding ? 'Done adding' : 'Add cards'}</button>
+        </span>
       </div>
       <ClubCollections owner={owner} locations={locations} spots={spots} onChange={load} />
       {adding && <AddCards locations={open} spots={spots} defaultLocation={filterLocation || open[0]?.id || ''} onAdded={load} />}
@@ -101,6 +105,8 @@ function InventoryRow({ item, several, locations, spots, moving, onMove, onQuant
   onMove: () => void; onQuantity: (n: number) => void; onMoved: (body: { locationId: string; storageId: string | null; quantity: number }) => void
 }) {
   const [target, setTarget] = useState({ locationId: item.locationId, storageId: '', quantity: item.quantity })
+  const [scans, setScans] = useState<{ itemId: string; quantity: number; image: string | null; details: string | null }[] | null>(null)
+  const toggleScans = () => scans ? setScans(null) : api<typeof scans>(`/api/app/club-links/scans/${item.id}`).then(setScans).catch(() => setScans([]))
   return (
     <>
       <tr>
@@ -120,8 +126,25 @@ function InventoryRow({ item, several, locations, spots, moving, onMove, onQuant
             </span>
           )}
         </td>
-        <td className="r">{!item.clubLinkId && <button className="link" onClick={onMove}>{moving ? 'Cancel' : 'Move'}</button>}</td>
+        <td className="r">{item.clubLinkId
+          ? <button className="link" onClick={toggleScans}>{scans ? 'Hide scans' : 'Scans'}</button>
+          : <button className="link" onClick={onMove}>{moving ? 'Cancel' : 'Move'}</button>}</td>
       </tr>
+      {scans && (
+        <tr className="move-row"><td colSpan={7}>
+          <ul className="plain scans">
+            {scans.map(s => (
+              <li key={s.itemId}>
+                {s.image ? <a href={s.image} target="_blank" rel="noreferrer"><img src={s.image} alt={`Scan of ${item.name}`} className="scan-thumb" loading="lazy" /></a>
+                  : <span className="muted small">No photo</span>}
+                {s.quantity > 1 && <span className="small"> ×{s.quantity}</span>}
+                {s.details && <span className="muted small"> · {Object.entries(JSON.parse(s.details) as Record<string, unknown>).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${String(v)}`).join(' · ')}</span>}
+              </li>
+            ))}
+          </ul>
+          {scans.length === 0 && <p className="muted small">No scans for this line.</p>}
+        </td></tr>
+      )}
       {moving && (
         <tr className="move-row"><td colSpan={7}>
           <form className="move-form" onSubmit={e => { e.preventDefault(); onMoved({ ...target, storageId: target.storageId || null }) }}>

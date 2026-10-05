@@ -129,6 +129,7 @@ public class InventoryController {
                 DO UPDATE SET quantity = inventory_items.quantity + EXCLUDED.quantity, updated_at = now()""", spot.parentId(), id);
         // Club collections synced into this spot land in the spot that held it from now on.
         jdbc.update("UPDATE club_links SET storage_id = ?, updated_at = now() WHERE storage_id = ?", spot.parentId(), id);
+        jdbc.update("UPDATE club_link_items SET storage_id = ? WHERE storage_id = ?", spot.parentId(), id);
         jdbc.update("DELETE FROM inventory_items WHERE storage_id = ?", id);
         jdbc.update("DELETE FROM storage_spots WHERE id = ?", id);
         return storage(request);

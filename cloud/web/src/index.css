@@ -323,3 +323,7 @@ ul.plain li { padding: .25rem 0; }
 .panel.club-links { margin-bottom: 16px; }
 .club-links li + li { border-top: 1px solid var(--line); padding-top: .6rem; margin-top: .4rem; }
 .club-links .banner { margin: .5rem 0; text-align: left; border-radius: var(--radius); }
+.scan-thumb { width: 64px; height: 89px; object-fit: cover; border-radius: 4px; border: 1px solid var(--line); vertical-align: middle; margin-right: .5rem; }
+ul.scans { display: flex; flex-wrap: wrap; gap: 12px; }
+.count-lines li { display: flex; align-items: center; gap: 12px; }
+.count-lines li .link { margin-left: auto; }

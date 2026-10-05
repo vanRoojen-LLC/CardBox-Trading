@@ -49,6 +49,7 @@ class ClubSyncIntegrationTest {
     static final RSAKey KEY;
     static final String BOLT = "11111111-1111-1111-1111-111111111111";
     static final String RAGAVAN = "22222222-2222-2222-2222-222222222222";
+    static final String SOL_RING = "33333333-3333-3333-3333-333333333333";
 
     static {
         POSTGRES.start();
@@ -100,7 +101,8 @@ class ClubSyncIntegrationTest {
 
     @BeforeEach
     void store() {
-        for (String[] card : List.of(new String[]{BOLT, "Lightning Bolt", "2x2", "117"}, new String[]{RAGAVAN, "Ragavan, Nimble Pilferer", "mh2", "138"}))
+        for (String[] card : List.of(new String[]{BOLT, "Lightning Bolt", "2x2", "117"}, new String[]{RAGAVAN, "Ragavan, Nimble Pilferer", "mh2", "138"},
+                new String[]{SOL_RING, "Sol Ring", "cmm", "410"}))
             jdbc.update("""
                     INSERT INTO cards (id, name, set_code, set_name, collector_number, rarity, lang)
                     VALUES (?::uuid, ?, ?, 'Set', ?, 'rare', 'en') ON CONFLICT DO NOTHING""", card[0], card[1], card[2], card[3]);
@@ -277,5 +279,89 @@ class ClubSyncIntegrationTest {
         var unknown = call("PUT", "/api/partner/club-sync/links/" + UUID.randomUUID(), token(CLUB_CLIENT, AUDIENCE, "inventory:sync"), null,
                 Map.of("store_id", "cb-nobody", "linked_by", Map.of("auth0_sub", "auth0|linker")));
         assertEquals(404, unknown.status());
+    }
+
+    /** Adds a storage spot (or several) and returns the new spot's id. */
+    String spot(UUID location, String parentId, String label, String name) throws Exception {
+        var body = new HashMap<String, Object>(Map.of("locationId", location, "label", label, "names", List.of(name)));
+        if (parentId != null) body.put("parentId", parentId);
+        var spots = call("POST", "/api/app/storage", null, owner, body).body();
+        for (JsonNode s : spots) if (name.equals(s.path("name").asText()) && label.equals(s.path("label").asText())) return s.path("id").asText();
+        throw new AssertionError(spots.toString());
+    }
+
+    @Test
+    void scansCarryTheirSpotPhotoAndDetail() throws Exception {
+        link();
+        UUID location = jdbc.queryForObject("SELECT id FROM locations WHERE tenant_id = ?", UUID.class, tenant);
+        String box = spot(location, null, "Box", "7");
+        var tree = call("GET", "/api/partner/club-sync/stores/" + storeId + "/storage", token(CLUB_CLIENT, AUDIENCE, ClubSyncAuth.SCOPE), null, null);
+        assertEquals(200, tree.status(), tree.raw());
+        assertEquals(box, tree.body().path("locations").get(0).path("spots").get(0).path("id").asText());
+
+        var scanned = new HashMap<String, Object>(item("s1", 1, BOLT, "foil", 1));
+        scanned.put("storage_id", box);
+        scanned.put("image_url", "https://images.cardbox.club/scan/s1.jpg");
+        scanned.put("details", Map.of("serial_number", "12/50"));
+        var unsafe = new HashMap<String, Object>(item("s2", 2, BOLT, "foil", 1));
+        unsafe.put("storage_id", UUID.randomUUID().toString()); // not this store's: lands at the target instead
+        unsafe.put("image_url", "javascript:alert(1)");
+        club("POST", "/items", Map.of("upserts", List.of(scanned, unsafe)));
+
+        String inBox = jdbc.queryForObject("SELECT id::text FROM inventory_items WHERE club_link_id IS NOT NULL AND storage_id = ?::uuid", String.class, box);
+        var scans = call("GET", "/api/app/club-links/scans/" + inBox, null, owner, null).body();
+        assertEquals(1, scans.size());
+        assertEquals("https://images.cardbox.club/scan/s1.jpg", scans.get(0).path("image").asText());
+        assertTrue(scans.get(0).path("details").asText().contains("12/50"));
+        String atTarget = jdbc.queryForObject("SELECT id::text FROM inventory_items WHERE club_link_id IS NOT NULL AND storage_id IS NULL AND tenant_id = ?",
+                String.class, tenant);
+        assertTrue(call("GET", "/api/app/club-links/scans/" + atTarget, null, owner, null).body().get(0).path("image").isNull(),
+                "only https images are kept");
+    }
+
+    @Test
+    void reInventoryReportsTheDeltaAndReconcilesIt() throws Exception {
+        UUID location = jdbc.queryForObject("SELECT id FROM locations WHERE tenant_id = ?", UUID.class, tenant);
+        String box = spot(location, null, "Box", "12");
+        String front = spot(location, box, "Section", "Front");
+        for (Object[] stock : List.of(new Object[]{BOLT, 4, box}, new Object[]{RAGAVAN, 1, box}))
+            assertEquals(200, call("POST", "/api/app/inventory", null, owner,
+                    Map.of("cardId", stock[0], "quantity", stock[1], "locationId", location, "storageId", stock[2])).status());
+
+        var started = call("POST", "/api/app/counts", null, owner, Map.of("locationId", location, "storageId", box));
+        assertEquals(200, started.status(), started.raw());
+        String count = started.body().path("id").asText();
+
+        // Typed on Trading: 3 Bolts (one missing) and a Sol Ring nobody knew about.
+        call("POST", "/api/app/counts/" + count + "/lines", null, owner, Map.of("cardId", BOLT, "quantity", 3));
+        call("POST", "/api/app/counts/" + count + "/lines", null, owner, Map.of("cardId", SOL_RING, "quantity", 1));
+        // Scanned on Club: the Ragavan, found in the front section of the same box.
+        var listed = call("GET", "/api/partner/club-sync/stores/" + storeId + "/counts", token(CLUB_CLIENT, AUDIENCE, ClubSyncAuth.SCOPE), null, null);
+        assertEquals(count, listed.body().get(0).path("count_id").asText());
+        var rag = new HashMap<String, Object>(item("r1", 1, RAGAVAN, "nonfoil", 1));
+        rag.put("storage_id", front);
+        var scan = call("POST", "/api/partner/club-sync/counts/" + count + "/items", token(CLUB_CLIENT, AUDIENCE, ClubSyncAuth.SCOPE), null,
+                Map.of("store_id", storeId, "upserts", List.of(rag, rag)));
+        assertEquals(200, scan.status(), scan.raw());
+
+        var report = call("GET", "/api/app/counts/" + count, null, owner, null).body();
+        Map<String, String> status = new HashMap<>();
+        for (JsonNode row : report.path("rows")) status.merge(row.path("name").asText(), row.path("status").asText(), (a, b) -> a + "," + b);
+        assertEquals("missing", status.get("Lightning Bolt"));
+        assertEquals("extra", status.get("Sol Ring"));
+        assertTrue(status.get("Ragavan, Nimble Pilferer").matches("moved,moved"), status.toString());
+        assertEquals(1, report.path("missing").asInt());
+
+        // Two more Bolts come in while the count runs; reconciling keeps them.
+        call("POST", "/api/app/inventory", null, owner, Map.of("cardId", BOLT, "quantity", 2, "locationId", location, "storageId", box));
+        var done = call("POST", "/api/app/counts/" + count + "/reconcile", null, owner, Map.of());
+        assertEquals(200, done.status(), done.raw());
+        assertEquals("reconciled", done.body().path("state").asText());
+        Map<String, Integer> stock = new HashMap<>();
+        jdbc.query("SELECT name, storage_id::text, quantity FROM inventory_items WHERE tenant_id = ?",
+                rs -> { stock.put(rs.getString(1) + "@" + rs.getString(2), rs.getInt(3)); }, tenant);
+        assertEquals(Map.of("Lightning Bolt@" + box, 5, "Sol Ring@" + box, 1, "Ragavan, Nimble Pilferer@" + front, 1), stock);
+        assertEquals(4, jdbc.queryForObject("SELECT count(*) FROM inventory_adjustments WHERE count_id = ?::uuid", Integer.class, count));
+        assertEquals(409, call("POST", "/api/app/counts/" + count + "/lines", null, owner, Map.of("cardId", BOLT, "quantity", 1)).status());
     }
 }

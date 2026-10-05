@@ -1,5 +1,6 @@
 package com.cardpricer.cloud.clubsync;
 
+import com.cardpricer.cloud.inventory.InventoryCounts;
 import com.cardpricer.cloud.web.ApiException;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
@@ -19,7 +20,7 @@ import java.util.UUID;
  * and errors come back as {@code {"detail": "..."}} like CardBox's own. 404 for everything while sync is off.
  */
 @RestController
-@RequestMapping("/api/partner/club-sync/links/{collectionId}")
+@RequestMapping("/api/partner/club-sync")
 public class ClubSyncController {
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     public record LinkBody(String storeId, String collectionName, ClubSync.LinkedBy linkedBy) {}
@@ -33,6 +34,9 @@ public class ClubSyncController {
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     public record CompleteBody(Integer itemCount) {}
 
+    @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
+    public record CountItemsBody(String storeId, List<ClubSync.Upsert> upserts) {}
+
     public record UnlinkBody(String cards) {}
 
     public record PauseBody(String reason) {}
@@ -42,13 +46,15 @@ public class ClubSyncController {
 
     private final ClubSyncAuth auth;
     private final ClubSync sync;
+    private final InventoryCounts counts;
 
-    public ClubSyncController(ClubSyncAuth auth, ClubSync sync) {
+    public ClubSyncController(ClubSyncAuth auth, ClubSync sync, InventoryCounts counts) {
         this.auth = auth;
         this.sync = sync;
+        this.counts = counts;
     }
 
-    @PutMapping
+    @PutMapping("/links/{collectionId}")
     public Map<String, Object> link(@PathVariable String collectionId, @RequestBody LinkBody body, HttpServletRequest request) {
         check(request, collectionId);
         if (body.storeId() == null || body.storeId().isBlank()) throw ApiException.badRequest("store_id is required");
@@ -57,27 +63,27 @@ public class ClubSyncController {
         return sync.link(collectionId, body.storeId().trim(), body.collectionName(), body.linkedBy());
     }
 
-    @GetMapping
+    @GetMapping("/links/{collectionId}")
     public Map<String, Object> get(@PathVariable String collectionId, HttpServletRequest request) {
         check(request, collectionId);
         return sync.view(collectionId);
     }
 
-    @PostMapping("/items")
+    @PostMapping("/links/{collectionId}/items")
     public Map<String, Object> items(@PathVariable String collectionId, @RequestBody ItemsBody body, HttpServletRequest request) {
         check(request, collectionId);
         return sync.apply(collectionId, body.snapshotId(), body.upserts() == null ? List.of() : body.upserts(),
                 body.removals() == null ? List.of() : body.removals());
     }
 
-    @PostMapping("/snapshots")
+    @PostMapping("/links/{collectionId}/snapshots")
     public Map<String, Object> snapshot(@PathVariable String collectionId, @RequestBody SnapshotBody body, HttpServletRequest request) {
         check(request, collectionId);
         if (body.asOfVersion() == null) throw ApiException.badRequest("as_of_version is required");
         return sync.startSnapshot(collectionId, body.asOfVersion());
     }
 
-    @PostMapping("/snapshots/{snapshotId}/complete")
+    @PostMapping("/links/{collectionId}/snapshots/{snapshotId}/complete")
     public Map<String, Object> complete(@PathVariable String collectionId, @PathVariable UUID snapshotId,
                                         @RequestBody CompleteBody body, HttpServletRequest request) {
         check(request, collectionId);
@@ -85,7 +91,7 @@ public class ClubSyncController {
         return sync.completeSnapshot(collectionId, snapshotId, body.itemCount());
     }
 
-    @PostMapping("/unlink")
+    @PostMapping("/links/{collectionId}/unlink")
     public Map<String, Object> unlink(@PathVariable String collectionId, @RequestBody UnlinkBody body, HttpServletRequest request) {
         check(request, collectionId);
         if (!"keep".equals(body.cards()) && !"remove".equals(body.cards()))
@@ -93,18 +99,40 @@ public class ClubSyncController {
         return sync.unlink(collectionId, "keep".equals(body.cards()));
     }
 
-    @PostMapping("/pause")
+    @PostMapping("/links/{collectionId}/pause")
     public Map<String, Object> pause(@PathVariable String collectionId, @RequestBody PauseBody body, HttpServletRequest request) {
         check(request, collectionId);
         if (!PAUSE_REASONS.contains(body.reason())) throw ApiException.badRequest("reason must be one of " + String.join(", ", PAUSE_REASONS));
         return sync.pause(collectionId, body.reason());
     }
 
-    private void check(HttpServletRequest request, String collectionId) {
+    /** The store's open locations and storage tree, so Club can tag what it scans to a spot. */
+    @GetMapping("/stores/{storeId}/storage")
+    public Map<String, Object> storage(@PathVariable String storeId, HttpServletRequest request) {
+        check(request, storeId);
+        return sync.storage(storeId);
+    }
+
+    /** Open re-inventory counts at the store, for Club's re-inventory picker. */
+    @GetMapping("/stores/{storeId}/counts")
+    public List<Map<String, Object>> counts(@PathVariable String storeId, HttpServletRequest request) {
+        check(request, storeId);
+        return counts.openForClub(storeId);
+    }
+
+    /** Cards scanned on Club for a count. {@code store_id} is the store Club checked the person's role at. */
+    @PostMapping("/counts/{countId}/items")
+    public Map<String, Object> countItems(@PathVariable UUID countId, @RequestBody CountItemsBody body, HttpServletRequest request) {
+        check(request, countId.toString());
+        if (body.storeId() == null || body.storeId().isBlank()) throw ApiException.badRequest("store_id is required");
+        return counts.addScanned(body.storeId().trim(), countId, body.upserts() == null ? List.of() : body.upserts());
+    }
+
+    private void check(HttpServletRequest request, String id) {
         if (!auth.enabled()) throw ApiException.notFound("Not found");
         if (!auth.accepts(request.getHeader("Authorization")))
             throw new ApiException(HttpStatus.UNAUTHORIZED, "A valid CardBox sync token is required");
-        if (!collectionId.matches(ID)) throw ApiException.badRequest("Unexpected collection id");
+        if (!id.matches(ID)) throw ApiException.badRequest("Unexpected id");
     }
 
     // Club reads errors the way CardBox writes them.

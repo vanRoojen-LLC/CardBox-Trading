@@ -2,14 +2,15 @@
 
 cardbox.trading is ready to receive a cardbox.club collection into a store's inventory. This is what Club builds so a
 person with a store role can mark one of their collections "Sync to store", and every Magic card in it shows up in
-that store's Trading inventory and stays in step.
+that store's Trading inventory and stays in step, with the spot it was scanned into, a photo and any extra detail.
+It also covers re-inventory: scanning a box on Club to recount it on Trading (section 5b).
 
 Trading's side is built and switched off (`CLUB_SYNC_ENABLED=false`) until Club is ready. Nothing below changes how
 Club treats people, stores or roles: those stay Club's, as agreed for the shared roles work.
 
 ## The model in one paragraph
 
-Club owns what is in a collection; Trading owns where the cards sit in the store. Club pushes the current state of
+Club owns what is in a collection; Trading owns the store's storage spots, and a scan can say which spot a card went into. Club pushes the current state of
 each card (not events) with a version number, from an outbox written in the same transaction as the card change.
 Trading keeps the newest version of every card and rebuilds that collection's inventory lines after each delivery,
 so repeats, retries and out-of-order deliveries are harmless. A full snapshot on first link and once a night removes
@@ -113,12 +114,15 @@ The worker reads the card as it is now, by `(collection_user_id, card_id)`:
 | `quantity` | 1 plus the card's extra copies in Club's `inventory_items` |
 | `condition` | Leave out. Club has none; Trading uses the store's default for the collection. If Club adds one later: `NM`, `LP`, `MP`, `HP` or `DMG` |
 | `name`, `set_code`, `collector_number` | from the printing and definition, for the store's "not matched" list |
+| `storage_id` | Optional. The Trading storage spot the card was scanned into (an `id` from `GET /stores/{store_id}/storage`, section 5a). Leave out to use the spot the store picked for the whole collection. A spot that no longer exists falls back to that too |
+| `image_url` | Optional. An `https://` link (2000 characters at most) to Club's photo of this exact card. Store staff see it on the Inventory page. Anything else is ignored |
+| `details` | Optional. A JSON object of 4000 characters at most with whatever Club knows beyond the catalog, e.g. `{"grade": "PSA 9", "serial": "12/250", "notes": "..."}`. Shown as label: value pairs. Anything else is ignored |
 
 Sealed product (`collection_sealed_items`) is out of scope.
 
 ## 5. Trading's API
 
-Base: `https://cardbox.trading/api/partner/club-sync/links/{collection_user_id}`. JSON in snake_case. Errors are
+Base: `https://cardbox.trading/api/partner/club-sync` (paths below are under it). JSON in snake_case. Errors are
 `{"detail": "..."}`, like Club's own.
 
 **Link (create, refresh, or resume a paused link)**
@@ -184,6 +188,52 @@ POST /links/{id}/pause {"reason": "role_revoked"}   // or "collection_deleted"
 
 The cards stay in the store's inventory and a store owner decides on Trading whether to keep or remove them.
 
+## 5a. Store storage spots
+
+Stores keep cards in a tree of spots per location (a case, a box, a row in the box). Club needs it to let the
+person say where a scan is going.
+
+```
+GET /stores/{store_id}/storage
+200 {"locations": [{"id": "...", "name": "Main",
+                    "spots": [{"id": "s1", "parent_id": null, "label": "Case", "name": "A"},
+                              {"id": "s2", "parent_id": "s1", "label": "Box", "name": "12"}]}]}
+```
+
+On the scan screen, when the collection syncs to a store, offer "Put into" with this tree (remember the last pick per
+collection) and send the pick as `storage_id` on each card. Moving a card later on Club sends the new spot as an
+ordinary upsert.
+
+## 5b. Re-inventory (counting a box on Club)
+
+A store recounts a location, or one spot and everything under it, on a schedule. Someone starts a count on Trading
+(Inventory › Re-inventory); Trading copies what it expects there. People then type cards in on Trading or scan them
+on Club, Trading shows the difference (missing, extra, moved, value change), and an owner accepts it, which updates
+the store's stock.
+
+Club's part is a scanning mode, separate from collections. Counted cards do not go into any collection.
+
+```
+GET /stores/{store_id}/counts
+200 [{"count_id": "...", "location": "Main", "storage_path": [{"label": "Box", "name": "12"}],
+      "started_at": "...", "started_by": "Lee"}]
+
+POST /counts/{count_id}/items
+{"store_id": "<stores.id>",
+ "upserts": [{"item_id": "scan-881", "game": "magic-the-gathering", "scryfall_id": "...", "finish": "nonfoil",
+              "quantity": 1, "storage_id": "s2", "image_url": "https://...", "details": {"grade": "PSA 9"}}]}
+200 {"applied": 1, "not_matched": [{"item_id": "scan-882", "reason": "..."}]}
+409 the count is closed (accepted or cancelled on Trading)
+```
+
+- Show "Count for <store>" only to people with `store_manager` or `store_employee` at that store, and check that
+  role before every call; `store_id` must be the store you checked. Trading trusts Club on this.
+- The person picks an open count, then scans. Send each scan with a stable `item_id` (one per physical scan).
+  Sending the same `item_id` again replaces that line, so a correction or retry is safe. `version` is not used here.
+- `storage_id` should be a spot inside the count's area; anything else counts at the area's top spot.
+- `condition` is optional (`NM` if left out). Up to 500 items per call.
+- On 409 tell the person the count was closed on Trading and return to the picker.
+
 ## 6. The delivery worker
 
 - Per active link, take the oldest pending outbox rows (up to 500, coalesced to the newest row per card), send
@@ -219,6 +269,8 @@ The cards stay in the store's inventory and a store owner decides on Trading whe
 
 - Every card write path (scan, import, edit, move between collections, delete, extra copies) produces an outbox row
   for a linked collection and none for an unlinked one.
+- Scans carry `storage_id`, `image_url` and `details` when the person picked a spot or Club has a photo.
+- Re-inventory: only people with a store role at that store see the mode; resending an `item_id` replaces it.
 - A worker run against a stand-in Trading: batching, coalescing, backoff, 401 refresh, 404 turning the link off.
 - Snapshot: `as_of` read before the cards; a card changed during the snapshot is not removed.
 - Removing a store role pauses that person's links to that store only.
