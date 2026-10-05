@@ -167,7 +167,8 @@ POST /links/{id}/items
 3. Send every current settled card in pages of up to 500:
    `POST /links/{id}/items {"snapshot_id": "...", "upserts": [...]}`.
 4. `POST /links/{id}/snapshots/{snapshot_id}/complete {"item_count": <number of upserts sent>}`.
-   Trading removes cards it has that the snapshot didn't include, unless they changed after `as_of`. If the count
+   Trading removes cards it has that the snapshot didn't include, but only those last written before the snapshot
+   started and at or below `as_of`, so anything delivered while it ran (even a late retry) stays. If the count
    doesn't match what arrived, or the snapshot id is unknown or already completed, it answers 409 and removes
    nothing; start a new snapshot.
 
@@ -244,7 +245,9 @@ POST /counts/{count_id}/items
 - On a timeout, connection error, 429 or 5xx: keep the rows, back off 1 minute doubling to 1 hour. After 24 hours of
   failures, set `needs_snapshot` so the link heals once Trading answers again.
 - On 401: new token, retry once.
-- On 404 from a link call: the store ended the link on Trading. Set the Club link to `state = 'error'` with
+- On 503: sync is switched off on Trading. Treat it like any 5xx (keep the rows, back off).
+- On 404 from a link call with `detail` exactly "This collection is not linked to a store on cardbox.trading": the
+  store ended the link on Trading. Any other 404 is not that. Set the Club link to `state = 'error'` with
   "The store stopped syncing this collection", turn the toggle off, and delete its outbox rows.
 - On 409 "paused": stop sending for that link until it is linked again.
 - On 400: a bug in the payload. Stop that link, store `detail` in `last_error`, alert.

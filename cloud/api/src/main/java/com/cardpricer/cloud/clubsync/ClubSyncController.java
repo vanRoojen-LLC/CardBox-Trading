@@ -17,7 +17,8 @@ import java.util.UUID;
 /**
  * What cardbox.club calls, server to server, to keep a linked collection in a store's inventory. Every call carries
  * Club's machine token (see {@link ClubSyncAuth}); nobody is signed in. Bodies and answers use Club's snake_case,
- * and errors come back as {@code {"detail": "..."}} like CardBox's own. 404 for everything while sync is off.
+ * and errors come back as {@code {"detail": "..."}} like CardBox's own. 503 for everything while sync is off, never 404:
+ * Club reads a 404 on a link as the store ending it.
  */
 @RestController
 @RequestMapping("/api/partner/club-sync")
@@ -129,7 +130,7 @@ public class ClubSyncController {
     }
 
     private void check(HttpServletRequest request, String id) {
-        if (!auth.enabled()) throw ApiException.notFound("Not found");
+        if (!auth.enabled()) throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "Collection sync is switched off on cardbox.trading");
         if (!auth.accepts(request.getHeader("Authorization")))
             throw new ApiException(HttpStatus.UNAUTHORIZED, "A valid CardBox sync token is required");
         if (!id.matches(ID)) throw ApiException.badRequest("Unexpected id");

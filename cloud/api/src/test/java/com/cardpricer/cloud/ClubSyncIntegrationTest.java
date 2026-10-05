@@ -233,13 +233,15 @@ class ClubSyncIntegrationTest {
         club("POST", "/items", Map.of("snapshot_id", snapshot, "upserts", List.of(item("a", 1, BOLT, "nonfoil", 1))));
         // While the snapshot runs, a new card arrives as an ordinary change.
         club("POST", "/items", Map.of("upserts", List.of(item("d", 11, RAGAVAN, "foil", 1))));
+        // And a late retry of an older change: written after the snapshot started, so it stays too.
+        club("POST", "/items", Map.of("upserts", List.of(item("e", 5, SOL_RING, "nonfoil", 1))));
         var short1 = club("POST", "/snapshots/" + snapshot + "/complete", Map.of("item_count", 2));
         assertEquals(409, short1.status(), "a page went missing: nothing is removed");
-        assertEquals(4, synced().values().stream().mapToInt(Integer::intValue).sum());
+        assertEquals(5, synced().values().stream().mapToInt(Integer::intValue).sum());
         var done = club("POST", "/snapshots/" + snapshot + "/complete", Map.of("item_count", 1));
         assertEquals(200, done.status(), done.raw());
         assertEquals(2, done.body().path("removed").asInt());
-        assertEquals(Map.of(BOLT + "/normal", 1, RAGAVAN + "/foil", 1), synced());
+        assertEquals(Map.of(BOLT + "/normal", 1, RAGAVAN + "/foil", 1, SOL_RING + "/normal", 1), synced());
     }
 
     @Test
