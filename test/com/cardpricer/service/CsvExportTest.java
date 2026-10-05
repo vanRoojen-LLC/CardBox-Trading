@@ -195,6 +195,62 @@ class CsvExportTest {
     }
 
     @ParameterizedTest
+    @ValueSource(strings = {"", "F", "E", "S"})
+    void listAndOriginalPrintingsCanShareStockWithoutLosingQuantitiesOrCosts(String finish) throws Exception {
+        Card original=card("Example card","Artist");original.setSetCode("C17");original.setCollectorNumber("149");original.setProviderId("original");
+        Card listed=original.copy();listed.setSetCode("PLST");listed.setCollectorNumber("C17-149");listed.setProviderId("listed");
+        var service=new TradeReceivingExportService(directory,ignored -> {});
+        for (var cards : List.of(List.of(original,listed),List.of(listed,original))) {
+            var items=cards.stream().map(card -> new TradeItem(card,!finish.isEmpty(),1,finish)).toList();
+            var identities=items.stream().map(item -> item.getCard().identity()).toList();
+            var prices=items.stream().map(TradeItem::getUnitPrice).toList();
+            String received=service.exportToPOSFormat(items,"Trader","Customer",
+                    List.of(new BigDecimal("1.50"),new BigDecimal("2.50")),List.of(2,3),"credit");
+            var rows=parse(Files.readString(Path.of(received)));
+            assertEquals(3,rows.size());
+            assertEquals(List.of("C17 149"+finish,"C17 149"+finish),rows.subList(1,3).stream().map(row -> row.get(4)).toList());
+            assertEquals(List.of("2","3"),rows.subList(1,3).stream().map(row -> row.get(9)).toList());
+            assertEquals(List.of("1.50","3.75"),rows.subList(1,3).stream().map(row -> row.get(16)).toList());
+            assertEquals(List.of("1.50","2.50"),rows.subList(1,3).stream().map(row -> row.get(18)).toList());
+            String inventory=service.exportToInventoryFormat(items,List.of("NM","LP"),List.of(2,3));
+            var inventoryRows=parse(Files.readString(Path.of(inventory)));
+            assertEquals(1,inventoryRows.size());
+            assertEquals(List.of("C17 149"+finish,"Example card","Artist","","5"),inventoryRows.getFirst().toList());
+            assertEquals(identities,items.stream().map(item -> item.getCard().identity()).toList());
+            assertEquals(prices,items.stream().map(TradeItem::getUnitPrice).toList());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"name", "language", "original identity", "list identity", "finish"})
+    void listAliasDoesNotHideUnrelatedPrintingCollisions(String conflict) {
+        Card original=card("Example card","Artist");original.setSetCode("C17");original.setCollectorNumber("149");original.setProviderId("original");
+        Card listed=original.copy();listed.setSetCode("PLST");listed.setCollectorNumber("C17-149");listed.setProviderId("listed");
+        var items=new ArrayList<TradeItem>();
+        switch (conflict) {
+            case "name" -> listed.setName("Different card");
+            case "language" -> listed.setLanguage("ja");
+            case "original identity", "list identity" -> {
+                Card other=(conflict.equals("original identity") ? original : listed).copy();
+                other.setProviderId("unrelated-printing");
+                items.add(new TradeItem(other,false));
+            }
+            // A literal collector suffix must not be confused with a foil finish.
+            case "finish" -> listed.setCollectorNumber("C17-149F");
+            default -> throw new AssertionError(conflict);
+        }
+        items.add(new TradeItem(listed,false));
+        items.add(new TradeItem(original,conflict.equals("finish")));
+        var service=new TradeReceivingExportService(directory,ignored -> fail("Must not publish a conflicting export"));
+        var quantities=items.stream().map(item -> 1).toList();
+        var error=assertThrows(IllegalArgumentException.class,()->service.exportToPOSFormat(items,"Trader","Customer",
+                items.stream().map(item -> BigDecimal.TEN).toList(),quantities,"credit"));
+        assertTrue(error.getMessage().contains("POS mapping merges different printings: C17 149"));
+        assertThrows(IllegalArgumentException.class,()->service.exportToInventoryFormat(items,
+                items.stream().map(item -> "NM").toList(),quantities));
+    }
+
+    @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void tradeNamesUsePosCommaSubstituteWithoutRequiringQuotedFields(boolean foil) throws Exception {
         String originalName="Koma, World-Eater, Test";

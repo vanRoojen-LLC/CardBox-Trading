@@ -32,8 +32,10 @@ The sum of extended costs equals the settlement allocation for included stock li
 
 Provider identity stays unchanged internally. Existing COK/XED aliases map only at export. Trade exports map P-prefixed promos of recognized base sets to base-set foil stock: `PWAR 220s` → `WAR 220F`, `PEOE 210p` → `EOE 210F`. Numeric promo collector numbers may include `p`, `s`, or star markers, which are removed for this mapping. Promo and base-foil lines may share a code when their card names and languages match; unrelated identity collisions still fail. Original promo valuations and acquisition costs are preserved. Other finishes remain distinct (`F`, `E`, `S`), and ordinary sets such as PIP/PCY and PLST composite identifiers retain their existing mapping.
 
+PLST composite identifiers omit the PLST prefix and replace hyphens with spaces: `PLST C17-149` → `C17 149`. A List reprint and its original printing may share that code when their card names, languages and finishes match. This exception does not allow two distinct provider identities within PLST or within the original set to share a code. Saved identities, valuations and acquisition costs remain separate.
+
 Other supported schemas remain Import Utility (8 columns), Item Wizard (9 columns), and Item Wizard Change Qty (5 columns). The zero-quantity mode is the same for combined and individual exports. Inventory Change Qty is a snapshot, with blank old quantity and explicit new quantity; zero can reset stock.
 
-Trade-to-inventory Change Qty output combines quantities for lines sharing an inventory code, including promo/base aliases, so repeated rows cannot overwrite part of the count. Receiving exports keep separate rows to preserve approved costs.
+Trade-to-inventory Change Qty output combines quantities for lines sharing an inventory code, including promo/base and List/original aliases, so repeated rows cannot overwrite part of the count. Receiving exports keep separate rows to preserve approved costs.
 
 Unresolved external acceptance: actual tax/category meanings, condition representation, per-unit versus extended acquisition cost semantics, duplicate SKU rows for cent allocation, quantity update semantics and all finish/legacy aliases.

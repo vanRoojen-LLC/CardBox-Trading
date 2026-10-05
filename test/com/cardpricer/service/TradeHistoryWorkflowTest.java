@@ -2,12 +2,18 @@ package com.cardpricer.service;
 
 import com.cardpricer.model.TradeDraft;
 import com.cardpricer.model.TradeRecord;
+import com.cardpricer.model.Card;
+import com.cardpricer.model.Condition;
+import com.cardpricer.model.Finish;
+import com.cardpricer.model.TradeLine;
 import org.json.JSONObject;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.*;
+import java.math.BigDecimal;
 import java.sql.*;
 import java.util.List;
+import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 class TradeHistoryWorkflowTest {
@@ -82,6 +88,40 @@ class TradeHistoryWorkflowTest {
         try (var files=Files.list(output)) { assertEquals(6,files.count()); }
         assertThrows(SQLException.class,()->service.updateTrade(corrected(original,"Stale"),original.revision()));
         assertEquals(correction,repository.committedDraft(original.id()));
+    }
+
+    @Test void inventoryTradeCorrectionCanAddListPrintingAlongsideOriginal() throws Exception {
+        Path output=temp.resolve("trades");
+        var repository=TradeHistoryService.repository(output.toString());
+        var service=new TradeApplicationService(repository,output);
+        Card card=new Card("Example card","C17","149");card.setProviderId("original");card.setPrice("1.50");
+        var originalLine=new TradeLine(UUID.randomUUID(),card.identity(),ProviderCardMapper.toJson(card).toString(),
+                Finish.NORMAL,Condition.NM,2,new BigDecimal("1.50"),new BigDecimal("1.50"),new BigDecimal("0.50"),new BigDecimal("0.40"));
+        var original=new TradeDraft(UUID.randomUUID(),1,"Operator","Customer","","","inventory",
+                BigDecimal.ZERO,BigDecimal.ZERO,List.of(originalLine));
+        assertEquals(0,service.finalizeTrade(original));
+        String originalCsv=Files.readString(output.resolve(TradeApplicationService.outputPrefix(original,false)+".csv"));
+
+        card.setSetCode("PLST");card.setCollectorNumber("C17-149");card.setProviderId("listed");card.setPrice("2.50");
+        var listLine=new TradeLine(UUID.randomUUID(),card.identity(),ProviderCardMapper.toJson(card).toString(),
+                Finish.NORMAL,Condition.NM,3,new BigDecimal("2.50"),new BigDecimal("2.50"),new BigDecimal("0.50"),new BigDecimal("0.40"));
+        var correction=new TradeDraft(original.id(),2,original.trader(),original.customer(),"","","inventory",
+                BigDecimal.ZERO,BigDecimal.ZERO,List.of(originalLine,listLine));
+        assertEquals(0,service.updateTrade(correction,original.revision()));
+        assertEquals(correction,repository.committedDraft(original.id()));
+        assertTrue(repository.pending().isEmpty());
+        assertEquals(originalCsv,Files.readString(output.resolve(TradeApplicationService.outputPrefix(original,false)+".csv")));
+        var history=TradeHistoryService.loadAll(output.toString());
+        assertEquals(1,history.size());assertEquals(2,history.getFirst().revision);
+        try (var parser=org.apache.commons.csv.CSVFormat.RFC4180.parse(Files.newBufferedReader(TradeHistoryService.csvPath(history.getFirst())))) {
+            var rows=parser.getRecords();assertEquals(3,rows.size());
+            assertEquals(List.of("C17 149","C17 149"),rows.subList(1,3).stream().map(row -> row.get(4)).toList());
+            assertEquals(List.of("2","3"),rows.subList(1,3).stream().map(row -> row.get(9)).toList());
+            assertEquals(List.of("0.00","0.00"),rows.subList(1,3).stream().map(row -> row.get(16)).toList());
+            assertEquals(List.of("1.50","2.50"),rows.subList(1,3).stream().map(row -> row.get(18)).toList());
+        }
+        var saved=TradeDraft.fromJson(new JSONObject(Files.readString(output.resolve(TradeApplicationService.outputPrefix(correction,true)+".json"))));
+        assertEquals(correction,saved);
     }
 
     @Test void correctionCommitAndJobsRollBackTogether() throws Exception {

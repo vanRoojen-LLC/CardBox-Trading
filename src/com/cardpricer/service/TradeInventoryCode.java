@@ -30,12 +30,19 @@ final class TradeInventoryCode {
                 + item.getFinishType(), false);
     }
 
-    /** Intentional promo/base aliases may share stock; unrelated printing collisions still fail. */
+    /** Intentional promo/base and List/original aliases may share stock; unrelated collisions still fail. */
     static boolean canShareCode(TradeItem first, TradeItem second) {
         var a = first.getCard();
         var b = second.getCard();
+        var firstMapping = map(first);
+        var secondMapping = map(second);
+        if (!firstMapping.code().equals(secondMapping.code())) return false;
         if (a.identity().equals(b.identity())) return true;
-        return (map(first).promo() || map(second).promo())
+        // PLST C17-149 intentionally maps to C17 149. Only a List/original pair
+        // with the same finish may use this alias, not two unrelated List identities.
+        boolean listAlias = ("PLST".equalsIgnoreCase(a.getSetCode()) != "PLST".equalsIgnoreCase(b.getSetCode()))
+                && first.getFinishType().equals(second.getFinishType());
+        return (firstMapping.promo() || secondMapping.promo() || listAlias)
                 && Objects.equals(a.getName(), b.getName())
                 && Objects.equals(a.getLanguage(), b.getLanguage());
     }

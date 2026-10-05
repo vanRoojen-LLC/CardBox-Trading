@@ -71,6 +71,8 @@ Trade receiving CSVs replace commas in card names with `ɕ` for POS compatibilit
 
 Trade receiving and quantity exports map set promos to the base-set foil inventory code: for example, `PWAR 220s` becomes `WAR 220F`, and `PEOE 210p` becomes `EOE 210F`. This applies to P-prefixed versions of recognized base sets with numeric collector numbers and optional `p`, `s`, or star promo markers. Saved trades and receipts retain the original promo printing and approved valuation. Quantity exports combine promo/base aliases into one total per inventory code; receiving rows retain their individual quantities and acquisition costs.
 
+The List reprints also share the existing POS code with their original printing: `PLST C17-149` and `C17 149` both export as `C17 149`. Both can appear in one trade when their names, languages and finishes match. Saved trade lines keep their separate printing identities and valuations; receiving rows preserve each line's cost and quantity, while quantity exports combine the count. Conflicting names, languages or unrelated printing identities still prevent export.
+
 Windows stores data under `%APPDATA%\OCC_Trade_Pricer`; other systems use `~/.occ_trade_pricer`. For isolated verification, `-Dcardpricer.dataDir=/temporary/path` overrides this location.
 
 | Location | Purpose |
