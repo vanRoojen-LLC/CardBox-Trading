@@ -127,6 +127,21 @@ Before switching it on, the Auth0 API `https://cardbox.club/api` must exist and 
 and each Trading store with data should have a matching store on CardBox with its managers. After switching it on,
 the Admin tab lists any Trading store that didn't tie itself by name, to tie by hand.
 
+
+### CardBox collections in store inventory (switched off)
+
+A store manager or employee can mark a collection on cardbox.club "Sync to store", and its Magic cards show up in
+that store's inventory here, kept in step. cardbox.club pushes them server to server (`/api/partner/club-sync/*`,
+`clubsync/ClubSyncController.java`) with an Auth0 client-credentials token for the audience
+`https://cardbox.trading/api` and scope `inventory:sync`. Every item carries Club's version, so repeats and late
+deliveries change nothing, and a full snapshot heals drift. Synced cards are their own inventory lines
+(`inventory_items.club_link_id`); staff can't edit them one by one, and an owner picks where each collection's cards
+sit and what happens to them when a link ends, from the Inventory page.
+
+It is off until Club's side is ready: `CLUB_SYNC_ENABLED=true CLUB_SYNC_CLIENT_IDS=<CardBox's M2M client id>
+cloud/deploy.sh` (Bicep `clubSyncEnabled`, `clubSyncClientIds`). Auth0 needs an API with identifier
+`https://cardbox.trading/api` and permission `inventory:sync`, granted to CardBox's machine-to-machine application.
+The contract Club builds against is [CLUB_SYNC.md](CLUB_SYNC.md).
 ### Domain
 
 `cardbox.trading` is registered at Cloudflare and its DNS is hosted there. Both `cardbox.trading` and

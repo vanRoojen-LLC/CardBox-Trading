@@ -1,6 +1,7 @@
 package com.cardpricer.cloud.cardbox;
 
 import com.cardpricer.cloud.auth.Auth0Client;
+import com.cardpricer.cloud.clubsync.ClubSync;
 import com.cardpricer.cloud.store.StoreController;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
@@ -37,11 +38,13 @@ public class CardBoxSignIn {
     private final CardBoxTokens tokens;
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transaction;
+    private final ClubSync clubSync;
     private final int trialDays;
 
     public CardBoxSignIn(CardBoxClient cardbox, CardBoxTokens tokens, JdbcTemplate jdbc, TransactionTemplate transaction,
-                         @Value("${app.trial-days:30}") int trialDays) {
+                         ClubSync clubSync, @Value("${app.trial-days:30}") int trialDays) {
         this.cardbox = cardbox;
+        this.clubSync = clubSync;
         this.tokens = tokens;
         this.jdbc = jdbc;
         this.transaction = transaction;
@@ -114,6 +117,8 @@ public class CardBoxSignIn {
                 UPDATE users SET removed_at = now() WHERE auth0_sub = ? AND removed_at IS NULL
                 AND tenant_id IN (SELECT id FROM tenants WHERE cardbox_store_id IS NOT NULL) AND NOT (tenant_id = ANY (?))""",
                 sub, kept.toArray(new UUID[0]));
+        // So do the Club collections they synced into those stores, until an owner decides what happens to the cards.
+        clubSync.pauseWithoutRole(sub, kept);
         var last = jdbc.queryForList("""
                 SELECT u.id FROM users u JOIN tenants t ON t.id = u.tenant_id
                 WHERE u.auth0_sub = ? AND u.removed_at IS NULL AND t.cardbox_store_id IS NOT NULL

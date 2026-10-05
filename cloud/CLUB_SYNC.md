@@ -1,0 +1,238 @@
+# Club collections in store inventory: handoff for cardbox.club
+
+cardbox.trading is ready to receive a cardbox.club collection into a store's inventory. This is what Club builds so a
+person with a store role can mark one of their collections "Sync to store", and every Magic card in it shows up in
+that store's Trading inventory and stays in step.
+
+Trading's side is built and switched off (`CLUB_SYNC_ENABLED=false`) until Club is ready. Nothing below changes how
+Club treats people, stores or roles: those stay Club's, as agreed for the shared roles work.
+
+## The model in one paragraph
+
+Club owns what is in a collection; Trading owns where the cards sit in the store. Club pushes the current state of
+each card (not events) with a version number, from an outbox written in the same transaction as the card change.
+Trading keeps the newest version of every card and rebuilds that collection's inventory lines after each delivery,
+so repeats, retries and out-of-order deliveries are harmless. A full snapshot on first link and once a night removes
+anything that drifted. Sync runs server to server with an Auth0 machine token, so nobody needs to be signed in.
+
+## 1. Auth (one-time setup, Toby does the Auth0 part)
+
+1. In the shared Auth0 tenant (`dev-tnnibhkgdbepzjy1`), create an API named "CardBox Trading", identifier
+   `https://cardbox.trading/api`, signing RS256, with one permission: `inventory:sync`.
+2. Authorize CardBox's existing machine-to-machine application (the one Club already uses for client credentials,
+   `account_roles.py` around line 652) for that API with `inventory:sync`.
+3. Send Trading that application's **client id** (not the secret). Trading only accepts tokens whose `azp` is on its
+   allow list (`CLUB_SYNC_CLIENT_IDS`).
+
+Club then gets a token with:
+
+```
+POST https://<auth0 domain>/oauth/token
+{"grant_type": "client_credentials", "client_id": "...", "client_secret": "...", "audience": "https://cardbox.trading/api"}
+```
+
+Cache it until shortly before `expires_in` (24 hours by default): the free Auth0 plan limits machine tokens per month.
+On a 401 from Trading, fetch a new token once and retry; a second 401 is a configuration problem, so stop and alert.
+
+Every call below sends `Authorization: Bearer <token>` and `Content-Type: application/json`.
+
+## 2. Who may link
+
+- Only a signed-in Club account that holds `store_manager` or `store_employee` on a store (in `account_roles`) can
+  turn sync on, and only to that store. Check this on Club when the toggle is used.
+- Roles live on the parent account; any of its collections (the parent itself or a child collection user) can be
+  linked. One collection syncs to one store at a time. Several collections can sync to the same store.
+- If the person holds roles at several stores, they pick the store.
+
+## 3. Club data changes
+
+Add a migration module (next free version, 133 or later), appended to `Database._migration_plan()`:
+
+```sql
+CREATE SEQUENCE IF NOT EXISTS store_sync_version_seq;
+ALTER TABLE cards ADD COLUMN IF NOT EXISTS sync_version BIGINT;
+
+-- One row per collection synced to a store.
+CREATE TABLE IF NOT EXISTS store_sync_links (
+    collection_user_id TEXT PRIMARY KEY REFERENCES users(id),
+    store_id           TEXT NOT NULL REFERENCES stores(id),
+    linked_by_user_id  TEXT NOT NULL REFERENCES users(id),     -- the parent account that turned it on
+    state              TEXT NOT NULL DEFAULT 'active',         -- active | paused | error
+    paused_reason      TEXT,                                   -- role_revoked | collection_deleted
+    last_error         TEXT,                                   -- shown on the collection screen
+    needs_snapshot     BOOLEAN NOT NULL DEFAULT TRUE,
+    last_snapshot_at   TEXT,
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT NOT NULL
+);
+
+-- Cards to send. Rows are hints: the worker always sends the card's state at send time.
+CREATE TABLE IF NOT EXISTS store_sync_outbox (
+    id                 BIGSERIAL PRIMARY KEY,
+    collection_user_id TEXT NOT NULL,
+    card_id            TEXT NOT NULL,
+    version            BIGINT NOT NULL,                        -- nextval at the change; used for removals
+    created_at         TEXT NOT NULL,
+    attempts           INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS store_sync_outbox_due ON store_sync_outbox (collection_user_id, id);
+```
+
+Stamping versions and filling the outbox has to catch **every** write path (scan pairing in `service.py` around
+11651, importer refinement around 211 and 735, edits, `batch_transfer.move_batch`, and the hard deletes around 1267,
+13246 and 13260). The most reliable way is Postgres triggers, so no path can be missed:
+
+- `BEFORE INSERT OR UPDATE ON cards`: `NEW.sync_version := nextval('store_sync_version_seq')`.
+- `AFTER INSERT OR UPDATE ON cards`: if `NEW.owner_user_id` has an active link, insert an outbox row
+  (`NEW.owner_user_id`, `NEW.id`, `NEW.sync_version`). If `OLD.owner_user_id` differs (moved between collections)
+  and the old collection has an active link, insert a row for the old collection too, with a fresh `nextval`.
+- `AFTER DELETE ON cards`: if `OLD.owner_user_id` has an active link, insert a row with a fresh `nextval`.
+- Club's `inventory_items` (extra copies of a card) change that card's quantity, so an insert or delete there
+  should touch the parent card (`UPDATE cards SET updated_at = ... WHERE id = ...`), which fires the above.
+
+If triggers don't fit Club's conventions, put the same logic in one helper and call it from every path above, with a
+test that fails when a new write path skips it.
+
+## 4. What Club sends for a card
+
+The worker reads the card as it is now, by `(collection_user_id, card_id)`:
+
+- Card gone, moved out of this collection, or not settled yet (a job in flight on its pair, or
+  `publication_status = 'withheld_review'`): send a **removal** with the outbox row's `version`. When it settles,
+  its update stamps a newer version and it goes as an upsert.
+- Otherwise send an **upsert** with the card's current `sync_version`:
+
+| Field | From |
+| --- | --- |
+| `item_id` | `cards.id` |
+| `version` | `cards.sync_version` |
+| `game` | the card's segment, e.g. `magic-the-gathering` (send every game; Trading reports non-Magic ones as not matched) |
+| `scryfall_id` | `scryfall:id` in the printing's `external_ids_json` (`catalog_printing_id` → `catalog_card_printings`) |
+| `finish` | `scryfall:finish` from the same JSON: `nonfoil`, `foil` or `etched` |
+| `quantity` | 1 plus the card's extra copies in Club's `inventory_items` |
+| `condition` | Leave out. Club has none; Trading uses the store's default for the collection. If Club adds one later: `NM`, `LP`, `MP`, `HP` or `DMG` |
+| `name`, `set_code`, `collector_number` | from the printing and definition, for the store's "not matched" list |
+
+Sealed product (`collection_sealed_items`) is out of scope.
+
+## 5. Trading's API
+
+Base: `https://cardbox.trading/api/partner/club-sync/links/{collection_user_id}`. JSON in snake_case. Errors are
+`{"detail": "..."}`, like Club's own.
+
+**Link (create, refresh, or resume a paused link)**
+
+```
+PUT /links/{collection_user_id}
+{"store_id": "<stores.id>", "collection_name": "Box 12",
+ "linked_by": {"account_id": "<users.id>", "auth0_sub": "<users.auth0_sub>", "email": "lee@example.com", "name": "Lee"}}
+
+200 {"collection_id": "...", "collection_name": "Box 12", "store_id": "...", "state": "active", "paused_reason": null,
+     "location": "Main", "storage_path": [{"label": "Box", "name": "12"}], "default_condition": "NM",
+     "items": 0, "matched": 0, "not_matched": 0, "cards": 0, "last_synced_at": null}
+404  Trading has no store for that CardBox store yet (a store manager must sign in to cardbox.trading once)
+409  this collection already syncs to another store
+```
+
+Call it again whenever the collection is renamed. After a link or relink, send a snapshot.
+
+**Get the link** (for the collection screen): `GET /links/{id}`, same body as above. 404 if not linked.
+
+**Send changes** (at most 500 upserts plus removals per call)
+
+```
+POST /links/{id}/items
+{"upserts": [{"item_id": "c1", "version": 1042, "game": "magic-the-gathering",
+              "scryfall_id": "1e8d8b5c-...", "finish": "foil", "quantity": 1,
+              "name": "Lightning Bolt", "set_code": "2x2", "collector_number": "117"}],
+ "removals": [{"item_id": "c9", "version": 1043}]}
+
+200 {"applied": 2, "skipped": 0, "not_matched": [{"item_id": "c7", "reason": "Only Magic cards go into Trading inventory"}]}
+```
+
+`skipped` counts items Trading already had at that version or newer. That is normal after a retry.
+
+**Snapshot** (on first link, on relink, nightly, and whenever `needs_snapshot` is set)
+
+1. Read `as_of` with `SELECT last_value FROM store_sync_version_seq` **before** reading the cards.
+2. `POST /links/{id}/snapshots {"as_of_version": as_of}` → `{"snapshot_id": "..."}`.
+3. Send every current settled card in pages of up to 500:
+   `POST /links/{id}/items {"snapshot_id": "...", "upserts": [...]}`.
+4. `POST /links/{id}/snapshots/{snapshot_id}/complete {"item_count": <number of upserts sent>}`.
+   Trading removes cards it has that the snapshot didn't include, unless they changed after `as_of`. If the count
+   doesn't match what arrived, or the snapshot id is unknown or already completed, it answers 409 and removes
+   nothing; start a new snapshot.
+
+Normal outbox deliveries can keep flowing while a snapshot runs.
+
+**Unlink** (the person turned sync off on Club)
+
+```
+POST /links/{id}/unlink {"cards": "keep"}   // or "remove"
+200 {"cards": 37}
+```
+
+Ask the person first: "Leave these 37 cards in <store>'s inventory?" Keep makes them ordinary store stock on Trading;
+remove takes them out. Then delete the Club link row and its outbox rows.
+
+**Pause** (Club stopped it for a reason the person didn't choose)
+
+```
+POST /links/{id}/pause {"reason": "role_revoked"}   // or "collection_deleted"
+```
+
+The cards stay in the store's inventory and a store owner decides on Trading whether to keep or remove them.
+
+## 6. The delivery worker
+
+- Per active link, take the oldest pending outbox rows (up to 500, coalesced to the newest row per card), send
+  them as one `items` call, and delete the rows on 200. Links are independent; one stuck link must not block others.
+- On a timeout, connection error, 429 or 5xx: keep the rows, back off 1 minute doubling to 1 hour. After 24 hours of
+  failures, set `needs_snapshot` so the link heals once Trading answers again.
+- On 401: new token, retry once.
+- On 404 from a link call: the store ended the link on Trading. Set the Club link to `state = 'error'` with
+  "The store stopped syncing this collection", turn the toggle off, and delete its outbox rows.
+- On 409 "paused": stop sending for that link until it is linked again.
+- On 400: a bug in the payload. Stop that link, store `detail` in `last_error`, alert.
+- Nightly, run a snapshot for every active link.
+
+## 7. Pausing when access ends
+
+- When a `store_manager` or `store_employee` role is removed (the role-grant delete path in `account_roles.py`),
+  pause every active link that person made to that store: Club link `state = 'paused'`, then
+  `POST /pause {"reason": "role_revoked"}`. Trading also pauses such links the next time that person signs in to
+  cardbox.trading, as a backstop.
+- When a collection is deleted (`family.py`), pause its link with `collection_deleted` before the user row goes.
+
+## 8. Collection screen (web and iOS)
+
+- A "Sync to store" switch on each collection, shown only to someone with a store role. With roles at several
+  stores, pick the store when switching on.
+- While on, show what `GET /links/{id}` returns: "37 cards in Main › Box 12 at <store>, last updated <time>",
+  plus "<n> cards couldn't go into the store's inventory" when `not_matched` is above zero (Trading's Inventory page
+  lists which and why).
+- Paused or error: show the reason and a way to link again (which resumes it and sends a snapshot).
+- Switching off asks the keep-or-remove question above.
+
+## 9. Tests worth having on Club
+
+- Every card write path (scan, import, edit, move between collections, delete, extra copies) produces an outbox row
+  for a linked collection and none for an unlinked one.
+- A worker run against a stand-in Trading: batching, coalescing, backoff, 401 refresh, 404 turning the link off.
+- Snapshot: `as_of` read before the cards; a card changed during the snapshot is not removed.
+- Removing a store role pauses that person's links to that store only.
+
+## 10. Rollout
+
+1. Trading deploys this with sync off (no visible change).
+2. Toby does the Auth0 setup in section 1 and gives Trading the client id.
+3. Club deploys its side with the worker off.
+4. Turn both on for one test store, link a small collection, scan, edit and delete a card, unlink. Then everyone.
+
+## What to report back to Trading
+
+- The machine-to-machine client id, once Auth0 is set up.
+- Anything in this contract Club can't do as written (for example, if a card can belong to more than one collection,
+  or if Club wants Trading to push anything back).
+- When Club's side is deployed, so Trading turns `CLUB_SYNC_ENABLED` on.

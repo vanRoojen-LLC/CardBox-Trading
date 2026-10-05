@@ -27,6 +27,12 @@ param auth0ClientId string = 'i8rRy5TlNKCvd4tMFWOqMkJRY1PhCPvq'
 @description('Use CardBox (cardbox.club) for people, stores and roles. Leave off until CardBox confirms its side is live.')
 param cardboxEnabled bool = false
 
+@description('Accept cardbox.club pushing linked collections into store inventory. Leave off until Club is ready.')
+param clubSyncEnabled bool = false
+
+@description('Client ids allowed to sync (CardBox\'s machine-to-machine Auth0 application), comma separated.')
+param clubSyncClientIds string = ''
+
 @description('Verified email of the platform owner.')
 param ownerEmail string = 'toby@vanroojen.com'
 
@@ -189,6 +195,8 @@ var webEnv = concat(env, [
   { name: 'AUTH0_CLIENT_SECRET', secretRef: 'auth0-client-secret' }
   { name: 'OWNER_EMAIL', value: ownerEmail }
   { name: 'CARDBOX_ENABLED', value: string(cardboxEnabled) }
+  { name: 'CLUB_SYNC_ENABLED', value: string(clubSyncEnabled) }
+  { name: 'CLUB_SYNC_CLIENT_IDS', value: clubSyncClientIds }
 ])
 
 resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {

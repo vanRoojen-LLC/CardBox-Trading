@@ -31,7 +31,7 @@ public class InventoryRepository {
                 INSERT INTO inventory_items (id, tenant_id, location_id, storage_id, card_id, name, set_code, collector_number,
                                              rarity, lang, finish, condition, quantity)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (location_id, storage_id, card_id, finish, condition)
+                ON CONFLICT (location_id, storage_id, card_id, finish, condition, club_link_id)
                 DO UPDATE SET quantity = inventory_items.quantity + EXCLUDED.quantity, updated_at = now()""",
                 UUID.randomUUID(), tenant, location, storage, s.cardId(), s.name(), s.setCode(), s.collectorNumber(),
                 s.rarity(), s.lang(), s.finish(), s.condition(), s.quantity());
