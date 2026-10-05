@@ -161,6 +161,8 @@ POST /links/{id}/items
 ```
 
 `skipped` counts items Trading already had at that version or newer. That is normal after a retry.
+One exception: an item Trading couldn't place before (it was in `not_matched`) is applied again at the same
+version, so the next snapshot puts it in once Trading can (for example after a new game is supported).
 
 **Snapshot** (on first link, on relink, nightly, and whenever `needs_snapshot` is set)
 

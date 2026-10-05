@@ -272,6 +272,25 @@ class ClubSyncIntegrationTest {
     }
 
     @Test
+    void aCardThatCouldNotGoInBeforeGoesInWhenResentAtTheSameVersion() throws Exception {
+        link();
+        Map<String, Object> before = Map.of("item_id", "s1", "version", 7, "game", "star-wars-unlimited", "quantity", 1,
+                "name", "Luke Skywalker", "set_code", "SOR", "collector_number", "005");
+        assertEquals(1, club("POST", "/items", Map.of("upserts", List.of(before))).body().path("not_matched").size());
+        assertTrue(synced().isEmpty());
+
+        // The nightly snapshot resends it unchanged, and now Trading can place it.
+        Map<String, Object> resent = new HashMap<>(before);
+        resent.put("club_printing_id", "swu-sor-005");
+        var again = club("POST", "/items", Map.of("upserts", List.of(resent)));
+        assertEquals(1, again.body().path("applied").asInt(), again.raw());
+        assertEquals(1, synced().values().stream().mapToInt(Integer::intValue).sum());
+
+        // A matched card resent at the same version is still a no-op.
+        assertEquals(1, club("POST", "/items", Map.of("upserts", List.of(resent))).body().path("skipped").asInt());
+    }
+
+    @Test
     void endingALinkKeepsOrRemovesItsCards() throws Exception {
         link();
         club("POST", "/items", Map.of("upserts", List.of(item("a", 1, BOLT, "nonfoil", 2))));
