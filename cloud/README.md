@@ -9,7 +9,9 @@ and the API; PostgreSQL holds the data.
   multiple locations with every trade tagged to the location it was taken at, inventory per location kept in a storage
   tree each store designs itself (store room, shelf, box, section, or any tiers it likes), an inventory table that filters
   and sorts on every card detail (game, set, year, rarity, color, type, finish, treatment, condition, price, source) and
-  moves picked lines or everything matching into a spot at once, and the 19-column receiving POS CSV.
+  moves picked lines or everything matching into a spot at once, storage rules that say what goes in each spot
+  ("Magic" on Shelf 2, "Red, names A–L" in Box 1 inside it) so Inventory suggests a spot for every card and lists what
+  to file where, and the 19-column receiving POS CSV.
   One CardBox login can belong to several stores and switch between them.
 - **Platform admin** at `/app/admin` for the verified owner email: every store and person, plan status, trial end dates,
   renaming stores, adding, promoting or removing people on any store, and Help & feedback reports.

@@ -284,6 +284,18 @@ button.thumb { min-height: 0; padding: 0; background: none; border: 0; border-ra
 .spot-form .actions { margin: 0 0 .6rem; }
 .spot-form .hint { display: block; margin-top: .3rem; font-weight: 400; }
 @media (max-width: 760px) { .spot-form { grid-template-columns: 1fr; } }
+.spot-row .link.icon { padding: 0 4px; font-size: 16px; }
+.spot-row .link:disabled { opacity: .3; cursor: default; }
+.rule-summary { display: block; margin: -6px 0 8px; font-size: 14px; }
+.rule-text { color: var(--accent, inherit); font-weight: 550; }
+.rule-form { margin: 0 0 12px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.rule-form h3 { margin: 0 0 .4rem; font-size: 16px; }
+.rule-form .inv-chips { margin: .6rem 0; }
+.rule-ranges { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: end; }
+.rule-ranges label { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.rule-ranges input { width: 80px; min-height: 36px; }
+.rule-preview { margin: .8rem 0 .2rem; }
+.rule-form .actions { margin: .6rem 0 0; }
 
 /* Inventory */
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
