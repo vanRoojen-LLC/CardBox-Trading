@@ -39,14 +39,17 @@ public class CatalogImporter {
     private static final int BATCH = 1000;
     private static final String UPSERT = """
             INSERT INTO cards (id, name, set_code, set_name, collector_number, rarity, lang, released_at,
-                               usd, usd_foil, usd_etched, image_small, type_line, oracle_text, flavor_text, artist, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+                               usd, usd_foil, usd_etched, image_small, type_line, oracle_text, flavor_text, artist,
+                               colors, color_identity, mana_value, set_type, treatments, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
             ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, set_code = EXCLUDED.set_code,
                 set_name = EXCLUDED.set_name, collector_number = EXCLUDED.collector_number, rarity = EXCLUDED.rarity,
                 lang = EXCLUDED.lang, released_at = EXCLUDED.released_at, usd = EXCLUDED.usd,
                 usd_foil = EXCLUDED.usd_foil, usd_etched = EXCLUDED.usd_etched, image_small = EXCLUDED.image_small,
                 type_line = EXCLUDED.type_line, oracle_text = EXCLUDED.oracle_text, flavor_text = EXCLUDED.flavor_text,
-                artist = EXCLUDED.artist, updated_at = now()""";
+                artist = EXCLUDED.artist, colors = EXCLUDED.colors, color_identity = EXCLUDED.color_identity,
+                mana_value = EXCLUDED.mana_value, set_type = EXCLUDED.set_type, treatments = EXCLUDED.treatments,
+                updated_at = now()""";
 
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
@@ -150,7 +153,46 @@ public class CatalogImporter {
                 released == null ? null : Date.valueOf(LocalDate.parse(released)),
                 price(prices, "usd"), price(prices, "usd_foil"), price(prices, "usd_etched"),
                 image,
-                text(card, "type_line"), text(card, "oracle_text"), text(card, "flavor_text"), text(card, "artist")};
+                text(card, "type_line"), text(card, "oracle_text"), text(card, "flavor_text"), text(card, "artist"),
+                colors(card), strings(card.path("color_identity")),
+                card.path("cmc").isNumber() ? card.path("cmc").decimalValue() : null,
+                card.path("set_type").asText(null), treatments(card)};
+    }
+
+    /** The card's colors, or every face's for double-faced cards, in WUBRG order. Empty is colorless. */
+    static String[] colors(JsonNode card) {
+        if (card.path("colors").isArray()) return strings(card.path("colors"));
+        java.util.Set<String> faces = new java.util.HashSet<>();
+        for (JsonNode face : card.path("card_faces")) for (JsonNode c : face.path("colors")) faces.add(c.asText());
+        return "WUBRG".chars().mapToObj(c -> String.valueOf((char) c)).filter(faces::contains).toArray(String[]::new);
+    }
+
+    /**
+     * How this printing looks beyond its finish, in the words stores sort by: showcase, extended-art, borderless,
+     * full-art, retro-frame, textless, serialized, promo.
+     */
+    static String[] treatments(JsonNode card) {
+        List<String> out = new ArrayList<>();
+        List<String> effects = new ArrayList<>();
+        card.path("frame_effects").forEach(e -> effects.add(e.asText()));
+        List<String> promos = new ArrayList<>();
+        card.path("promo_types").forEach(e -> promos.add(e.asText()));
+        if (effects.contains("showcase")) out.add("showcase");
+        if (effects.contains("extendedart")) out.add("extended-art");
+        if ("borderless".equals(card.path("border_color").asText())) out.add("borderless");
+        if (card.path("full_art").asBoolean(false)) out.add("full-art");
+        String frame = card.path("frame").asText("");
+        if ((frame.equals("1993") || frame.equals("1997")) && card.path("released_at").asText("").compareTo("2003") > 0) out.add("retro-frame");
+        if (card.path("textless").asBoolean(false)) out.add("textless");
+        if (promos.contains("serialized")) out.add("serialized");
+        if (card.path("promo").asBoolean(false)) out.add("promo");
+        return out.toArray(String[]::new);
+    }
+
+    private static String[] strings(JsonNode array) {
+        List<String> out = new ArrayList<>();
+        array.forEach(v -> out.add(v.asText()));
+        return out.toArray(String[]::new);
     }
 
     /** A card field, or each face's value joined with " // " for double-faced and split cards. */

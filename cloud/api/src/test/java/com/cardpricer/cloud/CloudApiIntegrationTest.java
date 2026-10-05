@@ -485,6 +485,78 @@ class CloudApiIntegrationTest {
     }
 
     @Test
+    void inventoryFiltersSortsAndMovesInBulk() throws Exception {
+        String owner = signup("Bulk Shop", "bulk-" + UUID.randomUUID() + "@example.com");
+        String main = call("GET", "/api/app/store", owner, null).body().path("locations").get(0).path("id").asText();
+        String bolt = "11111111-1111-1111-1111-111111111111", ragavan = "22222222-2222-2222-2222-222222222222",
+                solRing = "33333333-3333-3333-3333-333333333333";
+        call("POST", "/api/app/inventory", owner, Map.of("cardId", bolt, "finish", "normal", "condition", "NM", "quantity", 4, "locationId", main));
+        call("POST", "/api/app/inventory", owner, Map.of("cardId", ragavan, "finish", "normal", "condition", "NM", "quantity", 1, "locationId", main));
+        call("POST", "/api/app/inventory", owner, Map.of("cardId", solRing, "finish", "normal", "condition", "LP", "quantity", 2, "locationId", main));
+
+        // Card details the catalog now keeps: color, year, type and treatment.
+        var red = call("GET", "/api/app/inventory?color=R&sort=name", owner, null);
+        assertEquals(200, red.status(), red.raw());
+        assertEquals(5, red.body().path("cards").asInt());
+        assertEquals("Lightning Bolt", red.body().path("items").get(0).path("name").asText());
+        assertEquals("R", red.body().path("items").get(0).path("colors").asText());
+        assertEquals(2022, red.body().path("items").get(0).path("year").asInt());
+        assertEquals("Double Masters 2022", red.body().path("items").get(0).path("setName").asText());
+        assertEquals(2, call("GET", "/api/app/inventory?color=C", owner, null).body().path("cards").asInt());
+        assertEquals(1, call("GET", "/api/app/inventory?treatment=showcase&treatment=borderless", owner, null).body().path("lines").asInt());
+        assertEquals(1, call("GET", "/api/app/inventory?type=Creature", owner, null).body().path("lines").asInt());
+        assertEquals(2, call("GET", "/api/app/inventory?year=2022&year=2023", owner, null).body().path("lines").asInt());
+        assertEquals(1, call("GET", "/api/app/inventory?condition=LP", owner, null).body().path("lines").asInt());
+        assertEquals(1, call("GET", "/api/app/inventory?priceMin=10", owner, null).body().path("lines").asInt());
+        assertEquals(1, call("GET", "/api/app/inventory?q=monkey", owner, null).body().path("lines").asInt(), "type line is searched");
+
+        // Any column sorts, either way; pages carry on where the last one stopped.
+        for (String sort : java.util.List.of("name", "set", "number", "year", "rarity", "color", "type", "finish", "condition",
+                "where", "market", "quantity", "updated"))
+            for (String dir : java.util.List.of("asc", "desc"))
+                assertEquals(3, call("GET", "/api/app/inventory?sort=" + sort + "&dir=" + dir, owner, null).body().path("items").size(), sort);
+        var byPrice = call("GET", "/api/app/inventory?sort=market&dir=desc", owner, null).body().path("items");
+        assertEquals("Ragavan, Nimble Pilferer", byPrice.get(0).path("name").asText());
+        var page1 = call("GET", "/api/app/inventory?sort=name&limit=2", owner, null).body();
+        assertTrue(page1.path("more").asBoolean());
+        var page2 = call("GET", "/api/app/inventory?sort=name&limit=2&offset=2", owner, null).body();
+        assertEquals("Sol Ring", page2.path("items").get(0).path("name").asText());
+        assertFalse(page2.path("more").asBoolean());
+
+        // Each filter counts its values under the other filters, not its own.
+        var facets = call("GET", "/api/app/inventory/facets?color=R", owner, null);
+        assertEquals(200, facets.status(), facets.raw());
+        Map<String, Integer> colors = new java.util.HashMap<>();
+        for (var v : facets.body().path("color")) colors.put(v.path("value").asText(), v.path("cards").asInt());
+        assertEquals(Map.of("R", 5, "C", 2), colors);
+        assertEquals(2, facets.body().path("rarity").size(), "uncommon and mythic: Sol Ring isn't red");
+        assertEquals("mythic", facets.body().path("rarity").get(1).path("value").asText());
+        assertEquals("magic-the-gathering", facets.body().path("game").get(0).path("value").asText());
+        assertEquals("Double Masters 2022", facets.body().path("set").get(0).path("label").asText(), "newest set first");
+
+        // Everything red goes to Shelf 2 in one move, picked by the filter rather than line by line.
+        var spots = call("POST", "/api/app/storage", owner, Map.of("locationId", main, "label", "Shelf", "names", java.util.List.of("2")));
+        String shelf = spots.body().get(0).path("id").asText();
+        var moved = call("POST", "/api/app/inventory/move", owner, Map.of("filter", Map.of("color", java.util.List.of("R")), "storageId", shelf));
+        assertEquals(200, moved.status(), moved.raw());
+        assertEquals(2, moved.body().path("lines").asInt());
+        assertEquals(5, moved.body().path("cards").asInt());
+        assertEquals(5, call("GET", "/api/app/inventory?storage=" + shelf, owner, null).body().path("cards").asInt());
+        assertEquals(2, call("GET", "/api/app/inventory?storage=none", owner, null).body().path("cards").asInt());
+        assertEquals(5, call("GET", "/api/app/inventory?storage=any", owner, null).body().path("cards").asInt());
+
+        // Or by picked lines, back to "not put away"; another store's ids are ignored.
+        String sol = call("GET", "/api/app/inventory?q=sol%20ring", owner, null).body().path("items").get(0).path("id").asText();
+        String boltLine = call("GET", "/api/app/inventory?q=bolt", owner, null).body().path("items").get(0).path("id").asText();
+        String other = signup("Not Mine", "nm-" + UUID.randomUUID() + "@example.com");
+        assertEquals(0, call("POST", "/api/app/inventory/move", other, Map.of("ids", java.util.List.of(boltLine))).body().path("lines").asInt());
+        var back = call("POST", "/api/app/inventory/move", owner, Map.of("ids", java.util.List.of(boltLine, sol)));
+        assertEquals(1, back.body().path("lines").asInt(), "Sol Ring is already not put away");
+        assertEquals(6, call("GET", "/api/app/inventory?storage=none", owner, null).body().path("cards").asInt());
+        assertEquals(400, call("POST", "/api/app/inventory/move", owner, Map.of("storageId", shelf)).status());
+    }
+
+    @Test
     void storesCanHaveSeveralOwners() throws Exception {
         String firstEmail = "f-" + UUID.randomUUID() + "@example.com";
         String first = signup("Partners", firstEmail);

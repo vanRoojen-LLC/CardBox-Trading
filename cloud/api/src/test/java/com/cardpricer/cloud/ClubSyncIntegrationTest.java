@@ -362,6 +362,55 @@ class ClubSyncIntegrationTest {
     }
 
     @Test
+    void theStorePutsSyncedCardsAwayAndClubDeliveriesKeepThemThere() throws Exception {
+        link();
+        UUID location = jdbc.queryForObject("SELECT id FROM locations WHERE tenant_id = ?", UUID.class, tenant);
+        String shelf = spot(location, null, "Shelf", "2");
+        String box = spot(location, null, "Box", "9");
+        club("POST", "/items", Map.of("upserts", List.of(item("p1", 1, BOLT, "normal", 2), item("p2", 2, BOLT, "normal", 1),
+                item("p3", 3, RAGAVAN, "foil", 1))));
+        String boltLine = jdbc.queryForObject("SELECT id::text FROM inventory_items WHERE club_link_id IS NOT NULL AND card_id = ?::uuid AND tenant_id = ?",
+                String.class, BOLT, tenant);
+
+        // A synced line moves whole, but not part of it: Club decides how many there are.
+        assertEquals(400, call("POST", "/api/app/inventory/" + boltLine + "/move", null, owner, Map.of("storageId", shelf, "quantity", 1)).status());
+        var moved = call("POST", "/api/app/inventory/move", null, owner, Map.of("ids", List.of(boltLine), "storageId", shelf));
+        assertEquals(200, moved.status(), moved.raw());
+        assertEquals(3, moved.body().path("cards").asInt());
+        assertEquals(3, call("GET", "/api/app/inventory?storage=" + shelf, null, owner, null).body().path("cards").asInt());
+
+        // Club's next deliveries and snapshots change counts, not where the store put the cards.
+        club("POST", "/items", Map.of("upserts", List.of(item("p1", 4, BOLT, "normal", 3))));
+        assertEquals(4, call("GET", "/api/app/inventory?storage=" + shelf, null, owner, null).body().path("cards").asInt());
+        String snapshot = club("POST", "/snapshots", Map.of("as_of_version", 4)).body().path("snapshot_id").asText();
+        club("POST", "/items", Map.of("snapshot_id", snapshot, "upserts", List.of(item("p1", 4, BOLT, "normal", 3),
+                item("p2", 2, BOLT, "normal", 1), item("p3", 3, RAGAVAN, "foil", 1))));
+        assertEquals(200, club("POST", "/snapshots/" + snapshot + "/complete", Map.of("item_count", 3)).status());
+        assertEquals(4, call("GET", "/api/app/inventory?storage=" + shelf, null, owner, null).body().path("cards").asInt());
+
+        // Moving the collection's target leaves placed cards alone; a new spot scanned on Club is the latest choice.
+        UUID linkId = jdbc.queryForObject("SELECT id FROM club_links WHERE collection_id = ?", UUID.class, collection);
+        clubSync.retarget(tenant, linkId, location, UUID.fromString(box), "NM");
+        assertEquals(4, call("GET", "/api/app/inventory?storage=" + shelf, null, owner, null).body().path("cards").asInt());
+        var rescanned = new HashMap<String, Object>(item("p2", 5, BOLT, "normal", 1));
+        rescanned.put("storage_id", box);
+        club("POST", "/items", Map.of("upserts", List.of(rescanned)));
+        assertEquals(3, call("GET", "/api/app/inventory?storage=" + shelf, null, owner, null).body().path("cards").asInt());
+        assertEquals(2, call("GET", "/api/app/inventory?storage=" + box, null, owner, null).body().path("cards").asInt());
+
+        // Back to "not put away" works at the collection's own location, and filters pick synced lines too.
+        var all = call("POST", "/api/app/inventory/move", null, owner, Map.of("filter", Map.of("source", List.of(linkId.toString()))));
+        assertEquals(200, all.status(), all.raw());
+        assertEquals(5, call("GET", "/api/app/inventory?storage=none", null, owner, null).body().path("cards").asInt());
+        // Removing a spot sends cards placed in it to the spot above, which here is the top: not put away.
+        call("POST", "/api/app/inventory/move", null, owner, Map.of("ids", List.of(
+                jdbc.queryForObject("SELECT id::text FROM inventory_items WHERE club_link_id = ? AND card_id = ?::uuid", String.class, linkId, RAGAVAN)),
+                "storageId", shelf));
+        assertEquals(200, call("POST", "/api/app/storage/" + shelf + "/remove", null, owner, Map.of()).status());
+        assertEquals(5, call("GET", "/api/app/inventory?storage=none", null, owner, null).body().path("cards").asInt());
+    }
+
+    @Test
     void scansCarryTheirSpotPhotoAndDetail() throws Exception {
         link();
         UUID location = jdbc.queryForObject("SELECT id FROM locations WHERE tenant_id = ?", UUID.class, tenant);

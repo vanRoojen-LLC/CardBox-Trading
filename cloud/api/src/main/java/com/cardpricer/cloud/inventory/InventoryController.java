@@ -3,6 +3,7 @@ package com.cardpricer.cloud.inventory;
 import com.cardpricer.cloud.auth.CurrentUser;
 import com.cardpricer.cloud.catalog.CardRow;
 import com.cardpricer.cloud.catalog.CatalogRepository;
+import com.cardpricer.cloud.clubsync.ClubSync;
 import com.cardpricer.cloud.web.ApiException;
 import com.cardpricer.util.CardConstants;
 import jakarta.servlet.http.HttpServletRequest;
@@ -16,14 +17,19 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -44,15 +50,19 @@ public class InventoryController {
     public record MoveBody(UUID locationId, UUID storageId, Integer quantity) {}
 
     private static final List<String> FINISHES = List.of("normal", "foil", "etched");
+    /** Lines one bulk action may touch. */
+    static final int MAX_BULK = 20000;
 
     private final InventoryRepository inventory;
     private final CatalogRepository catalog;
     private final JdbcTemplate jdbc;
+    private final ClubSync clubSync;
 
-    public InventoryController(InventoryRepository inventory, CatalogRepository catalog, JdbcTemplate jdbc) {
+    public InventoryController(InventoryRepository inventory, CatalogRepository catalog, JdbcTemplate jdbc, ClubSync clubSync) {
         this.inventory = inventory;
         this.catalog = catalog;
         this.jdbc = jdbc;
+        this.clubSync = clubSync;
     }
 
     // ---- Storage layout ----
@@ -130,6 +140,7 @@ public class InventoryController {
         // Club collections synced into this spot land in the spot that held it from now on.
         jdbc.update("UPDATE club_links SET storage_id = ?, updated_at = now() WHERE storage_id = ?", spot.parentId(), id);
         jdbc.update("UPDATE club_link_items SET storage_id = ? WHERE storage_id = ?", spot.parentId(), id);
+        jdbc.update("UPDATE club_link_items SET placed_storage_id = ? WHERE placed_storage_id = ?", spot.parentId(), id);
         jdbc.update("DELETE FROM inventory_items WHERE storage_id = ?", id);
         jdbc.update("DELETE FROM storage_spots WHERE id = ?", id);
         return storage(request);
@@ -138,57 +149,104 @@ public class InventoryController {
     // ---- Stock ----
 
     /**
-     * Stock at a location (or every location), optionally inside one spot and everything under it, or only what
-     * hasn't been put away ({@code storage=none}), filtered by card name, set or number.
+     * Stock filtered by any card detail, where it is and where it came from (see {@link InventoryQuery}), sorted by
+     * any column, a page at a time. {@code storage} is a spot (and everything under it), {@code none} for not put
+     * away yet, or {@code any} for put away.
      */
     @GetMapping("/inventory")
-    public Map<String, Object> list(@RequestParam(value = "location", required = false) UUID location,
-                                    @RequestParam(value = "storage", defaultValue = "") String storage,
-                                    @RequestParam(value = "q", defaultValue = "") String q,
-                                    HttpServletRequest request) {
+    public Map<String, Object> list(@RequestParam MultiValueMap<String, String> params, HttpServletRequest request) {
         UUID tenant = CurrentUser.of(request).tenantId();
+        var query = new InventoryQuery(tenant, params);
+        var where = query.where();
+        int limit = Math.clamp(intParam(params, "limit", 100), 1, 500);
+        int offset = Math.max(0, intParam(params, "offset", 0));
         List<Object> args = new ArrayList<>(List.of(tenant));
-        StringBuilder where = new StringBuilder("i.tenant_id = ?");
-        if (location != null) { where.append(" AND i.location_id = ?"); args.add(location); }
-        if (storage.equals("none")) where.append(" AND i.storage_id IS NULL");
-        else if (!storage.isBlank()) {
-            UUID root;
-            try {
-                root = UUID.fromString(storage);
-            } catch (IllegalArgumentException e) {
-                throw ApiException.badRequest("Unknown storage spot");
-            }
-            inventory.spot(tenant, root);
-            where.append(" AND i.storage_id IN (WITH RECURSIVE tree AS (SELECT id FROM storage_spots WHERE id = ?"
-                    + " UNION ALL SELECT c.id FROM storage_spots c JOIN tree t ON c.parent_id = t.id) SELECT id FROM tree)");
-            args.add(root);
-        }
-        String term = q.trim().toLowerCase();
-        if (!term.isEmpty()) {
-            where.append(" AND (lower(i.name) LIKE ? OR lower(i.set_code) = ? OR ltrim(i.collector_number, '0') = ltrim(?, '0'))");
-            args.add("%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%");
-            args.add(term);
-            args.add(term);
-        }
-        var rows = jdbc.queryForList("""
+        args.addAll(where.args());
+        args.add(limit + 1);
+        args.add(offset);
+        var rows = jdbc.queryForList(InventoryQuery.TREE + """
                 SELECT i.id, i.location_id AS "locationId", loc.name AS location, i.storage_id AS "storageId", i.card_id AS "cardId",
                        i.name, i.set_code AS "set", i.collector_number AS number, i.rarity, i.finish, i.condition, i.quantity,
                        c.image_small AS image, i.club_link_id AS "clubLinkId", cl.collection_name AS "clubCollection",
-                       CASE i.finish WHEN 'foil' THEN c.usd_foil WHEN 'etched' THEN c.usd_etched ELSE c.usd END AS market
-                FROM inventory_items i JOIN locations loc ON loc.id = i.location_id LEFT JOIN inventory_cards c ON c.id = i.card_id
-                LEFT JOIN club_links cl ON cl.id = i.club_link_id
-                WHERE\s""" + where + " ORDER BY lower(i.name), i.set_code, i.collector_number, i.finish, i.condition LIMIT 501",
+                       c.game, c.set_name AS "setName", extract(year FROM c.released_at)::int AS year, c.type_line AS "typeLine",
+                       array_to_string(c.colors, '') AS colors, array_to_string(c.treatments, ',') AS treatments,
+                       c.mana_value AS "manaValue", """ + InventoryQuery.MARKET + " AS market "
+                        + InventoryQuery.FROM + " LEFT JOIN tree w ON w.id = i.storage_id WHERE " + where.sql()
+                        + " ORDER BY " + InventoryQuery.orderBy(params.getFirst("sort"), params.getFirst("dir")) + " LIMIT ? OFFSET ?",
                 args.toArray());
         var paths = InventoryRepository.paths(inventory.spots(tenant));
         List<Map<String, Object>> items = new ArrayList<>();
-        for (var row : rows.subList(0, Math.min(500, rows.size()))) {
+        for (var row : rows.subList(0, Math.min(limit, rows.size()))) {
             Map<String, Object> item = new HashMap<>(row);
             item.put("path", row.get("storageId") == null ? List.of() : paths.getOrDefault((UUID) row.get("storageId"), List.of()));
             items.add(item);
         }
-        var totals = jdbc.queryForMap("SELECT coalesce(sum(i.quantity), 0) AS cards, count(*) AS lines FROM inventory_items i WHERE "
-                + where, args.toArray());
-        return Map.of("items", items, "more", rows.size() > 500, "cards", totals.get("cards"), "lines", totals.get("lines"));
+        var totals = jdbc.queryForMap("SELECT coalesce(sum(i.quantity), 0) AS cards, count(*) AS lines, coalesce(sum(i.quantity * "
+                + InventoryQuery.MARKET + "), 0) AS value " + InventoryQuery.FROM + " WHERE " + where.sql(), where.args().toArray());
+        return Map.of("items", items, "more", rows.size() > limit, "offset", offset, "cards", totals.get("cards"),
+                "lines", totals.get("lines"), "value", totals.get("value"));
+    }
+
+    /** For each filter, its values with how many cards each would show, given the other filters picked. */
+    @GetMapping("/inventory/facets")
+    public Map<String, Object> facets(@RequestParam MultiValueMap<String, String> params, HttpServletRequest request) {
+        UUID tenant = CurrentUser.of(request).tenantId();
+        var query = new InventoryQuery(tenant, params);
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (String facet : InventoryQuery.FACETS) {
+            var where = query.where(facet);
+            List<Object> args = new ArrayList<>();
+            if (facet.equals("type")) args.add(InventoryQuery.TYPES.toArray(String[]::new));
+            args.addAll(where.args());
+            out.put(facet, jdbc.queryForList(query.facetSql(facet).formatted(where.sql()), args.toArray()));
+        }
+        return out;
+    }
+
+    /**
+     * Moves whole lines, picked by id or by a filter ("everything matching"), into a spot, or to "not put away"
+     * (at {@code locationId}, else where each line is). Synced lines keep syncing from CardBox in their new spot.
+     */
+    public record BulkMoveBody(List<UUID> ids, Map<String, List<String>> filter, UUID locationId, UUID storageId) {}
+
+    @PostMapping("/inventory/move")
+    @Transactional
+    public Map<String, Object> bulkMove(@RequestBody BulkMoveBody body, HttpServletRequest request) {
+        UUID tenant = CurrentUser.of(request).tenantId();
+        if ((body.ids() == null) == (body.filter() == null)) throw ApiException.badRequest("Send either ids or filter");
+        UUID target = body.storageId() != null ? inventory.spot(tenant, body.storageId()).locationId() : body.locationId();
+        if (target != null) requireLocation(tenant, target);
+        List<Map<String, Object>> lines;
+        if (body.ids() != null) {
+            if (body.ids().size() > MAX_BULK) throw ApiException.badRequest("Move at most " + MAX_BULK + " lines at a time");
+            lines = jdbc.queryForList("SELECT * FROM inventory_items WHERE tenant_id = ? AND id = ANY (?::uuid[]) FOR UPDATE",
+                    tenant, body.ids().stream().map(UUID::toString).toArray(String[]::new));
+        } else {
+            var where = new InventoryQuery(tenant, body.filter()).where();
+            lines = jdbc.queryForList("SELECT i.* " + InventoryQuery.FROM + " WHERE " + where.sql() + " FOR UPDATE OF i", where.args().toArray());
+            if (lines.size() > MAX_BULK) throw ApiException.badRequest("That is " + lines.size() + " lines; narrow it to " + MAX_BULK + " or fewer");
+        }
+        int moved = 0, cards = 0, skipped = 0;
+        Set<UUID> links = new HashSet<>();
+        for (var line : lines) {
+            UUID location = target != null ? target : (UUID) line.get("location_id");
+            if (location.equals(line.get("location_id")) && Objects.equals(body.storageId(), line.get("storage_id"))) continue;
+            UUID link = (UUID) line.get("club_link_id");
+            if (link != null) {
+                // A synced card that isn't in a spot sits at its collection's location.
+                UUID home = jdbc.queryForObject("SELECT location_id FROM club_links WHERE id = ?", UUID.class, link);
+                if (body.storageId() == null && !location.equals(home)) { skipped++; continue; }
+                clubSync.place(line, body.storageId());
+                links.add(link);
+            } else {
+                jdbc.update("DELETE FROM inventory_items WHERE id = ?", line.get("id"));
+                inventory.add(tenant, location, body.storageId(), stock(line, (String) line.get("condition"), (Integer) line.get("quantity")));
+            }
+            moved++;
+            cards += (Integer) line.get("quantity");
+        }
+        links.forEach(clubSync::rebuild);
+        return Map.of("lines", moved, "cards", cards, "skipped", skipped);
     }
 
     @PostMapping("/inventory")
@@ -219,29 +277,52 @@ public class InventoryController {
     @Transactional
     public Map<String, Object> move(@PathVariable UUID id, @RequestBody MoveBody body, HttpServletRequest request) {
         UUID tenant = CurrentUser.of(request).tenantId();
-        var item = item(tenant, id);
-        int have = (Integer) item.get("quantity");
+        var line = line(tenant, id);
+        int have = (Integer) line.get("quantity");
         int moving = body.quantity() == null ? have : body.quantity();
+        if (line.get("club_link_id") != null) {
+            // Club owns how many there are, so a synced line moves whole; it keeps syncing in its new spot.
+            if (moving != have) throw ApiException.badRequest("Cards synced from CardBox move a whole line at a time");
+            var result = bulkMove(new BulkMoveBody(List.of(id), null, body.locationId(), body.storageId()), request);
+            if ((Integer) result.get("skipped") > 0)
+                throw ApiException.badRequest("Cards synced from CardBox can only wait to be put away at their collection's location");
+            return Map.of("ok", true);
+        }
         if (moving < 1 || moving > have) throw ApiException.badRequest("Move between 1 and " + have);
         // A spot decides its own location; without a spot, the cards go to a location's "not put away" pile.
         UUID location = body.storageId() != null ? inventory.spot(tenant, body.storageId()).locationId()
-                : body.locationId() != null ? body.locationId() : (UUID) item.get("location_id");
+                : body.locationId() != null ? body.locationId() : (UUID) line.get("location_id");
         requireLocation(tenant, location);
         if (moving == have) jdbc.update("DELETE FROM inventory_items WHERE id = ?", id);
         else jdbc.update("UPDATE inventory_items SET quantity = quantity - ?, updated_at = now() WHERE id = ?", moving, id);
-        inventory.add(tenant, location, body.storageId(), stock(item, (String) item.get("condition"), moving));
+        inventory.add(tenant, location, body.storageId(), stock(line, (String) line.get("condition"), moving));
         return Map.of("ok", true);
     }
 
-    private Map<String, Object> item(UUID tenant, UUID id) {
+    private Map<String, Object> line(UUID tenant, UUID id) {
         var rows = jdbc.queryForList("SELECT * FROM inventory_items WHERE id = ? AND tenant_id = ? FOR UPDATE", id, tenant);
         if (rows.isEmpty()) throw ApiException.notFound("That card is no longer in inventory");
+        return rows.getFirst();
+    }
+
+    private static int intParam(MultiValueMap<String, String> params, String name, int fallback) {
+        try {
+            String v = params.getFirst(name);
+            return v == null || v.isBlank() ? fallback : Integer.parseInt(v);
+        } catch (NumberFormatException e) {
+            throw ApiException.badRequest(name + " must be a number");
+        }
+    }
+
+    /** A line of the store's own stock, locked for a change. Synced lines are counted and conditioned on CardBox. */
+    private Map<String, Object> item(UUID tenant, UUID id) {
+        var rows = List.of(line(tenant, id));
         if (rows.getFirst().get("club_link_id") != null) {
             // Club owns synced lines: one change here would be undone by the next delivery.
             String collection = jdbc.queryForObject("SELECT collection_name FROM club_links WHERE id = ?", String.class,
                     rows.getFirst().get("club_link_id"));
             throw new ApiException(HttpStatus.CONFLICT, "This card syncs from the CardBox collection " + collection
-                    + ". Change it there, or move the whole collection from Club collections.");
+                    + ". Change how many there are on CardBox; you can still move it here.");
         }
         return rows.getFirst();
     }
