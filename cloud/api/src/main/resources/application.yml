@@ -36,6 +36,14 @@ app:
     enabled: ${CLUB_SYNC_ENABLED:false}
     audience: ${CLUB_SYNC_AUDIENCE:https://cardbox.trading/api}
     client-ids: ${CLUB_SYNC_CLIENT_IDS:}
+  # Help & feedback reports are saved here and, when GITHUB_ISSUES_TOKEN is set (a fine-grained token with Issues
+  # read/write on this repository only), filed as sanitized GitHub issues. Without a token, reports are only saved.
+  support:
+    github:
+      token: ${GITHUB_ISSUES_TOKEN:}
+      repo: ${GITHUB_ISSUES_REPO:vanRoojen-LLC/OCC_PRICER}
+      api-url: ${GITHUB_API_URL:https://api.github.com}
+    admin-url: ${SUPPORT_ADMIN_URL:https://cardbox.trading/app/admin}
   # Platform owner. Only counts once Auth0 has verified the address.
   owner-email: ${OWNER_EMAIL:toby@vanroojen.com}
   trial-days: 30

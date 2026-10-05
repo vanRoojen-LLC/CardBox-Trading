@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import { CardBoxPeople, CardBoxStores } from './CardBoxPeople'
+import SupportReports from '../SupportReports'
 
 interface AdminStore {
   id: string; name: string; planStatus: string; trialEndsAt: string; createdAt: string; entitled: boolean
@@ -25,9 +26,10 @@ export default function Admin({ me, onChange }: { me: { email: string; cardbox: 
       <CardBoxStores />
       <h2 style={{ marginTop: 28 }}>People</h2>
       <CardBoxPeople me={me} onChange={onChange} />
+      <SupportReports />
     </section>
   )
-  return <LocalAdmin onChange={onChange} />
+  return <><LocalAdmin onChange={onChange} /><SupportReports /></>
 }
 
 function LocalAdmin({ onChange }: { onChange: () => Promise<void> }) {

@@ -56,6 +56,16 @@ if ! az keyvault secret show --vault-name "$VAULT" -n auth0-client-secret --quer
   echo "Key Vault $VAULT has no auth0-client-secret. Set it from the CardBox Trading Auth0 application (see cloud/README.md)." >&2
   exit 1
 fi
+# Help & feedback files reports as GitHub issues only when the vault has github-issues-token (a fine-grained token,
+# Issues read/write on this repository only). GITHUB_ISSUES_TOKEN, when set here, is stored there first.
+if [ -n "${GITHUB_ISSUES_TOKEN:-}" ]; then
+  printf '%s' "$GITHUB_ISSUES_TOKEN" | az keyvault secret set --vault-name "$VAULT" -n github-issues-token --file /dev/stdin -o none
+fi
+if az keyvault secret show --vault-name "$VAULT" -n github-issues-token --query id -o tsv >/dev/null 2>&1; then
+  GITHUB_ISSUES=true
+else
+  GITHUB_ISSUES=false
+fi
 PG_PASSWORD=$(az keyvault secret show --vault-name "$VAULT" -n postgres-password --query value -o tsv)
 
 echo "== Building image $SERVER/occ-pricer:$TAG in Azure"
@@ -65,6 +75,7 @@ echo "== Stage 2: database, app and nightly import job"
 out=$(az deployment group create -g "$GROUP" -n "${PREFIX}-apps" -f "$INFRA" \
   -p prefix="$PREFIX" deployerObjectId="$DEPLOYER" deployApps=true image="$SERVER/occ-pricer:$TAG" cardboxEnabled="${CARDBOX_ENABLED:-false}" \
      clubSyncEnabled="${CLUB_SYNC_ENABLED:-false}" clubSyncClientIds="${CLUB_SYNC_CLIENT_IDS:-WB4mbh9ky62gjPZHFOHBQCXhYytIie7K}" \
+     githubIssues="$GITHUB_ISSUES" githubIssuesRepo="${GITHUB_ISSUES_REPO:-vanRoojen-LLC/OCC_PRICER}" \
      postgresPassword="$PG_PASSWORD" --query properties.outputs -o json)
 URL=$(jq -r .appUrl.value <<<"$out")
 JOB=$(jq -r .importJobName.value <<<"$out")

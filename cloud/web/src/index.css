@@ -69,7 +69,7 @@ h2 { font-size: 1.05rem; font-weight: 650; margin: 0; }
 @media (max-width: 760px) {
   .topbar { gap: 0 16px; padding: 8px 16px 0; }
   .topbar .brand { min-height: 48px; }
-  .topbar .who { margin-left: auto; padding-bottom: 8px; }
+  .topbar .who { margin-left: auto; padding-bottom: 8px; flex-wrap: wrap; justify-content: flex-end; gap: 8px 14px; }
   .tabs { order: 3; width: 100%; }
   .tabs a { min-height: 48px; }
 }
@@ -81,7 +81,7 @@ h2 { font-size: 1.05rem; font-weight: 650; margin: 0; }
 .lede { margin: 0 0 1rem; color: var(--muted); }
 
 /* Controls */
-input, select, button { font: inherit; }
+input, select, button, textarea { font: inherit; }
 input, select { min-height: var(--tap); padding: 0 .75rem; border: 1px solid var(--line-strong); border-radius: var(--radius);
   background: var(--surface); color: var(--text); }
 input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus); }
@@ -327,3 +327,20 @@ ul.plain li { padding: .25rem 0; }
 ul.scans { display: flex; flex-wrap: wrap; gap: 12px; }
 .count-lines li { display: flex; align-items: center; gap: 12px; }
 .count-lines li .link { margin-left: auto; }
+
+/* Help & feedback */
+.modal-backdrop { position: fixed; inset: 0; z-index: 90; display: flex; align-items: flex-start; justify-content: center;
+  padding: 10vh 16px 16px; background: rgb(10 17 23 / 55%); overflow-y: auto; }
+.modal { width: 100%; max-width: 520px; color: var(--text); box-shadow: 0 16px 48px rgb(10 17 23 / 30%); }
+.modal h2 { margin-bottom: .75rem; }
+.modal .actions { margin-top: .5rem; }
+label textarea { display: block; width: 100%; margin-top: .3rem; padding: .6rem .75rem; border: 1px solid var(--line-strong);
+  border-radius: var(--radius); background: var(--surface); color: var(--text); font-weight: 400; font-size: 1rem; resize: vertical; }
+label textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus); }
+.support-reports .description { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 40rem; }
+.support-reports tr.highlight td { background: var(--row-hl); }
+.support-reports details { margin-top: .3rem; }
+.support-reports pre { margin: .3rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8rem; }
+.status { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--line-soft); color: var(--text-2); }
+.status.filed { background: var(--ok-bg); color: var(--ok-text); }
+.status.failed { background: var(--banner); color: var(--error); }

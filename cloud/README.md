@@ -10,7 +10,8 @@ and the API; PostgreSQL holds the data.
   tree each store designs itself (store room, shelf, box, section, or any tiers it likes), and the 19-column receiving POS CSV.
   One CardBox login can belong to several stores and switch between them.
 - **Platform admin** at `/app/admin` for the verified owner email: every store and person, plan status, trial end dates,
-  renaming stores, and adding, promoting or removing people on any store.
+  renaming stores, adding, promoting or removing people on any store, and Help & feedback reports.
+- **Help & feedback** in the store app's top bar: anyone signed in can send a bug, question or idea (see below).
 
 Pricing, condition multipliers, settlement and the POS CSV come from the desktop app's own classes
 (`SettlementEngine`, `PricingService`, `TradePosEncoder`, ...), compiled directly from `../src` (see `api/pom.xml`),
@@ -149,6 +150,40 @@ up: the "CardBox Trading" API (`https://cardbox.trading/api`, permission `invent
 machine-to-machine application, client id `WB4mbh9ky62gjPZHFOHBQCXhYytIie7K`, which is the default allow list (`clubSyncClientIds`,
 `CLUB_SYNC_CLIENT_IDS`).
 The contract Club builds against is [CLUB_SYNC.md](CLUB_SYNC.md).
+
+### Help & feedback reports (GitHub filing off until a token is set)
+
+"Help & feedback" in the store app's top bar sends a bug, question or idea to `POST /api/support/reports`, with the
+page's route, the app build, the browser's user agent, language and viewport, and the last few uncaught errors in
+that tab. The store and person come from the session. Reports are saved in `support_reports` and listed for the
+platform owner under **Support reports** on `/app/admin` (`GET /api/admin/support-reports`), with the reporter's
+name, email and store. Anyone signed in can send one, even after their store's trial ends; each person can send 10
+an hour.
+
+When a GitHub token is set, a job in the app (`support/SupportReportFiler.java`, every 30 seconds while a replica is
+up) files each report as an issue in this repository, retrying with backoff up to five times and giving up at once on
+401, 403, 404 or 422. The issue is readable by anyone who can read the repo, so it carries no name, email or store
+name: just the kind, build, route, browser, viewport, report and store ids, the person's words (email addresses
+taken out, @mentions broken), and a link back to the report on the admin page. Its labels are `type:bug`,
+`type:support` (questions) or `type:idea`, plus `surface:web`, `source:user-report` and `needs-triage`; if GitHub
+refuses the labels, the issue is filed without them. Without a token, reports are only saved.
+
+| Setting | Default | What |
+|---|---|---|
+| `GITHUB_ISSUES_TOKEN` | empty (off) | A **fine-grained** personal access token for this repository only, with **Issues: read and write** and nothing else. Vault secret `github-issues-token`. |
+| `GITHUB_ISSUES_REPO` | `vanRoojen-LLC/OCC_PRICER` | Where issues are filed (Bicep `githubIssuesRepo`). |
+
+To switch filing on, put the token in the vault once (or run `GITHUB_ISSUES_TOKEN=... cloud/deploy.sh`, which stores
+it there), then deploy; `deploy.sh` turns on Bicep `githubIssues` whenever the vault has the secret:
+
+```sh
+read -rs TOKEN && printf '%s' "$TOKEN" \
+  | az keyvault secret set --vault-name <vault> -n github-issues-token --file /dev/stdin -o none
+cloud/deploy.sh
+```
+
+To switch it off again, delete the secret and redeploy. Reports filed while it was on keep their issue links.
+
 ### Domain
 
 `cardbox.trading` is registered at Cloudflare and its DNS is hosted there. Both `cardbox.trading` and

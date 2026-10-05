@@ -19,7 +19,8 @@ import java.util.UUID;
 /**
  * Guards the paid store workflow under /api/app/**: requires a valid session and a store
  * whose subscription is active or still in trial. /api/admin/** needs the platform owner instead, and
- * /api/cardbox/** (people and roles, which CardBox itself guards) only a session.
+ * /api/cardbox/** (people and roles, which CardBox itself guards) and /api/support/** (Help & feedback, which
+ * must work even after a trial ends) only a session.
  * The free price check is never guarded.
  */
 @Component
@@ -42,7 +43,8 @@ public class AuthFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
-        return !path.startsWith("/api/app/") && !path.startsWith("/api/admin/") && !path.startsWith("/api/cardbox/");
+        return !path.startsWith("/api/app/") && !path.startsWith("/api/admin/") && !path.startsWith("/api/cardbox/")
+                && !path.startsWith("/api/support/");
     }
 
     @Override
@@ -84,6 +86,8 @@ public class AuthFilter extends OncePerRequestFilter {
         CurrentUser user = (CurrentUser) rows.getFirst()[0];
         if (request.getRequestURI().startsWith("/api/cardbox/")) {
             // CardBox decides what this person may see and change.
+        } else if (request.getRequestURI().startsWith("/api/support/")) {
+            // Anyone signed in can ask for help, whatever the state of their store's subscription.
         } else if (request.getRequestURI().startsWith("/api/admin/")) {
             // The platform admin works whatever the state of their own store's subscription.
             if (!user.admin()) {
