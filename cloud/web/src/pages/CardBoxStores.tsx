@@ -36,6 +36,10 @@ export function CardBoxStores() {
   }
   const byCardBox = new Map(trading.filter(t => t.cardboxStoreId).map(t => [t.cardboxStoreId as string, t]))
   const unlinked = trading.filter(t => !t.cardboxStoreId)
+  // An unlinked store sharing its name with a CardBox store that already has a Trading store is usually a leftover
+  // from before stores moved to CardBox. Saying so stops it reading as a second copy of the real store.
+  const linkedNames = new Set(stores.filter(s => byCardBox.has(s.id)).map(s => s.name.trim().toLowerCase()))
+  const leftover = (t: TradingStore) => linkedNames.has(t.name.trim().toLowerCase())
   const linkable = stores.filter(s => !byCardBox.has(s.id) || (byCardBox.get(s.id)!.trades === 0 && byCardBox.get(s.id)!.cards === 0))
 
   return (
@@ -55,7 +59,10 @@ export function CardBoxStores() {
           <h2>Trading stores not yet tied to CardBox</h2>
           <p className="muted">Most link themselves by name the first time their manager signs in. Tie the rest here so their trades and inventory carry over.</p>
           <table className="grid"><tbody>{unlinked.map(t => (
-            <tr key={t.id}><td>{t.name}</td><td className="muted small">{t.people} people · {t.trades} trades</td>
+            <tr key={t.id}><td>{t.name}
+                {leftover(t) && <div className="muted small">{t.trades === 0 && t.cards === 0 ? 'An empty leftover. ' : ''}The {t.name} above
+                  is the one in use, tied to a different Trading store. Nobody can switch to this one.</div>}</td>
+              <td className="muted small">{t.people} {t.people === 1 ? 'person' : 'people'} · {t.trades} trades · {t.cards} cards</td>
               <td><select aria-label={`CardBox store for ${t.name}`} value="" onChange={e => e.target.value &&
                 run(api(`/api/admin/stores/${t.id}/cardbox`, { method: 'PUT', body: { cardboxStoreId: e.target.value } }), `${t.name} now belongs to ${stores.find(s => s.id === e.target.value)?.name}.`)}>
                 <option value="">Tie to a CardBox store…</option>
