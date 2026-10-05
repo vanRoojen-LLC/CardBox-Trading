@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom'
 import { api, CONDITIONS, FINISHES, money, type Card, type Money, type StoreLocation } from '../api'
 import { flatTree, pathOf, pathText, type PathPart, type Spot } from '../storage'
 import SearchIcon from '../SearchIcon'
+import { FACETS, TREATMENTS, titleCase, valueLabel, type Facets } from '../cardDetails'
+import { ColorPips, FacetMenu, PriceMenu } from '../cardFilters'
 import ClubCollections from './ClubCollections'
 
 interface Item {
@@ -12,46 +14,18 @@ interface Item {
   game: string | null; setName: string | null; year: number | null; typeLine: string | null
   /** WUBRG letters, '' for colorless, null when unknown. */
   colors: string | null; treatments: string | null
+  /** Where the store's rules would put a line that isn't put away yet. */
+  destinationId: string | null; destination: PathPart[]
   /** Set on lines synced from a CardBox collection: how many there are is changed on CardBox. */
   clubLinkId: string | null; clubCollection: string | null
 }
 interface Page { items: Item[]; more: boolean; offset: number; cards: number; lines: number; value: Money }
-interface FacetValue { value: string; label: string | null; cards: number }
-type Facets = Record<string, FacetValue[]>
 
 /** Every filter as a list of values; single-valued ones (q, location, storage, prices) hold one. */
 type Filters = Record<string, string[]>
 
 const PAGE = 100
 
-/** The filters the page offers, in order. Each counts its values on the server. */
-const FACETS: { key: string; label: string; searchable?: boolean }[] = [
-  { key: 'game', label: 'Game' }, { key: 'set', label: 'Set', searchable: true }, { key: 'year', label: 'Year' },
-  { key: 'rarity', label: 'Rarity' }, { key: 'color', label: 'Color' }, { key: 'type', label: 'Type' },
-  { key: 'finish', label: 'Finish' }, { key: 'treatment', label: 'Treatment' }, { key: 'condition', label: 'Condition' },
-  { key: 'source', label: 'Came from' },
-]
-
-const GAMES: Record<string, string> = { 'magic-the-gathering': 'Magic', 'star-wars-unlimited': 'Star Wars: Unlimited' }
-const COLORS: Record<string, string> = { W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green', M: 'Multicolor', C: 'Colorless' }
-const TREATMENTS: Record<string, string> = {
-  none: 'Plain', showcase: 'Showcase', 'extended-art': 'Extended art', borderless: 'Borderless', 'full-art': 'Full art',
-  'retro-frame': 'Retro frame', textless: 'Textless', serialized: 'Serialized', promo: 'Promo',
-}
-const titleCase = (s: string) => s.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-
-/** How a filter value reads on the page. */
-function valueLabel(facet: string, v: FacetValue | { value: string; label?: string | null }): string {
-  switch (facet) {
-    case 'game': return GAMES[v.value] ?? titleCase(v.value)
-    case 'set': return v.label ? `${v.label} (${v.value})` : v.value
-    case 'color': return COLORS[v.value] ?? v.value
-    case 'treatment': return TREATMENTS[v.value] ?? titleCase(v.value)
-    case 'source': return v.value === 'store' ? 'Store stock' : `CardBox: ${v.label ?? 'collection'}`
-    case 'rarity': case 'finish': return titleCase(v.value)
-    default: return v.value
-  }
-}
 
 /** Saved starting points. "To put away" is where synced and traded cards wait. */
 const VIEWS: { key: string; label: string; storage: string | null }[] = [
@@ -84,11 +58,6 @@ function SpotOptions({ spots, locationId }: { spots: Spot[]; locationId: string 
     <option key={s.id} value={s.id}>{'  '.repeat(s.depth)}{s.label} {s.name}</option>)}</>
 }
 
-function ColorPips({ colors }: { colors: string | null }) {
-  if (colors === null) return <span className="muted">—</span>
-  if (colors === '') return <span className="pip C" title="Colorless" />
-  return <span className="pips" title={[...colors].map(c => COLORS[c]).join(', ')}>{[...colors].map(c => <span key={c} className={`pip ${c}`} />)}</span>
-}
 
 /** Stock on hand: find it by any detail, pick lines (or everything matching), and put them away in bulk. */
 export default function Inventory({ locations, registerLocationId, owner }: { locations: StoreLocation[]; registerLocationId: string | null; owner: boolean }) {
@@ -187,6 +156,18 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
     } catch (e) { setError((e as Error).message) }
   }
 
+  async function putAway(body: object, done: string) {
+    try {
+      const r = await api<{ lines: number; cards: number; spots: number; unmatched: number }>('/api/app/inventory/put-away', { method: 'POST', body })
+      setNotice(r.cards === 0 && r.unmatched > 0 ? `No storage rule fits ${r.unmatched === 1 ? 'that line' : `those ${r.unmatched} lines`}. Add one under Store › Storage, or use Move to….`
+        : `${done.replace('{cards}', `${r.cards} card${r.cards === 1 ? '' : 's'}`).replace('{spots}', `${r.spots} spot${r.spots === 1 ? '' : 's'}`)}`
+          + (r.unmatched ? ` ${r.unmatched} line${r.unmatched === 1 ? '' : 's'} had no rule and stayed.` : ''))
+      setError(''); clearSelection()
+      await refresh()
+    } catch (e) { setError((e as Error).message) }
+  }
+  const putAwaySelected = () => putAway(allMatching ? { filter: active } : { ids: [...selected] }, 'Put {cards} away in {spots}.')
+
   // Keyboard: / searches, m moves the selection, Escape clears it.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -266,6 +247,11 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
       {notice && <p className="notice" role="status">{notice} <button className="link" onClick={() => setNotice('')}>Dismiss</button></p>}
       {error && <p className="error" role="alert">{error}</p>}
 
+      {(filters.storage?.[0] ?? VIEWS.find(v => v.key === view)?.storage) === 'none' && (
+        <PutAwayList filter={{ ...active, storage: [] }} version={page} onPutAway={(storageId, label) =>
+          putAway({ filter: { ...active, storage: ['none'] }, storageId }, `Filed {cards} into ${label}.`)} />
+      )}
+
       <div className="inv-summary">
         {page ? <span>{page.cards.toLocaleString()} card{page.cards === 1 ? '' : 's'} in {page.lines.toLocaleString()} line{page.lines === 1 ? '' : 's'}
           {Number(page.value) > 0 && <> · {money(page.value)} market</>}</span> : <span className="muted">Loading…</span>}
@@ -280,6 +266,7 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
           )}
           <span className="bulk-actions">
             <button className="small" onClick={() => setPicking(true)}>Move to…</button>
+            <button className="small ghost" onClick={putAwaySelected} title="Put each card where your storage rules send it">Put away by rules</button>
             <button className="small ghost" onClick={clearSelection}>Clear</button>
           </span>
         </div>
@@ -322,67 +309,52 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
   )
 }
 
-/** One filter as a menu of its values with counts; picking several matches any of them. */
-function FacetMenu({ facet, values, picked, onChange }: {
-  facet: { key: string; label: string; searchable?: boolean }; values: FacetValue[]; picked: string[]; onChange: (v: string[]) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const [find, setFind] = useState('')
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!open) return
-    const close = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false) }
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
-    document.addEventListener('mousedown', close); document.addEventListener('keydown', esc)
-    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc) }
-  }, [open])
-  const shown = values.filter(v => !find || valueLabel(facet.key, v).toLowerCase().includes(find.toLowerCase()))
-  // Picked values stay listed even when nothing matches them under the other filters.
-  const missing = picked.filter(p => !values.some(v => v.value === p)).map(p => ({ value: p, label: null, cards: 0 }))
-  if (values.length === 0 && picked.length === 0) return null
-  return (
-    <div className="facet" ref={ref}>
-      <button className={`chip${picked.length ? ' on' : ''}`} aria-expanded={open} onClick={() => setOpen(!open)}>
-        {facet.label}{picked.length ? ` · ${picked.length}` : ''} <span aria-hidden className="caret">▾</span>
-      </button>
-      {open && (
-        <div className="facet-menu" role="dialog" aria-label={`${facet.label} filter`}>
-          {(facet.searchable || values.length > 12) && (
-            <input autoFocus placeholder={`Find a ${facet.label.toLowerCase()}`} aria-label={`Find a ${facet.label.toLowerCase()}`} value={find} onChange={e => setFind(e.target.value)} />
-          )}
-          <ul>
-            {[...missing, ...shown].map(v => (
-              <li key={v.value}>
-                <label className="facet-option">
-                  <input type="checkbox" checked={picked.includes(v.value)}
-                    onChange={e => onChange(e.target.checked ? [...picked, v.value] : picked.filter(p => p !== v.value))} />
-                  {facet.key === 'color' && <ColorPips colors={v.value === 'C' ? '' : v.value} />}
-                  <span className="facet-label">{valueLabel(facet.key, v)}</span>
-                  <span className="facet-count">{Number(v.cards).toLocaleString()}</span>
-                </label>
-              </li>
-            ))}
-          </ul>
-          {shown.length === 0 && <p className="muted small">Nothing matches.</p>}
-          {picked.length > 0 && <button className="link" onClick={() => onChange([])}>Clear {facet.label.toLowerCase()}</button>}
-        </div>
-      )}
-    </div>
-  )
-}
+interface PutAwayGroup { storageId: string; location: string; path: PathPart[]; lines: number; cards: number }
 
-function PriceMenu({ min, max, onChange }: { min: string; max: string; onChange: (min: string, max: string) => void }) {
-  const [open, setOpen] = useState(false)
-  const [form, setForm] = useState({ min, max })
+/**
+ * The cards waiting under the current filters, grouped by the spot the store's rules send them to, in shelf order.
+ * Staff carry the pile, file a spot's worth, and press its button.
+ */
+function PutAwayList({ filter, version, onPutAway }: { filter: Filters; version: unknown; onPutAway: (storageId: string, label: string) => Promise<void> }) {
+  const [list, setList] = useState<{ groups: PutAwayGroup[]; unmatched: { lines: number; cards: number } } | null>(null)
+  const [open, setOpen] = useState(() => readStored('inventory.putAwayOpen', true))
+  const [busy, setBusy] = useState<string | null>(null)
+  const params = query(filter)
+  useEffect(() => {
+    api<typeof list>(`/api/app/inventory/put-away?${params}`).then(setList).catch(() => setList(null))
+  }, [params, version])
+  useEffect(() => { try { localStorage.setItem('inventory.putAwayOpen', JSON.stringify(open)) } catch { /* private window */ } }, [open])
+  if (!list || (list.groups.length === 0 && list.unmatched.cards === 0)) return null
+  const several = new Set(list.groups.map(g => g.location)).size > 1
+  const total = list.groups.reduce((n, g) => n + g.cards, 0)
   return (
-    <div className="facet">
-      <button className={`chip${min || max ? ' on' : ''}`} aria-expanded={open} onClick={() => { setForm({ min, max }); setOpen(!open) }}>Market price <span aria-hidden className="caret">▾</span></button>
-      {open && (
-        <form className="facet-menu price" onSubmit={e => { e.preventDefault(); onChange(form.min.trim(), form.max.trim()); setOpen(false) }}>
-          <label>At least $<input inputMode="decimal" autoFocus value={form.min} onChange={e => setForm({ ...form, min: e.target.value })} /></label>
-          <label>At most $<input inputMode="decimal" value={form.max} onChange={e => setForm({ ...form, max: e.target.value })} /></label>
-          <button type="submit" className="small">Apply</button>
-        </form>
+    <div className="panel put-away">
+      <div className="panel-head">
+        <h2>Put-away list</h2>
+        <button className="link" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? 'Hide' : `Show ${list.groups.length} spot${list.groups.length === 1 ? '' : 's'}`}</button>
+      </div>
+      {list.groups.length === 0
+        ? <p className="muted small">None of these cards fit a storage rule yet. Set what goes where under <Link to="/app/store">Store › Storage</Link>.</p>
+        : <p className="muted small">Your storage rules have a spot for {total.toLocaleString()} of these cards. File each spot's worth, then mark it done.</p>}
+      {open && list.groups.length > 0 && (
+        <ul className="put-away-groups">
+          {list.groups.map(g => {
+            const label = (several ? `${g.location} › ` : '') + pathText(g.path)
+            return (
+              <li key={g.storageId}>
+                <span className="dest">{label}</span>
+                <span className="muted num">{g.lines.toLocaleString()} line{g.lines === 1 ? '' : 's'}</span>
+                <strong className="num">{g.cards.toLocaleString()} card{g.cards === 1 ? '' : 's'}</strong>
+                <button className="small secondary" disabled={busy !== null}
+                  onClick={async () => { setBusy(g.storageId); await onPutAway(g.storageId, label); setBusy(null) }}>
+                  {busy === g.storageId ? 'Filing…' : 'Done, filed'}</button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+      {open && list.unmatched.cards > 0 && (
+        <p className="muted small">{list.unmatched.cards.toLocaleString()} card{list.unmatched.cards === 1 ? '' : 's'} ({list.unmatched.lines} line{list.unmatched.lines === 1 ? '' : 's'}) fit no rule; move them with Move to….</p>
       )}
     </div>
   )
@@ -475,7 +447,8 @@ function InventoryRow({ item, several, locations, spots, selected, onSelect, mov
         <td><span style={{ textTransform: 'capitalize' }}>{item.finish}</span>{treatments.length > 0 && <div className="muted small">{treatments.join(', ')}</div>}</td>
         <td>{item.condition}</td>
         <td>{several && <div className="muted small">{item.location}</div>}
-          {item.path.length ? pathText(item.path) : <span className="unshelved">Not put away</span>}</td>
+          {item.path.length ? pathText(item.path) : <span className="unshelved">Not put away</span>}
+          {item.destination?.length > 0 && <div className="headed" title="Where your storage rules send it">→ {pathText(item.destination)}</div>}</td>
         <td className="r">{money(item.market)}</td>
         <td className="r">
           {synced ? item.quantity : (

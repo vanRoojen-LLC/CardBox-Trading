@@ -149,6 +149,13 @@ public final class InventoryQuery {
                 }
                 case "priceMin" -> { sql.append(" AND ").append(MARKET).append(" >= ?"); args.add(price(v.getFirst())); }
                 case "priceMax" -> { sql.append(" AND ").append(MARKET).append(" <= ?"); args.add(price(v.getFirst())); }
+                // Names from one letter (or prefix) to another, both ends included: A to L takes "Lightning Bolt".
+                case "nameFrom" -> { sql.append(" AND upper(i.name) >= upper(?)"); args.add(v.getFirst()); }
+                case "nameTo" -> {
+                    sql.append(" AND upper(left(i.name, length(?))) <= upper(?)");
+                    args.add(v.getFirst());
+                    args.add(v.getFirst());
+                }
                 default -> { } // sort, paging and anything unknown are not filters
             }
         }
