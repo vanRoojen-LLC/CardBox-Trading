@@ -124,6 +124,31 @@ public class InventoryController {
         return storage(request);
     }
 
+    /** Moves a spot one place earlier or later among its siblings. Order decides which spot's rule is tried first. */
+    public record ReorderBody(@NotBlank String direction) {}
+
+    @PostMapping("/storage/{id}/reorder")
+    @Transactional
+    public List<Map<String, Object>> reorder(@PathVariable UUID id, @Valid @RequestBody ReorderBody body, HttpServletRequest request) {
+        UUID tenant = requireOwner(request).tenantId();
+        var spot = inventory.spot(tenant, id);
+        var siblings = inventory.spots(tenant).stream()
+                .filter(s -> s.locationId().equals(spot.locationId()) && java.util.Objects.equals(s.parentId(), spot.parentId())).toList();
+        int at = -1;
+        for (int i = 0; i < siblings.size(); i++) if (siblings.get(i).id().equals(id)) at = i;
+        int to = switch (body.direction()) {
+            case "up" -> at - 1;
+            case "down" -> at + 1;
+            default -> throw ApiException.badRequest("Direction must be up or down");
+        };
+        if (to < 0 || to >= siblings.size()) return storage(request);
+        List<InventoryRepository.Spot> order = new ArrayList<>(siblings);
+        order.add(to, order.remove(at));
+        // Renumber the whole level so equal positions from older data can't tie.
+        for (int i = 0; i < order.size(); i++) jdbc.update("UPDATE storage_spots SET position = ? WHERE id = ?", i, order.get(i).id());
+        return storage(request);
+    }
+
     /** Removes an empty-of-children spot. Any cards in it move up to the spot that held it. */
     @PostMapping("/storage/{id}/remove")
     @Transactional

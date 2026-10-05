@@ -603,6 +603,15 @@ class CloudApiIntegrationTest {
         assertEquals(1, call("POST", "/api/app/storage/" + ids.get("Box B") + "/rule/preview", owner, Map.of("conditions", Map.of())).body().path("cards").asInt());
         assertEquals(0, call("POST", "/api/app/storage/" + ids.get("Box B") + "/rule/preview", owner, Map.of("conditions", Map.of("color", java.util.List.of("U")))).body().path("cards").asInt());
 
+        // Order decides: with Shelf 2 first, Sol Ring is just Magic and stays on the shelf itself.
+        var moved = call("POST", "/api/app/storage/" + ids.get("Shelf 2") + "/reorder", owner, Map.of("direction", "up"));
+        assertEquals(200, moved.status(), moved.raw());
+        var first = call("GET", "/api/app/inventory/put-away", owner, null).body().path("groups").get(0);
+        assertEquals(ids.get("Shelf 2"), first.path("storageId").asText());
+        assertEquals(2, first.path("cards").asInt());
+        call("POST", "/api/app/storage/" + ids.get("Shelf 2") + "/reorder", owner, Map.of("direction", "down"));
+        assertEquals(ids.get("Shelf 1"), call("GET", "/api/app/inventory/put-away", owner, null).body().path("groups").get(0).path("storageId").asText());
+
         // File one box's worth, then the rest.
         var filed = call("POST", "/api/app/inventory/put-away", owner, Map.of("filter", Map.of("storage", java.util.List.of("none")), "storageId", ids.get("Box A")));
         assertEquals(200, filed.status(), filed.raw());
