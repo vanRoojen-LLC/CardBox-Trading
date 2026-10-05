@@ -11,6 +11,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /**
@@ -24,7 +25,7 @@ public class ClubSync {
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     public record Upsert(String itemId, Long version, String game, String scryfallId, String finish, Integer quantity,
                          String condition, String name, String setCode, String collectorNumber,
-                         String storageId, String imageUrl, JsonNode details) {}
+                         String storageId, String imageUrl, JsonNode details, String clubPrintingId, String treatment) {}
 
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     public record Removal(String itemId, Long version) {}
@@ -218,7 +219,7 @@ public class ClubSync {
         return jdbc.queryForList("""
                 SELECT i.item_id AS "itemId", i.name, i.set_code AS "set", i.collector_number AS number, i.game, i.quantity,
                        coalesce(i.unmatched_reason, ?) AS reason
-                FROM club_link_items i LEFT JOIN cards c ON c.id = i.card_id
+                FROM club_link_items i LEFT JOIN inventory_cards c ON c.id = i.card_id
                 WHERE i.link_id = ? AND NOT i.removed AND c.id IS NULL
                 ORDER BY lower(i.name), i.set_code, i.collector_number LIMIT 200""", NOT_IN_LIST, linkId);
     }
@@ -288,12 +289,12 @@ public class ClubSync {
                 SELECT gen_random_uuid(), l.tenant_id, coalesce(s.location_id, l.location_id), coalesce(s.id, l.storage_id),
                        c.id, c.name, c.set_code, c.collector_number,
                        c.rarity, c.lang, i.finish, coalesce(i.condition, l.default_condition), sum(i.quantity), l.id
-                FROM club_link_items i JOIN club_links l ON l.id = i.link_id JOIN cards c ON c.id = i.card_id
+                FROM club_link_items i JOIN club_links l ON l.id = i.link_id JOIN inventory_cards c ON c.id = i.card_id
                 -- A card scanned into a spot sits there; otherwise at the collection's target.
                 LEFT JOIN storage_spots s ON s.id = i.storage_id AND s.tenant_id = l.tenant_id
                 WHERE i.link_id = ? AND NOT i.removed
-                GROUP BY l.tenant_id, coalesce(s.location_id, l.location_id), coalesce(s.id, l.storage_id), l.id, c.id, i.finish,
-                         coalesce(i.condition, l.default_condition)""",
+                GROUP BY l.tenant_id, coalesce(s.location_id, l.location_id), coalesce(s.id, l.storage_id), l.id, c.id, c.name, c.set_code,
+                         c.collector_number, c.rarity, c.lang, i.finish, coalesce(i.condition, l.default_condition)""",
                 linkId);
         jdbc.update("UPDATE club_links SET last_synced_at = now() WHERE id = ?", linkId);
     }
@@ -323,7 +324,7 @@ public class ClubSync {
                        count(*) FILTER (WHERE NOT i.removed AND c.id IS NOT NULL) AS matched,
                        count(*) FILTER (WHERE NOT i.removed AND c.id IS NULL) AS not_matched,
                        coalesce(sum(i.quantity) FILTER (WHERE NOT i.removed AND c.id IS NOT NULL), 0) AS cards
-                FROM club_link_items i LEFT JOIN cards c ON c.id = i.card_id WHERE i.link_id = ?""", id);
+                FROM club_link_items i LEFT JOIN inventory_cards c ON c.id = i.card_id WHERE i.link_id = ?""", id);
         String location = jdbc.queryForObject("SELECT name FROM locations WHERE id = ?", String.class, link.get("location_id"));
         UUID storage = (UUID) link.get("storage_id");
         var path = storage == null ? List.of()
@@ -392,15 +393,38 @@ public class ClubSync {
         return rows.getFirst();
     }
 
-    /** Magic only, with a Scryfall id and a finish Trading knows. Whether Trading has the card yet is checked apart. */
+    /**
+     * Magic goes in by its Scryfall id, so it prices from Trading's catalog. Any other game goes in by Club's printing
+     * id, as Club describes it (see {@link #knownCards}). Whether Trading has a Magic card yet is checked apart.
+     */
     public static Match match(Upsert u) {
+        if (!MAGIC.equals(u.game())) {
+            String printing = text(u.clubPrintingId()).trim();
+            String reason = printing.isEmpty() ? "No Club printing id"
+                    : printing.length() > 200 ? "Club printing id too long"
+                    : text(u.name()).isBlank() ? "No card name"
+                    : null;
+            return new Match(reason == null ? clubCardId(printing) : null, treatment(u.treatment()), reason);
+        }
         String finish = finish(u.finish());
         UUID card = parse(u.scryfallId());
-        String reason = !MAGIC.equals(u.game()) ? "Only Magic cards go into Trading inventory"
-                : card == null ? "No Scryfall id"
+        String reason = card == null ? "No Scryfall id"
                 : finish == null ? "Unknown finish " + u.finish()
                 : null;
         return new Match(card, finish, reason);
+    }
+
+    /** The same Club printing is always the same card here. */
+    static UUID clubCardId(String clubPrintingId) {
+        return UUID.nameUUIDFromBytes(("cardbox.club printing " + clubPrintingId).getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** Club's treatment (normal, foil, hyperspace, showcase...) as a finish; plain if none. */
+    static String treatment(String treatment) {
+        if (treatment == null || treatment.isBlank()) return "normal";
+        String t = treatment.trim().toLowerCase().replaceAll("[^a-z0-9]+", " ").trim();
+        if (t.isEmpty()) return "normal";
+        return t.equals("nonfoil") || t.equals("standard") ? "normal" : t.substring(0, Math.min(40, t.length()));
     }
 
     /** The spot, if it is one of this store's; anything else counts as no spot. */
@@ -421,10 +445,33 @@ public class ClubSync {
         return details != null && details.isObject() && details.toString().length() <= 4000 ? details.toString() : null;
     }
 
+    /**
+     * The cards among these that inventory can hold. Cards from other games are added to Club's catalog here first
+     * (name, set and number as Club last sent them); Magic cards must already be in Trading's.
+     */
     public Set<UUID> knownCards(List<Upsert> upserts) {
-        UUID[] ids = upserts.stream().map(u -> parse(u.scryfallId())).filter(Objects::nonNull).distinct().toArray(UUID[]::new);
-        if (ids.length == 0) return Set.of();
-        return new HashSet<>(jdbc.queryForList("SELECT id FROM cards WHERE id = ANY (?)", UUID.class, (Object) ids));
+        Set<UUID> ids = new HashSet<>();
+        for (Upsert u : upserts) {
+            Match m = match(u);
+            if (m.reason() != null) continue;
+            ids.add(m.cardId());
+            if (!MAGIC.equals(u.game()))
+                jdbc.update("""
+                        INSERT INTO club_cards (id, club_printing_id, game, name, set_code, collector_number) VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT (id) DO UPDATE SET game = EXCLUDED.game, name = EXCLUDED.name, set_code = EXCLUDED.set_code,
+                            collector_number = EXCLUDED.collector_number, updated_at = now()
+                        WHERE (club_cards.game, club_cards.name, club_cards.set_code, club_cards.collector_number)
+                            IS DISTINCT FROM (EXCLUDED.game, EXCLUDED.name, EXCLUDED.set_code, EXCLUDED.collector_number)""",
+                        m.cardId(), u.clubPrintingId().trim(), text(u.game()), clip(u.name()), clip(u.setCode()), clip(u.collectorNumber()));
+        }
+        if (ids.isEmpty()) return Set.of();
+        return new HashSet<>(jdbc.queryForList("SELECT id FROM inventory_cards WHERE id = ANY (?)", UUID.class,
+                (Object) ids.toArray(UUID[]::new)));
+    }
+
+    private static String clip(String value) {
+        String v = text(value).trim();
+        return v.substring(0, Math.min(200, v.length()));
     }
 
     private static ApiException notLinked() {

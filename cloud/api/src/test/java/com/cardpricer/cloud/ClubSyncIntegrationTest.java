@@ -245,6 +245,33 @@ class ClubSyncIntegrationTest {
     }
 
     @Test
+    void otherGamesGoInByClubsPrintingId() throws Exception {
+        link();
+        Map<String, Object> luke = new HashMap<>(Map.of("item_id", "s1", "version", 1, "game", "star-wars-unlimited",
+                "club_printing_id", "swu-sor-005-hyper", "treatment", "Hyperspace", "quantity", 1, "name", "Luke Skywalker",
+                "set_code", "SOR", "collector_number", "005"));
+        Map<String, Object> again = new HashMap<>(luke);
+        again.putAll(Map.of("item_id", "s2", "version", 2, "quantity", 2));
+        var sent = club("POST", "/items", Map.of("upserts", List.of(luke, again,
+                Map.of("item_id", "s3", "version", 3, "game", "star-wars-unlimited", "name", "No id"))));
+        assertEquals(200, sent.status(), sent.raw());
+        assertEquals(1, sent.body().path("not_matched").size(), "an item without a printing id can't go in");
+
+        // Two scans of the same printing are one card and one line, priced by nobody yet.
+        var items = call("GET", "/api/app/inventory", null, owner, null).body().path("items");
+        assertEquals(1, items.size(), items.toString());
+        var line = items.get(0);
+        assertEquals("Luke Skywalker", line.path("name").asText());
+        assertEquals("SOR", line.path("set").asText());
+        assertEquals("hyperspace", line.path("finish").asText());
+        assertEquals(3, line.path("quantity").asInt());
+        assertTrue(line.path("market").isNull());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM club_cards WHERE club_printing_id = 'swu-sor-005-hyper'", Integer.class));
+        // Club's cards stay out of the shared catalog behind the free price check.
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM cards WHERE name = 'Luke Skywalker'", Integer.class));
+    }
+
+    @Test
     void endingALinkKeepsOrRemovesItsCards() throws Exception {
         link();
         club("POST", "/items", Map.of("upserts", List.of(item("a", 1, BOLT, "nonfoil", 2))));

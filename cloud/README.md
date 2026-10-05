@@ -130,7 +130,7 @@ the Admin tab lists any Trading store that didn't tie itself by name, to tie by 
 
 ### CardBox collections in store inventory (switched off)
 
-A store manager or employee can mark a collection on cardbox.club "Sync to store", and its Magic cards show up in
+A store manager or employee can mark a collection on cardbox.club "Sync to store", and its cards show up in
 that store's inventory here, kept in step. cardbox.club pushes them server to server (`/api/partner/club-sync/*`,
 `clubsync/ClubSyncController.java`) with an Auth0 client-credentials token for the audience
 `https://cardbox.trading/api` and scope `inventory:sync`. Every item carries Club's version, so repeats and late

@@ -175,7 +175,7 @@ public class InventoryController {
                        i.name, i.set_code AS "set", i.collector_number AS number, i.rarity, i.finish, i.condition, i.quantity,
                        c.image_small AS image, i.club_link_id AS "clubLinkId", cl.collection_name AS "clubCollection",
                        CASE i.finish WHEN 'foil' THEN c.usd_foil WHEN 'etched' THEN c.usd_etched ELSE c.usd END AS market
-                FROM inventory_items i JOIN locations loc ON loc.id = i.location_id LEFT JOIN cards c ON c.id = i.card_id
+                FROM inventory_items i JOIN locations loc ON loc.id = i.location_id LEFT JOIN inventory_cards c ON c.id = i.card_id
                 LEFT JOIN club_links cl ON cl.id = i.club_link_id
                 WHERE\s""" + where + " ORDER BY lower(i.name), i.set_code, i.collector_number, i.finish, i.condition LIMIT 501",
                 args.toArray());
