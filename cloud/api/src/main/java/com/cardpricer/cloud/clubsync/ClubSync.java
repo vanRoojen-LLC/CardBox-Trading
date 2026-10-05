@@ -142,8 +142,8 @@ public class ClubSync {
     }
 
     /**
-     * Ends a snapshot. If every item arrived, items it didn't include are removed unless they changed after it
-     * started; if the count is off, nothing is removed and Club sends a new snapshot.
+     * Ends a snapshot. If every item arrived, items it didn't include are removed if they were last written before it
+     * started and at or below its version (a late delivery of an older version still counts as written during it); if the count is off, nothing is removed and Club sends a new snapshot.
      */
     @Transactional
     public Map<String, Object> completeSnapshot(String collectionId, UUID snapshotId, int itemCount) {
@@ -156,7 +156,8 @@ public class ClubSync {
                     + " items. Nothing was removed; send a new snapshot.");
         int removed = jdbc.update("""
                 UPDATE club_link_items SET removed = true, updated_at = now()
-                WHERE link_id = ? AND NOT removed AND snapshot_id IS DISTINCT FROM ? AND version <= ?""", linkId, snapshotId, asOf);
+                WHERE link_id = ? AND NOT removed AND snapshot_id IS DISTINCT FROM ? AND version <= ?
+                  AND updated_at < (SELECT started_at FROM club_link_snapshots WHERE id = ?)""", linkId, snapshotId, asOf, snapshotId);
         jdbc.update("UPDATE club_link_snapshots SET completed_at = now() WHERE id = ?", snapshotId);
         rebuild(linkId);
         Map<String, Object> result = new LinkedHashMap<>(view(collectionId));

@@ -26,6 +26,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -668,6 +669,14 @@ class CloudApiIntegrationTest {
         String cookie = signup("Unlinked", "unlinked-" + UUID.randomUUID() + "@example.com");
         assertFalse(call("GET", "/api/auth/me", cookie, null).body().path("cardbox").asBoolean());
         assertEquals(404, call("GET", "/api/cardbox/people", cookie, null).status());
+    }
+
+    @Test
+    void collectionSyncAnswers503WhileSwitchedOff() throws Exception {
+        // Not 404: Club reads a 404 on a link as the store ending it.
+        var off = call("POST", "/api/partner/club-sync/links/c1/items", null, Map.of("upserts", List.of()));
+        assertEquals(503, off.status(), off.raw());
+        assertEquals("Collection sync is switched off on cardbox.trading", off.body().path("detail").asText());
     }
 
     @Test
