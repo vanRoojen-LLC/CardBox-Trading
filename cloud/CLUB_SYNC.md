@@ -1,7 +1,7 @@
 # Club collections in store inventory: handoff for cardbox.club
 
 cardbox.trading is ready to receive a cardbox.club collection into a store's inventory. This is what Club builds so a
-person with a store role can mark one of their collections "Sync to store", and every Magic card in it shows up in
+person with a store role can mark one of their collections "Sync to store", and every card in it shows up in
 that store's Trading inventory and stays in step, with the spot it was scanned into, a photo and any extra detail.
 It also covers re-inventory: scanning a box on Club to recount it on Trading (section 5b).
 
@@ -111,12 +111,14 @@ The worker reads the card as it is now, by `(collection_user_id, card_id)`:
 | --- | --- |
 | `item_id` | `cards.id` |
 | `version` | `cards.sync_version` |
-| `game` | the card's segment, e.g. `magic-the-gathering` (send every game; Trading reports non-Magic ones as not matched) |
-| `scryfall_id` | `scryfall:id` in the printing's `external_ids_json` (`catalog_printing_id` → `catalog_card_printings`) |
-| `finish` | `scryfall:finish` from the same JSON: `nonfoil`, `foil` or `etched` |
+| `game` | the card's segment, e.g. `magic-the-gathering` or `star-wars-unlimited`. Send every game |
+| `club_printing_id` | Every game other than Magic: Club's printing id. Trading keeps its own card for each printing, named from `name`, `set_code` and `collector_number` as last sent. Without it the card is not matched. Magic still goes by `scryfall_id` so it prices from Trading's catalog |
+| `treatment` | Every game other than Magic: the printing's treatment (`normal`, `foil`, `hyperspace`, `showcase`...), shown as the finish. Plain if left out |
+| `scryfall_id` | Magic: `scryfall:id` in the printing's `external_ids_json` (`catalog_printing_id` → `catalog_card_printings`) |
+| `finish` | Magic: `scryfall:finish` from the same JSON: `nonfoil`, `foil` or `etched` |
 | `quantity` | 1 plus the card's extra copies in Club's `inventory_items` |
 | `condition` | Leave out. Club has none; Trading uses the store's default for the collection. If Club adds one later: `NM`, `LP`, `MP`, `HP` or `DMG` |
-| `name`, `set_code`, `collector_number` | from the printing and definition, for the store's "not matched" list |
+| `name`, `set_code`, `collector_number` | from the printing and definition. For Magic, only for the store's "not matched" list; for other games, the card Trading shows |
 | `storage_id` | Optional. The Trading storage spot the card was scanned into (an `id` from `GET /stores/{store_id}/storage`, section 5a). Leave out to use the spot the store picked for the whole collection. A spot that no longer exists falls back to that too |
 | `image_url` | Optional. An `https://` link (2000 characters at most) to Club's photo of this exact card. Store staff see it on the Inventory page. Anything else is ignored |
 | `details` | Optional. A JSON object of 4000 characters at most with whatever Club knows beyond the catalog, e.g. `{"grade": "PSA 9", "serial": "12/250", "notes": "..."}`. Shown as label: value pairs. Anything else is ignored |
@@ -155,7 +157,7 @@ POST /links/{id}/items
               "name": "Lightning Bolt", "set_code": "2x2", "collector_number": "117"}],
  "removals": [{"item_id": "c9", "version": 1043}]}
 
-200 {"applied": 2, "skipped": 0, "not_matched": [{"item_id": "c7", "reason": "Only Magic cards go into Trading inventory"}]}
+200 {"applied": 2, "skipped": 0, "not_matched": [{"item_id": "c7", "reason": "No Club printing id"}]}
 ```
 
 `skipped` counts items Trading already had at that version or newer. That is normal after a retry.

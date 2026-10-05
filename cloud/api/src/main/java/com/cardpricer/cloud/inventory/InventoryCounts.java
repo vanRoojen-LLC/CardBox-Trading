@@ -76,7 +76,7 @@ public class InventoryCounts {
                        coalesce(n.counted, 0) AS counted, c.name, c.set_code AS "set", c.collector_number AS number,
                        CASE coalesce(e.finish, n.finish) WHEN 'foil' THEN c.usd_foil WHEN 'etched' THEN c.usd_etched ELSE c.usd END AS market
                 FROM e FULL JOIN n ON e.spot = n.spot AND e.card_id = n.card_id AND e.finish = n.finish AND e.condition = n.condition
-                LEFT JOIN cards c ON c.id = coalesce(e.card_id, n.card_id)
+                LEFT JOIN inventory_cards c ON c.id = coalesce(e.card_id, n.card_id)
                 ORDER BY lower(c.name), c.set_code, c.collector_number""", NO_SPOT, id, NO_SPOT, id, NO_SPOT);
         // A card short in one spot and over in another, with the same total, was moved rather than lost.
         Map<String, Integer> net = new HashMap<>();
@@ -98,7 +98,7 @@ public class InventoryCounts {
         var lines = jdbc.queryForList("""
                 SELECT l.id, l.storage_id AS "storageId", l.card_id AS "cardId", c.name, c.set_code AS "set",
                        c.collector_number AS number, l.finish, l.condition, l.quantity, l.source, l.image_url AS image, l.added_at AS "addedAt"
-                FROM inventory_count_lines l LEFT JOIN cards c ON c.id = l.card_id
+                FROM inventory_count_lines l LEFT JOIN inventory_cards c ON c.id = l.card_id
                 WHERE l.count_id = ? ORDER BY l.added_at DESC LIMIT 500""", id).stream().map(r -> withPath(r, paths)).toList();
         Map<String, Object> result = new LinkedHashMap<>(withPath(count, paths));
         result.put("rows", report);
@@ -118,7 +118,7 @@ public class InventoryCounts {
         if (!List.of("normal", "foil", "etched").contains(f)) throw ApiException.badRequest("Finish must be normal, foil or etched");
         String c = condition == null ? "NM" : ClubSync.condition(condition);
         if (c == null) throw ApiException.badRequest("Unknown condition");
-        Integer known = jdbc.queryForObject("SELECT count(*) FROM cards WHERE id = ?", Integer.class, card);
+        Integer known = jdbc.queryForObject("SELECT count(*) FROM inventory_cards WHERE id = ?", Integer.class, card);
         if (known == null || known == 0) throw ApiException.badRequest("Unknown card");
         jdbc.update("""
                 INSERT INTO inventory_count_lines (id, count_id, storage_id, card_id, finish, condition, quantity, source, added_by)
@@ -211,7 +211,7 @@ public class InventoryCounts {
                     throw new ApiException(HttpStatus.CONFLICT, "A spot in this count was removed. Cancel it and start a new count.");
             }
             if (change > 0) {
-                var c = jdbc.queryForMap("SELECT name, set_code, collector_number, rarity, lang FROM cards WHERE id = ?", card);
+                var c = jdbc.queryForMap("SELECT name, set_code, collector_number, rarity, lang FROM inventory_cards WHERE id = ?", card);
                 inventory.add(tenant, location, storage, new InventoryRepository.Stock(card, (String) c.get("name"),
                         (String) c.get("set_code"), (String) c.get("collector_number"), (String) c.get("rarity"),
                         (String) c.get("lang"), finish, condition, change));
