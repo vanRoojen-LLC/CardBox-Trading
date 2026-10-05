@@ -111,7 +111,10 @@ public class ClubSync {
                         quantity = EXCLUDED.quantity, game = EXCLUDED.game, name = EXCLUDED.name, set_code = EXCLUDED.set_code,
                         collector_number = EXCLUDED.collector_number, unmatched_reason = EXCLUDED.unmatched_reason,
                         storage_id = EXCLUDED.storage_id, image_url = EXCLUDED.image_url, details = EXCLUDED.details, updated_at = now()
-                    WHERE club_link_items.version < EXCLUDED.version""",
+                    -- A resend of a card that could not go in before (its game was not supported yet, say) goes in now.
+                    WHERE club_link_items.version < EXCLUDED.version
+                       OR (club_link_items.version = EXCLUDED.version AND club_link_items.card_id IS NULL
+                           AND EXCLUDED.card_id IS NOT NULL)""",
                     linkId, u.itemId(), u.version(), match.reason() == null ? match.cardId() : null,
                     match.finish() == null ? "normal" : match.finish(), condition(u.condition()),
                     u.quantity() == null ? 1 : u.quantity(), text(u.game()), text(u.name()), text(u.setCode()),
