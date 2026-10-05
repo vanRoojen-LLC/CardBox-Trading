@@ -273,7 +273,12 @@ public class ClubSync {
         return tenants.getFirst();
     }
 
-    /** At sign-in: links made by this person to stores where CardBox no longer gives them a role are paused. */
+    /** The name Trading shows for the store tied to a CardBox store. */
+    public String storeName(String storeId) {
+        return jdbc.queryForObject("SELECT name FROM tenants WHERE id = ?", String.class, tenantFor(storeId));
+    }
+
+        /** At sign-in: links made by this person to stores where CardBox no longer gives them a role are paused. */
     public void pauseWithoutRole(String sub, Collection<UUID> storesWithRole) {
         jdbc.update("""
                 UPDATE club_links SET state = 'paused', paused_reason = 'role_revoked', updated_at = now()

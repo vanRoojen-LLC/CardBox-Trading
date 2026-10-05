@@ -56,6 +56,8 @@ class CardBoxLinkIntegrationTest {
     /** The access token Auth0 issued at the latest sign-in. */
     static volatile String lastAccessToken;
     static final Object NO_ACCOUNT = new Object();
+    /** CardBox store id -> the name CardBox's rename endpoint stored. */
+    static final Map<String, String> RENAMED = new ConcurrentHashMap<>();
 
     static {
         POSTGRES.start();
@@ -95,10 +97,28 @@ class CardBoxLinkIntegrationTest {
                     return;
                 }
                 Object roles = ROLES.get(token);
+                if (route.startsWith("PATCH /api/stores/")) {
+                    // Like account_roles.rename_store: platform owners only, whitespace tidied, the id never changes.
+                    boolean owner = roles instanceof Map<?, ?> m && ((List<?>) m.get("roles")).contains("platform_owner");
+                    if (!owner) {
+                        send(ex, 403, "{\"detail\":\"Only platform owners rename stores\"}");
+                        return;
+                    }
+                    String name = String.join(" ", JSON.readTree(ex.getRequestBody()).path("name").asText().trim().split("\\s+"));
+                    String id = ex.getRequestURI().getPath().substring("/api/stores/".length());
+                    RENAMED.put(id, name);
+                    send(ex, 200, JSON.writeValueAsString(Map.of("id", id, "name", name, "slug", "kept")));
+                    return;
+                }
                 switch (route) {
                     case "POST /api/partner/sign-in", "GET /api/account/roles" -> {
                         if (roles == NO_ACCOUNT) send(ex, 403, "{\"detail\":\"Sign-up is closed\"}");
                         else send(ex, 200, JSON.writeValueAsString(roles));
+                    }
+                    case "GET /api/stores" -> {
+                        var stores = new ArrayList<Object>();
+                        RENAMED.forEach((id, name) -> stores.add(Map.of("id", id, "name", name, "slug", "kept")));
+                        send(ex, 200, JSON.writeValueAsString(stores));
                     }
                     case "GET /api/people" -> {
                         lastPeopleAuth = auth;
@@ -320,5 +340,80 @@ class CardBoxLinkIntegrationTest {
                 "CardBox store names change on CardBox");
         assertEquals(200, call("PUT", "/api/admin/stores/" + id, cookie, Map.of("planStatus", "active")).status(),
                 "plans are still Trading's");
+    }
+
+    @Test
+    void aPlatformOwnerRenamesAStoreFromTheStorePageAndItChangesOnCardBox() throws Exception {
+        String store = "cb-" + UUID.randomUUID();
+        String sub = "auth0|" + UUID.randomUUID();
+        var cookie = signIn(sub, "r-" + UUID.randomUUID() + "@example.com",
+                roles(Map.of("role", "platform_owner"), storeRole("store_manager", store, "Old Name " + store))).cookie();
+        UUID tenant = jdbc.queryForObject("SELECT id FROM tenants WHERE cardbox_store_id = ?", UUID.class, store);
+        var before = call("GET", "/api/app/store", cookie, null).body();
+        assertTrue(before.path("onCardBox").asBoolean());
+        assertTrue(before.path("canRename").asBoolean());
+
+        var saved = call("PUT", "/api/app/store", cookie, Map.of("name", "New   Name", "website", "", "phone", "555", "contactEmail", ""));
+        assertEquals(200, saved.status(), saved.raw());
+        assertEquals("New Name", RENAMED.get(store), "renamed on CardBox, by the store's id");
+        assertEquals("New Name", saved.body().path("name").asText(), "as CardBox stored it");
+        assertEquals("555", saved.body().path("phone").asText(), "the other details still save");
+        assertEquals(store, jdbc.queryForObject("SELECT cardbox_store_id FROM tenants WHERE id = ?", String.class, tenant),
+                "still the same CardBox store");
+        assertEquals("New Name", call("GET", "/api/auth/me", cookie, null).body().path("store").asText());
+
+        // Signing in again with CardBox's new name finds the same store rather than starting another.
+        var again = signIn(sub, "r2-" + UUID.randomUUID() + "@example.com",
+                roles(Map.of("role", "platform_owner"), storeRole("store_manager", store, "New Name")));
+        assertEquals("/app", URI.create(again.location()).getPath());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM tenants WHERE cardbox_store_id = ?", Integer.class, store));
+    }
+
+    @Test
+    void aStoreManagerKeepsCardBoxsNameButSavesTheRest() throws Exception {
+        String store = "cb-" + UUID.randomUUID();
+        var cookie = signIn("auth0|" + UUID.randomUUID(), "k-" + UUID.randomUUID() + "@example.com",
+                roles(storeRole("store_manager", store, "Kept " + store))).cookie();
+        assertFalse(call("GET", "/api/app/store", cookie, null).body().path("canRename").asBoolean());
+        var saved = call("PUT", "/api/app/store", cookie, Map.of("name", "Sneaky", "website", "", "phone", "123", "contactEmail", ""));
+        assertEquals(200, saved.status(), saved.raw());
+        assertEquals("Kept " + store, saved.body().path("name").asText());
+        assertEquals("123", saved.body().path("phone").asText());
+        assertNull(RENAMED.get(store), "nothing sent to CardBox");
+    }
+
+    @Test
+    void aRenameMadeOnCardBoxShowsOnTradingBeforeAnyoneSignsInAgain() throws Exception {
+        String store = "cb-" + UUID.randomUUID();
+        var cookie = signIn("auth0|" + UUID.randomUUID(), "a-" + UUID.randomUUID() + "@example.com",
+                roles(Map.of("role", "platform_owner"), storeRole("store_manager", store, "Before " + store))).cookie();
+        RENAMED.put(store, "Renamed On Club");
+        assertEquals(200, call("GET", "/api/cardbox/stores", cookie, null).status());
+        assertEquals("Renamed On Club", jdbc.queryForObject("SELECT name FROM tenants WHERE cardbox_store_id = ?", String.class, store));
+    }
+
+    @Test
+    void aStoreNotYetOnCardBoxIsRenamedOnTradingAlone() throws Exception {
+        String sub = "auth0|" + UUID.randomUUID();
+        String email = "u-" + UUID.randomUUID() + "@example.com";
+        UUID legacy = UUID.randomUUID();
+        jdbc.update("INSERT INTO tenants (id, name, trial_ends_at) VALUES (?, ?, ?)", legacy, "Untied " + legacy,
+                Timestamp.from(Instant.now().plusSeconds(86400)));
+        jdbc.update("INSERT INTO users (id, tenant_id, email, name, auth0_sub, role) VALUES (?, ?, ?, 'Boss', ?, 'owner')",
+                UUID.randomUUID(), legacy, email, sub);
+        var cookie = signIn(sub, email, roles(Map.of("role", "platform_owner"))).cookie();
+        var store = call("GET", "/api/app/store", cookie, null).body();
+        assertFalse(store.path("onCardBox").asBoolean());
+        assertTrue(store.path("canRename").asBoolean());
+        var saved = call("PUT", "/api/app/store", cookie, Map.of("name", "Untied Renamed", "website", "", "phone", "", "contactEmail", ""));
+        assertEquals("Untied Renamed", saved.body().path("name").asText());
+        assertEquals(200, call("PUT", "/api/admin/stores/" + legacy, cookie, Map.of("name", "Untied Again")).status(),
+                "the Admin tab can rename it too until it is tied");
+        // Tying it to a CardBox store afterwards goes by id, whatever either name is.
+        String cb = "cb-" + UUID.randomUUID();
+        assertEquals(200, call("PUT", "/api/admin/stores/" + legacy + "/cardbox", cookie, Map.of("cardboxStoreId", cb)).status());
+        RENAMED.put(cb, "CardBox Name");
+        call("GET", "/api/cardbox/stores", cookie, null);
+        assertEquals("CardBox Name", jdbc.queryForObject("SELECT name FROM tenants WHERE id = ?", String.class, legacy));
     }
 }

@@ -1,5 +1,6 @@
 package com.cardpricer.cloud.clubsync;
 
+import com.cardpricer.cloud.cardbox.StoreNames;
 import com.cardpricer.cloud.inventory.InventoryCounts;
 import com.cardpricer.cloud.web.ApiException;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
@@ -42,17 +43,21 @@ public class ClubSyncController {
 
     public record PauseBody(String reason) {}
 
+    public record StoreBody(String name) {}
+
     private static final String ID = "[A-Za-z0-9_:.-]{1,100}";
     private static final List<String> PAUSE_REASONS = List.of("role_revoked", "collection_deleted");
 
     private final ClubSyncAuth auth;
     private final ClubSync sync;
     private final InventoryCounts counts;
+    private final StoreNames storeNames;
 
-    public ClubSyncController(ClubSyncAuth auth, ClubSync sync, InventoryCounts counts) {
+    public ClubSyncController(ClubSyncAuth auth, ClubSync sync, InventoryCounts counts, StoreNames storeNames) {
         this.auth = auth;
         this.sync = sync;
         this.counts = counts;
+        this.storeNames = storeNames;
     }
 
     @PutMapping("/links/{collectionId}")
@@ -105,6 +110,19 @@ public class ClubSyncController {
         check(request, collectionId);
         if (!PAUSE_REASONS.contains(body.reason())) throw ApiException.badRequest("reason must be one of " + String.join(", ", PAUSE_REASONS));
         return sync.pause(collectionId, body.reason());
+    }
+
+    /**
+     * A store was renamed on Club. Trading goes by the store's id everywhere, so only the name it shows changes.
+     * 404 while no Trading store is tied to it yet; it takes Club's name when it is.
+     */
+    @PutMapping("/stores/{storeId}")
+    public Map<String, Object> store(@PathVariable String storeId, @RequestBody StoreBody body, HttpServletRequest request) {
+        check(request, storeId);
+        if (body.name() == null || body.name().isBlank()) throw ApiException.badRequest("name is required");
+        sync.tenantFor(storeId);
+        storeNames.adopt(storeId, body.name());
+        return Map.of("store_id", storeId, "name", sync.storeName(storeId));
     }
 
     /** The store's open locations and storage tree, so Club can tag what it scans to a spot. */

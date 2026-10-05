@@ -119,7 +119,13 @@ With it on:
   no CardBox account, and someone with no store role can't sign in to the store app.
 - The Team and Admin tabs use `/api/cardbox/*`, which forwards only the contract's endpoints (account/roles, people,
   stores, role-grants, role-catalog, role-events) to CardBox. CardBox's `detail` messages are shown as they are.
-- Trading's own team changes, store sign-up and store renames are refused (409). Plans and trials stay Trading's.
+- Trading's own team changes and store sign-up are refused (409). Plans and trials stay Trading's.
+- Store names: everything (sign-in, roles, the sync, URLs) goes by the CardBox store id, never the name, so a store
+  can be renamed safely. A store tied to CardBox keeps CardBox's name. A platform owner renames it from the Store page
+  (Trading passes it to CardBox's `PATCH /api/stores/{id}`) or the Admin tab; store managers see it read-only. A
+  rename made on cardbox.club reaches Trading at once through the sync (`PUT /api/partner/club-sync/stores/{id}`, see
+  CLUB_SYNC.md 5c), and otherwise at the next sign-in or Team/Admin screen load. A store not tied yet is renamed on
+  Trading alone; tie it from the Admin tab, since sign-in's tie-by-name only works while the names still match.
 - The platform owner is `OWNER_EMAIL` or anyone CardBox says is a `platform_owner`.
 - Trading never calls the Auth0 Management API or writes `app_metadata`; CardBox does that.
 

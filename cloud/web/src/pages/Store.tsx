@@ -63,8 +63,10 @@ function StoreSettings({ me, store, onSaved }: { me: Me; store: StoreInfo; onSav
         <form className="panel" onSubmit={saveProfile}>
           <h2>Details</h2>
           {field('name', 'Store name', 'text', { required: true, maxLength: 120,
-            // A CardBox store's name is shared with cardbox.club, so it changes there.
-            ...(me.cardbox ? { disabled: true, title: 'The store name is set on CardBox' } : {}) })}
+            ...(store.canRename ? {} : { disabled: true, title: 'Only the platform owner can rename a store on CardBox' }) })}
+          {owner && me.cardbox && store.onCardBox && <p className="muted small">
+            {store.canRename ? 'Renaming changes it on cardbox.club too. Sync and links go by the store, not its name.'
+              : 'The name is shared with cardbox.club. Ask the platform owner to rename it.'}</p>}
           {field('website', 'Website', 'text', { placeholder: 'example.com', inputMode: 'url' })}
           {field('phone', 'Phone', 'tel', { inputMode: 'tel' })}
           {field('contactEmail', 'Contact email', 'email')}

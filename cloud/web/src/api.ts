@@ -77,6 +77,10 @@ export interface StoreInfo {
   website: string
   phone: string
   contactEmail: string
+  /** Tied to a CardBox store, whose name is CardBox's: renaming here renames it there too. */
+  onCardBox: boolean
+  /** Whether this person may change the name: anyone owning a store not on CardBox, or a platform owner. */
+  canRename: boolean
   /** Open locations first, in the order they were added. */
   locations: StoreLocation[]
 }

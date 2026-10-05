@@ -329,6 +329,29 @@ class ClubSyncIntegrationTest {
         assertEquals(404, unknown.status());
     }
 
+    @Test
+    void aStoreRenamedOnClubKeepsSyncingUnderItsNewName() throws Exception {
+        link();
+        club("POST", "/items", Map.of("upserts", List.of(item("a", 1, BOLT, "nonfoil", 2))));
+        String path = "/api/partner/club-sync/stores/" + storeId;
+        String sync = token(CLUB_CLIENT, AUDIENCE, ClubSyncAuth.SCOPE);
+        var renamed = call("PUT", path, sync, null, Map.of("name", "  Renamed Shop  "));
+        assertEquals(200, renamed.status(), renamed.raw());
+        assertEquals("Renamed Shop", renamed.body().path("name").asText());
+        assertEquals("Renamed Shop", jdbc.queryForObject("SELECT name FROM tenants WHERE id = ?", String.class, tenant));
+        assertEquals("Renamed Shop", call("GET", "/api/app/store", null, owner, null).body().path("name").asText());
+
+        // The link and its cards go by the store's id, so they carry on as before.
+        assertEquals(200, link().status());
+        assertEquals(200, club("POST", "/items", Map.of("upserts", List.of(item("b", 2, BOLT, "nonfoil", 1)))).status());
+        assertEquals(3, synced().values().stream().mapToInt(Integer::intValue).sum());
+
+        assertEquals(400, call("PUT", path, sync, null, Map.of("name", " ")).status());
+        assertEquals(401, call("PUT", path, null, owner, Map.of("name", "X")).status(), "only Club's machine token");
+        assertEquals(404, call("PUT", "/api/partner/club-sync/stores/cb-nobody", sync, null, Map.of("name", "X")).status(),
+                "no Trading store tied to it yet");
+    }
+
     /** Adds a storage spot (or several) and returns the new spot's id. */
     String spot(UUID location, String parentId, String label, String name) throws Exception {
         var body = new HashMap<String, Object>(Map.of("locationId", location, "label", label, "names", List.of(name)));
