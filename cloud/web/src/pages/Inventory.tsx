@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api, CONDITIONS, FINISHES, money, type Card, type Money, type StoreLocation } from '../api'
 import { flatTree, pathText, type PathPart, type Spot } from '../storage'
 import SearchIcon from '../SearchIcon'
+import ClubCollections from './ClubCollections'
 
 interface Item {
   id: string; locationId: string; location: string; storageId: string | null; cardId: string
   name: string; set: string; number: string; rarity: string; finish: string; condition: string; quantity: number
   image: string | null; market: Money; path: PathPart[]
+  /** Set on lines synced from a CardBox collection, which are changed on CardBox. */
+  clubLinkId: string | null; clubCollection: string | null
 }
 interface Page { items: Item[]; more: boolean; cards: number; lines: number }
 
@@ -19,7 +23,7 @@ function SpotOptions({ spots, locationId }: { spots: Spot[]; locationId: string 
 }
 
 /** Stock on hand: find it, count it, put it away, and add cards that came in some other way than a trade. */
-export default function Inventory({ locations, registerLocationId }: { locations: StoreLocation[]; registerLocationId: string | null }) {
+export default function Inventory({ locations, registerLocationId, owner }: { locations: StoreLocation[]; registerLocationId: string | null; owner: boolean }) {
   const open = locations.filter(l => !l.archived)
   const several = locations.length > 1
   const [q, setQ] = useState('')
@@ -55,8 +59,12 @@ export default function Inventory({ locations, registerLocationId }: { locations
     <section>
       <div className="page-head">
         <h1>Inventory</h1>
-        <button className={adding ? 'secondary' : ''} onClick={() => setAdding(!adding)}>{adding ? 'Done adding' : 'Add cards'}</button>
+        <span className="row-actions">
+          <Link to="/app/inventory/counts">Re-inventory</Link>
+          <button className={adding ? 'secondary' : ''} onClick={() => setAdding(!adding)}>{adding ? 'Done adding' : 'Add cards'}</button>
+        </span>
       </div>
+      <ClubCollections owner={owner} locations={locations} spots={spots} onChange={load} />
       {adding && <AddCards locations={open} spots={spots} defaultLocation={filterLocation || open[0]?.id || ''} onAdded={load} />}
       <div className="toolbar">
         <input placeholder="Find in stock: name, set or number" aria-label="Find in stock" value={q} onChange={e => setQ(e.target.value)} />
@@ -97,24 +105,46 @@ function InventoryRow({ item, several, locations, spots, moving, onMove, onQuant
   onMove: () => void; onQuantity: (n: number) => void; onMoved: (body: { locationId: string; storageId: string | null; quantity: number }) => void
 }) {
   const [target, setTarget] = useState({ locationId: item.locationId, storageId: '', quantity: item.quantity })
+  const [scans, setScans] = useState<{ itemId: string; quantity: number; image: string | null; details: string | null }[] | null>(null)
+  const toggleScans = () => scans ? setScans(null) : api<typeof scans>(`/api/app/club-links/scans/${item.id}`).then(setScans).catch(() => setScans([]))
   return (
     <>
       <tr>
-        <td><strong>{item.name}</strong><div className="muted small">{item.set.toUpperCase()} #{item.number}</div></td>
+        <td><strong>{item.name}</strong><div className="muted small">{item.set.toUpperCase()} #{item.number}
+          {item.clubCollection && <> · <span title="Synced from this CardBox collection; change it on CardBox">From CardBox: {item.clubCollection}</span></>}</div></td>
         <td style={{ textTransform: 'capitalize' }}>{item.finish}</td>
         <td>{item.condition}</td>
         <td>{several && <div className="muted small">{item.location}</div>}
           {item.path.length ? pathText(item.path) : <span className="muted">Not put away</span>}</td>
         <td className="r">{money(item.market)}</td>
         <td className="r">
-          <span className="stepper">
-            <button aria-label="One fewer" onClick={() => onQuantity(item.quantity - 1)}>−</button>
-            <span>{item.quantity}</span>
-            <button aria-label="One more" onClick={() => onQuantity(item.quantity + 1)}>+</button>
-          </span>
+          {item.clubLinkId ? item.quantity : (
+            <span className="stepper">
+              <button aria-label="One fewer" onClick={() => onQuantity(item.quantity - 1)}>−</button>
+              <span>{item.quantity}</span>
+              <button aria-label="One more" onClick={() => onQuantity(item.quantity + 1)}>+</button>
+            </span>
+          )}
         </td>
-        <td className="r"><button className="link" onClick={onMove}>{moving ? 'Cancel' : 'Move'}</button></td>
+        <td className="r">{item.clubLinkId
+          ? <button className="link" onClick={toggleScans}>{scans ? 'Hide scans' : 'Scans'}</button>
+          : <button className="link" onClick={onMove}>{moving ? 'Cancel' : 'Move'}</button>}</td>
       </tr>
+      {scans && (
+        <tr className="move-row"><td colSpan={7}>
+          <ul className="plain scans">
+            {scans.map(s => (
+              <li key={s.itemId}>
+                {s.image ? <a href={s.image} target="_blank" rel="noreferrer"><img src={s.image} alt={`Scan of ${item.name}`} className="scan-thumb" loading="lazy" /></a>
+                  : <span className="muted small">No photo</span>}
+                {s.quantity > 1 && <span className="small"> ×{s.quantity}</span>}
+                {s.details && <span className="muted small"> · {Object.entries(JSON.parse(s.details) as Record<string, unknown>).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${String(v)}`).join(' · ')}</span>}
+              </li>
+            ))}
+          </ul>
+          {scans.length === 0 && <p className="muted small">No scans for this line.</p>}
+        </td></tr>
+      )}
       {moving && (
         <tr className="move-row"><td colSpan={7}>
           <form className="move-form" onSubmit={e => { e.preventDefault(); onMoved({ ...target, storageId: target.storageId || null }) }}>

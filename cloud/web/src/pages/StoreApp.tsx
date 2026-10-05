@@ -6,6 +6,7 @@ import { Mark, Wordmark } from '../Brand'
 import NewTrade from './NewTrade'
 import { History, TradeDetail } from './History'
 import Inventory from './Inventory'
+import { CountDetail, Counts } from './Counts'
 import PriceCheck from './PriceCheck'
 import Rates from './Rates'
 import Staff from './Staff'
@@ -74,7 +75,9 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
             <Route path="price" element={<PriceCheck />} />
             <Route path="history" element={<History locations={store?.locations ?? []} />} />
             <Route path="history/:id" element={<TradeDetail />} />
-            <Route path="inventory" element={store ? <Inventory locations={store.locations} registerLocationId={locationId} /> : <p className="muted">Loading…</p>} />
+            <Route path="inventory" element={store ? <Inventory locations={store.locations} registerLocationId={locationId} owner={me.role === 'owner'} /> : <p className="muted">Loading…</p>} />
+            <Route path="inventory/counts" element={store ? <Counts locations={store.locations} /> : <p className="muted">Loading…</p>} />
+            <Route path="inventory/counts/:id" element={<CountDetail me={me} />} />
             <Route path="rates" element={<Rates me={me} />} />
             <Route path="staff" element={<Staff me={me} onChange={onSignOut} />} />
             <Route path="store" element={<Store me={me} store={store} onSaved={info => { loadStore(info); onSignOut() }} />} />

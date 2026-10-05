@@ -30,6 +30,12 @@ app:
     enabled: ${CARDBOX_ENABLED:false}
     base-url: ${CARDBOX_BASE_URL:https://cardbox.club}
     audience: ${CARDBOX_AUDIENCE:https://cardbox.club/api}
+  # cardbox.club pushes linked collections into store inventory with an Auth0 client-credentials token for this
+  # audience (scope inventory:sync), issued to one of these client ids (CardBox's machine-to-machine application).
+  club-sync:
+    enabled: ${CLUB_SYNC_ENABLED:false}
+    audience: ${CLUB_SYNC_AUDIENCE:https://cardbox.trading/api}
+    client-ids: ${CLUB_SYNC_CLIENT_IDS:}
   # Platform owner. Only counts once Auth0 has verified the address.
   owner-email: ${OWNER_EMAIL:toby@vanroojen.com}
   trial-days: 30

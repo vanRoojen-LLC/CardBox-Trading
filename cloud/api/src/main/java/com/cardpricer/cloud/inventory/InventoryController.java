@@ -122,11 +122,14 @@ public class InventoryController {
             throw ApiException.badRequest("Remove what's inside " + spot.label() + " " + spot.name() + " first");
         jdbc.update("""
                 INSERT INTO inventory_items (id, tenant_id, location_id, storage_id, card_id, name, set_code, collector_number,
-                                             rarity, lang, finish, condition, quantity)
+                                             rarity, lang, finish, condition, quantity, club_link_id)
                 SELECT gen_random_uuid(), tenant_id, location_id, ?, card_id, name, set_code, collector_number, rarity, lang,
-                       finish, condition, quantity FROM inventory_items WHERE storage_id = ?
-                ON CONFLICT (location_id, storage_id, card_id, finish, condition)
+                       finish, condition, quantity, club_link_id FROM inventory_items WHERE storage_id = ?
+                ON CONFLICT (location_id, storage_id, card_id, finish, condition, club_link_id)
                 DO UPDATE SET quantity = inventory_items.quantity + EXCLUDED.quantity, updated_at = now()""", spot.parentId(), id);
+        // Club collections synced into this spot land in the spot that held it from now on.
+        jdbc.update("UPDATE club_links SET storage_id = ?, updated_at = now() WHERE storage_id = ?", spot.parentId(), id);
+        jdbc.update("UPDATE club_link_items SET storage_id = ? WHERE storage_id = ?", spot.parentId(), id);
         jdbc.update("DELETE FROM inventory_items WHERE storage_id = ?", id);
         jdbc.update("DELETE FROM storage_spots WHERE id = ?", id);
         return storage(request);
@@ -170,9 +173,10 @@ public class InventoryController {
         var rows = jdbc.queryForList("""
                 SELECT i.id, i.location_id AS "locationId", loc.name AS location, i.storage_id AS "storageId", i.card_id AS "cardId",
                        i.name, i.set_code AS "set", i.collector_number AS number, i.rarity, i.finish, i.condition, i.quantity,
-                       c.image_small AS image,
+                       c.image_small AS image, i.club_link_id AS "clubLinkId", cl.collection_name AS "clubCollection",
                        CASE i.finish WHEN 'foil' THEN c.usd_foil WHEN 'etched' THEN c.usd_etched ELSE c.usd END AS market
                 FROM inventory_items i JOIN locations loc ON loc.id = i.location_id LEFT JOIN cards c ON c.id = i.card_id
+                LEFT JOIN club_links cl ON cl.id = i.club_link_id
                 WHERE\s""" + where + " ORDER BY lower(i.name), i.set_code, i.collector_number, i.finish, i.condition LIMIT 501",
                 args.toArray());
         var paths = InventoryRepository.paths(inventory.spots(tenant));
@@ -232,6 +236,13 @@ public class InventoryController {
     private Map<String, Object> item(UUID tenant, UUID id) {
         var rows = jdbc.queryForList("SELECT * FROM inventory_items WHERE id = ? AND tenant_id = ? FOR UPDATE", id, tenant);
         if (rows.isEmpty()) throw ApiException.notFound("That card is no longer in inventory");
+        if (rows.getFirst().get("club_link_id") != null) {
+            // Club owns synced lines: one change here would be undone by the next delivery.
+            String collection = jdbc.queryForObject("SELECT collection_name FROM club_links WHERE id = ?", String.class,
+                    rows.getFirst().get("club_link_id"));
+            throw new ApiException(HttpStatus.CONFLICT, "This card syncs from the CardBox collection " + collection
+                    + ". Change it there, or move the whole collection from Club collections.");
+        }
         return rows.getFirst();
     }
 

@@ -64,6 +64,7 @@ az acr build -r "$REGISTRY" -t "occ-pricer:$TAG" -f "$ROOT/cloud/Dockerfile" "$R
 echo "== Stage 2: database, app and nightly import job"
 out=$(az deployment group create -g "$GROUP" -n "${PREFIX}-apps" -f "$INFRA" \
   -p prefix="$PREFIX" deployerObjectId="$DEPLOYER" deployApps=true image="$SERVER/occ-pricer:$TAG" cardboxEnabled="${CARDBOX_ENABLED:-false}" \
+     clubSyncEnabled="${CLUB_SYNC_ENABLED:-false}" clubSyncClientIds="${CLUB_SYNC_CLIENT_IDS:-}" \
      postgresPassword="$PG_PASSWORD" --query properties.outputs -o json)
 URL=$(jq -r .appUrl.value <<<"$out")
 JOB=$(jq -r .importJobName.value <<<"$out")
