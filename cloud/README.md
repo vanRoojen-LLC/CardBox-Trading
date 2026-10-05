@@ -138,9 +138,10 @@ deliveries change nothing, and a full snapshot heals drift. Synced cards are the
 (`inventory_items.club_link_id`); staff can't edit them one by one, and an owner picks where each collection's cards
 sit and what happens to them when a link ends, from the Inventory page.
 
-It is off until Club's side is ready: `CLUB_SYNC_ENABLED=true CLUB_SYNC_CLIENT_IDS=<CardBox's M2M client id>
-cloud/deploy.sh` (Bicep `clubSyncEnabled`, `clubSyncClientIds`). Auth0 needs an API with identifier
-`https://cardbox.trading/api` and permission `inventory:sync`, granted to CardBox's machine-to-machine application.
+It is off until Club's side is ready: `CLUB_SYNC_ENABLED=true cloud/deploy.sh` (Bicep `clubSyncEnabled`). Auth0 is set
+up: the "CardBox Trading" API (`https://cardbox.trading/api`, permission `inventory:sync`) is granted to CardBox's
+machine-to-machine application, client id `WB4mbh9ky62gjPZHFOHBQCXhYytIie7K`, which is the default allow list (`clubSyncClientIds`,
+`CLUB_SYNC_CLIENT_IDS`).
 The contract Club builds against is [CLUB_SYNC.md](CLUB_SYNC.md).
 ### Domain
 

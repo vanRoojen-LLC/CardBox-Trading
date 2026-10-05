@@ -31,7 +31,7 @@ param cardboxEnabled bool = false
 param clubSyncEnabled bool = false
 
 @description('Client ids allowed to sync (CardBox\'s machine-to-machine Auth0 application), comma separated.')
-param clubSyncClientIds string = ''
+param clubSyncClientIds string = 'WB4mbh9ky62gjPZHFOHBQCXhYytIie7K'
 
 @description('Verified email of the platform owner.')
 param ownerEmail string = 'toby@vanroojen.com'

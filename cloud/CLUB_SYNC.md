@@ -16,7 +16,10 @@ Trading keeps the newest version of every card and rebuilds that collection's in
 so repeats, retries and out-of-order deliveries are harmless. A full snapshot on first link and once a night removes
 anything that drifted. Sync runs server to server with an Auth0 machine token, so nobody needs to be signed in.
 
-## 1. Auth (one-time setup, Toby does the Auth0 part)
+## 1. Auth (done)
+
+Toby set this up on 2026-10-05: the "CardBox Trading" API with `inventory:sync` exists, and Club's application
+`WB4mbh9ky62gjPZHFOHBQCXhYytIie7K` is granted it and is on Trading's allow list. For the record, the setup was:
 
 1. In the shared Auth0 tenant (`dev-tnnibhkgdbepzjy1`), create an API named "CardBox Trading", identifier
    `https://cardbox.trading/api`, signing RS256, with one permission: `inventory:sync`.
@@ -278,13 +281,12 @@ POST /counts/{count_id}/items
 ## 10. Rollout
 
 1. Trading deploys this with sync off (no visible change).
-2. Toby does the Auth0 setup in section 1 and gives Trading the client id.
+2. Auth0 setup in section 1 (done).
 3. Club deploys its side with the worker off.
 4. Turn both on for one test store, link a small collection, scan, edit and delete a card, unlink. Then everyone.
 
 ## What to report back to Trading
 
-- The machine-to-machine client id, once Auth0 is set up.
 - Anything in this contract Club can't do as written (for example, if a card can belong to more than one collection,
   or if Club wants Trading to push anything back).
 - When Club's side is deployed, so Trading turns `CLUB_SYNC_ENABLED` on.
