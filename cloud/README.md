@@ -7,7 +7,9 @@ and the API; PostgreSQL holds the data.
 - **Store workflow** under `/app` (CardBox sign-in through Auth0, 30-day trial): trade entry with store credit, check or split payouts,
   customers linked by phone number, trade history, tiered buy rates, a store profile, several owners and staff per store,
   multiple locations with every trade tagged to the location it was taken at, inventory per location kept in a storage
-  tree each store designs itself (store room, shelf, box, section, or any tiers it likes), and the 19-column receiving POS CSV.
+  tree each store designs itself (store room, shelf, box, section, or any tiers it likes), an inventory table that filters
+  and sorts on every card detail (game, set, year, rarity, color, type, finish, treatment, condition, price, source) and
+  moves picked lines or everything matching into a spot at once, and the 19-column receiving POS CSV.
   One CardBox login can belong to several stores and switch between them.
 - **Platform admin** at `/app/admin` for the verified owner email: every store and person, plan status, trial end dates,
   renaming stores, adding, promoting or removing people on any store, and Help & feedback reports.
@@ -142,8 +144,10 @@ that store's inventory here, kept in step. cardbox.club pushes them server to se
 `clubsync/ClubSyncController.java`) with an Auth0 client-credentials token for the audience
 `https://cardbox.trading/api` and scope `inventory:sync`. Every item carries Club's version, so repeats and late
 deliveries change nothing, and a full snapshot heals drift. Synced cards are their own inventory lines
-(`inventory_items.club_link_id`); staff can't edit them one by one, and an owner picks where each collection's cards
-sit and what happens to them when a link ends, from the Inventory page.
+(`inventory_items.club_link_id`). Club owns how many there are and their condition; Trading owns where they sit. Staff
+put synced lines away like any other (whole lines), and that spot is kept across deliveries
+(`club_link_items.placed_storage_id`) until a scan on Club sends a new one. An owner picks where each collection's
+unplaced cards land and what happens to them when a link ends, from the Inventory page.
 
 It is off until Club's side is ready: `CLUB_SYNC_ENABLED=true cloud/deploy.sh` (Bicep `clubSyncEnabled`). Auth0 is set
 up: the "CardBox Trading" API (`https://cardbox.trading/api`, permission `inventory:sync`) is granted to CardBox's

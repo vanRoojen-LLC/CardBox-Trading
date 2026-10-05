@@ -39,6 +39,20 @@ public class ClubSync {
     public static final int MAX_BATCH = 500;
     private static final String MAGIC = "magic-the-gathering";
     private static final String NOT_IN_LIST = "Not in Trading's card list yet";
+    /**
+     * Where a synced card sits, given {@code i} (club_link_items), {@code l} (its link), {@code s} (the spot Club sent)
+     * and {@code ps} (the spot the store put it in): the store's placement, else the scanned spot, else the
+     * collection's target.
+     */
+    private static final String SPOTS = """
+            JOIN club_links l ON l.id = i.link_id
+            LEFT JOIN storage_spots s ON s.id = i.storage_id AND s.tenant_id = l.tenant_id
+            LEFT JOIN storage_spots ps ON ps.id = i.placed_storage_id AND ps.tenant_id = l.tenant_id""";
+    private static final String LOCATION = "CASE WHEN i.placed THEN coalesce(ps.location_id, l.location_id) ELSE coalesce(s.location_id, l.location_id) END";
+    private static final String STORAGE = "CASE WHEN i.placed THEN ps.id ELSE coalesce(s.id, l.storage_id) END";
+    /** The club_link_items behind one synced inventory line: link, card, finish, condition, location and spot. */
+    private static final String LINE = " i.link_id = ? AND NOT i.removed AND i.card_id = ? AND i.finish = ?"
+            + " AND coalesce(i.condition, l.default_condition) = ? AND " + LOCATION + " = ? AND " + STORAGE + " IS NOT DISTINCT FROM ?";
 
     private final JdbcTemplate jdbc;
     private final InventoryRepository inventory;
@@ -110,7 +124,10 @@ public class ClubSync {
                         card_id = EXCLUDED.card_id, finish = EXCLUDED.finish, condition = EXCLUDED.condition,
                         quantity = EXCLUDED.quantity, game = EXCLUDED.game, name = EXCLUDED.name, set_code = EXCLUDED.set_code,
                         collector_number = EXCLUDED.collector_number, unmatched_reason = EXCLUDED.unmatched_reason,
-                        storage_id = EXCLUDED.storage_id, image_url = EXCLUDED.image_url, details = EXCLUDED.details, updated_at = now()
+                        storage_id = EXCLUDED.storage_id, image_url = EXCLUDED.image_url, details = EXCLUDED.details,
+                        -- A new spot from a scan on Club is a person's choice too, and the latest one wins.
+                        placed = club_link_items.placed AND club_link_items.storage_id IS NOT DISTINCT FROM EXCLUDED.storage_id,
+                        updated_at = now()
                     -- A resend of a card that could not go in before (its game was not supported yet, say) goes in now.
                     WHERE club_link_items.version < EXCLUDED.version
                        OR (club_link_items.version = EXCLUDED.version AND club_link_items.card_id IS NULL
@@ -233,14 +250,8 @@ public class ClubSync {
         if (lines.isEmpty()) throw ApiException.notFound("That card is no longer in inventory");
         var line = lines.getFirst();
         if (line.get("club_link_id") == null) return List.of();
-        return jdbc.queryForList("""
-                SELECT i.item_id AS "itemId", i.quantity, i.image_url AS image, i.details::text AS details
-                FROM club_link_items i JOIN club_links l ON l.id = i.link_id
-                LEFT JOIN storage_spots s ON s.id = i.storage_id AND s.tenant_id = l.tenant_id
-                WHERE i.link_id = ? AND NOT i.removed AND i.card_id = ? AND i.finish = ?
-                  AND coalesce(i.condition, l.default_condition) = ?
-                  AND coalesce(s.location_id, l.location_id) = ? AND coalesce(s.id, l.storage_id) IS NOT DISTINCT FROM ?
-                ORDER BY i.item_id LIMIT 200""",
+        return jdbc.queryForList("SELECT i.item_id AS \"itemId\", i.quantity, i.image_url AS image, i.details::text AS details"
+                        + " FROM club_link_items i " + SPOTS + " WHERE " + LINE + " ORDER BY i.item_id LIMIT 200",
                 line.get("club_link_id"), line.get("card_id"), line.get("finish"), line.get("condition"),
                 line.get("location_id"), line.get("storage_id"));
     }
@@ -289,22 +300,30 @@ public class ClubSync {
     // ---- Inside ----
 
     /** Replaces the link's inventory lines with the sum of its matched, present items. */
-    private void rebuild(UUID linkId) {
+    public void rebuild(UUID linkId) {
         jdbc.update("DELETE FROM inventory_items WHERE club_link_id = ?", linkId);
         jdbc.update("""
                 INSERT INTO inventory_items (id, tenant_id, location_id, storage_id, card_id, name, set_code, collector_number,
                                              rarity, lang, finish, condition, quantity, club_link_id)
-                SELECT gen_random_uuid(), l.tenant_id, coalesce(s.location_id, l.location_id), coalesce(s.id, l.storage_id),
-                       c.id, c.name, c.set_code, c.collector_number,
+                SELECT gen_random_uuid(), l.tenant_id, %1$s, %2$s, c.id, c.name, c.set_code, c.collector_number,
                        c.rarity, c.lang, i.finish, coalesce(i.condition, l.default_condition), sum(i.quantity), l.id
-                FROM club_link_items i JOIN club_links l ON l.id = i.link_id JOIN inventory_cards c ON c.id = i.card_id
-                -- A card scanned into a spot sits there; otherwise at the collection's target.
-                LEFT JOIN storage_spots s ON s.id = i.storage_id AND s.tenant_id = l.tenant_id
+                FROM club_link_items i JOIN inventory_cards c ON c.id = i.card_id %3$s
                 WHERE i.link_id = ? AND NOT i.removed
-                GROUP BY l.tenant_id, coalesce(s.location_id, l.location_id), coalesce(s.id, l.storage_id), l.id, c.id, c.name, c.set_code,
-                         c.collector_number, c.rarity, c.lang, i.finish, coalesce(i.condition, l.default_condition)""",
+                GROUP BY l.tenant_id, %1$s, %2$s, l.id, c.id, c.name, c.set_code,
+                         c.collector_number, c.rarity, c.lang, i.finish, coalesce(i.condition, l.default_condition)""".formatted(LOCATION, STORAGE, SPOTS),
                 linkId);
         jdbc.update("UPDATE club_links SET last_synced_at = now() WHERE id = ?", linkId);
+    }
+
+    /**
+     * Puts the cards behind one synced inventory line in a spot (null: not put away at the collection's location).
+     * The placement is the store's and outlasts Club's deliveries. Call {@link #rebuild} for the link afterwards.
+     */
+    public void place(Map<String, Object> line, UUID storage) {
+        jdbc.update("UPDATE club_link_items u SET placed = true, placed_storage_id = ? FROM club_link_items i " + SPOTS
+                        + " WHERE u.link_id = i.link_id AND u.item_id = i.item_id AND " + LINE,
+                storage, line.get("club_link_id"), line.get("card_id"), line.get("finish"), line.get("condition"),
+                line.get("location_id"), line.get("storage_id"));
     }
 
     /** Ends a link: its lines become the store's own stock (merged with any matching line) or leave inventory. */

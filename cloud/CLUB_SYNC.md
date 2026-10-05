@@ -119,7 +119,7 @@ The worker reads the card as it is now, by `(collection_user_id, card_id)`:
 | `quantity` | 1 plus the card's extra copies in Club's `inventory_items` |
 | `condition` | Leave out. Club has none; Trading uses the store's default for the collection. If Club adds one later: `NM`, `LP`, `MP`, `HP` or `DMG` |
 | `name`, `set_code`, `collector_number` | from the printing and definition. For Magic, only for the store's "not matched" list; for other games, the card Trading shows |
-| `storage_id` | Optional. The Trading storage spot the card was scanned into (an `id` from `GET /stores/{store_id}/storage`, section 5a). Leave out to use the spot the store picked for the whole collection. A spot that no longer exists falls back to that too |
+| `storage_id` | Optional. The Trading storage spot the card was scanned into (an `id` from `GET /stores/{store_id}/storage`, section 5a). Leave out to use the spot the store picked for the whole collection. A spot that no longer exists falls back to that too. Once store staff put a card away on Trading, it stays in their spot through later deliveries until Club sends a different `storage_id` for it |
 | `image_url` | Optional. An `https://` link (2000 characters at most) to Club's photo of this exact card. Store staff see it on the Inventory page. Anything else is ignored |
 | `details` | Optional. A JSON object of 4000 characters at most with whatever Club knows beyond the catalog, e.g. `{"grade": "PSA 9", "serial": "12/250", "notes": "..."}`. Shown as label: value pairs. Anything else is ignored |
 
