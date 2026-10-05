@@ -240,6 +240,21 @@ POST /counts/{count_id}/items
 - `condition` is optional (`NM` if left out). Up to 500 items per call.
 - On 409 tell the person the count was closed on Trading and return to the picker.
 
+## 5c. Store renames
+
+Trading ties its store to Club's by `stores.id` (`tenants.cardbox_store_id`) everywhere: links, items, storage,
+counts and sign-in. The name is only shown. When a store is renamed on Club, tell Trading so its screens show the new
+name straight away:
+
+```
+PUT /stores/{store_id}
+{"name": "Gamers Guild"}
+200 {"store_id": "...", "name": "Gamers Guild"}
+404 no Trading store is tied to that CardBox store yet (it takes Club's name when it is)
+```
+
+Best effort: if it fails, Trading still picks the name up at the next sign-in of anyone at the store.
+
 ## 6. The delivery worker
 
 - Per active link, take the oldest pending outbox rows (up to 500, coalesced to the newest row per card), send

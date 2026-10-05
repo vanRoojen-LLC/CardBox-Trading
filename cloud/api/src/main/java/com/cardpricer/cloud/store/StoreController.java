@@ -2,6 +2,9 @@ package com.cardpricer.cloud.store;
 
 import com.cardpricer.cloud.auth.CurrentUser;
 import com.cardpricer.cloud.cardbox.CardBoxClient;
+import com.cardpricer.cloud.cardbox.CardBoxTokens;
+import com.cardpricer.cloud.cardbox.StoreNames;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.cardpricer.cloud.web.ApiException;
 import com.cardpricer.model.BuyRateRule;
 import jakarta.servlet.http.HttpServletRequest;
@@ -18,6 +21,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.HashMap;
@@ -45,11 +50,16 @@ public class StoreController {
     private final RateRepository rates;
     private final JdbcTemplate jdbc;
     private final CardBoxClient cardbox;
+    private final CardBoxTokens tokens;
+    private final StoreNames storeNames;
 
-    public StoreController(RateRepository rates, JdbcTemplate jdbc, CardBoxClient cardbox) {
+    public StoreController(RateRepository rates, JdbcTemplate jdbc, CardBoxClient cardbox, CardBoxTokens tokens,
+                           StoreNames storeNames) {
         this.rates = rates;
         this.jdbc = jdbc;
         this.cardbox = cardbox;
+        this.tokens = tokens;
+        this.storeNames = storeNames;
     }
 
     /**
@@ -76,8 +86,11 @@ public class StoreController {
     @GetMapping("/store")
     public Map<String, Object> store(HttpServletRequest request) {
         UUID tenant = CurrentUser.of(request).tenantId();
-        Map<String, Object> store = new HashMap<>(jdbc.queryForMap(
-                "SELECT name, website, phone, contact_email AS \"contactEmail\" FROM tenants WHERE id = ?", tenant));
+        Map<String, Object> store = new HashMap<>(jdbc.queryForMap("""
+                SELECT name, website, phone, contact_email AS "contactEmail", cardbox_store_id IS NOT NULL AS "onCardBox"
+                FROM tenants WHERE id = ?""", tenant));
+        // A store on CardBox is renamed there, which only a platform owner may do; Trading passes the rename on.
+        store.put("canRename", !cardbox.enabled() || !(Boolean) store.get("onCardBox") || CurrentUser.of(request).admin());
         store.put("locations", jdbc.queryForList("""
                 SELECT id, name, address, phone, archived_at IS NOT NULL AS archived FROM locations
                 WHERE tenant_id = ? ORDER BY archived_at IS NOT NULL, created_at""", tenant));
@@ -87,11 +100,40 @@ public class StoreController {
     @PutMapping("/store")
     public Map<String, Object> saveStore(@Valid @RequestBody ProfileBody body, HttpServletRequest request) {
         CurrentUser user = requireOwner(request);
-        // A CardBox store's name is CardBox's; only the platform owner renames it there.
+        boolean onCardBox = cardbox.enabled() && renameOnCardBox(user, body.name().trim());
         jdbc.update("UPDATE tenants SET name = CASE WHEN ? THEN name ELSE ? END, website = ?, phone = ?, contact_email = ? WHERE id = ?",
-                cardbox.enabled(), body.name().trim(), website(body.website()), clean(body.phone()),
+                onCardBox, body.name().trim(), website(body.website()), clean(body.phone()),
                 clean(body.contactEmail()).toLowerCase(Locale.ROOT), user.tenantId());
         return store(request);
+    }
+
+    /**
+     * A store tied to CardBox has CardBox's name: a platform owner's new one is sent there as them and copied back as
+     * CardBox stored it. Links and sync go by the store's id, so a rename breaks nothing. False when the store isn't
+     * on CardBox yet, so its name is Trading's own and changes here.
+     */
+    private boolean renameOnCardBox(CurrentUser user, String name) {
+        var row = jdbc.queryForMap("SELECT name, cardbox_store_id FROM tenants WHERE id = ?", user.tenantId());
+        String storeId = (String) row.get("cardbox_store_id");
+        if (storeId == null) return false;
+        // Others keep the name as it is, as the Store page shows them, and still save the rest of the details.
+        if (name.equals(row.get("name")) || !user.admin()) return true;
+        String token = tokens.find(user.auth0Sub()).orElseThrow(() ->
+                new ApiException(HttpStatus.UNAUTHORIZED, "Your CardBox sign-in has expired. Please sign out and sign in again."));
+        CardBoxClient.Result result;
+        try {
+            result = cardbox.call(token, "PATCH", "/api/stores/" + URLEncoder.encode(storeId, StandardCharsets.UTF_8),
+                    JsonNodeFactory.instance.objectNode().put("name", name));
+        } catch (CardBoxClient.Unavailable e) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, e.getMessage());
+        }
+        if (!result.ok()) {
+            if (result.status() == 401) tokens.forget(user.auth0Sub());
+            HttpStatus status = HttpStatus.resolve(result.status());
+            throw new ApiException(status == null ? HttpStatus.BAD_GATEWAY : status, result.detail());
+        }
+        storeNames.adoptFrom(result.body());
+        return true;
     }
 
     @PostMapping("/locations")

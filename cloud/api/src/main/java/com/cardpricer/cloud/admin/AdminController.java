@@ -62,7 +62,10 @@ public class AdminController {
 
     @PutMapping("/stores/{id}")
     public List<Map<String, Object>> saveStore(@PathVariable UUID id, @Valid @RequestBody StoreBody body) {
-        if (body.name() != null) StoreController.refuseWhenCardBoxManaged(cardbox);
+        // A store tied to CardBox is renamed there (CardBox stores list above); one not tied yet is still Trading's own.
+        if (body.name() != null && cardbox.enabled() && !jdbc.queryForList(
+                "SELECT 1 FROM tenants WHERE id = ? AND cardbox_store_id IS NOT NULL", Integer.class, id).isEmpty())
+            throw new ApiException(org.springframework.http.HttpStatus.CONFLICT, "This store is on CardBox; rename it in the CardBox stores list");
         Timestamp trialEnds = body.trialEndsAt() == null ? null
                 : Timestamp.from(LocalDate.parse(body.trialEndsAt()).plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant().minusSeconds(1));
         int changed = jdbc.update("""

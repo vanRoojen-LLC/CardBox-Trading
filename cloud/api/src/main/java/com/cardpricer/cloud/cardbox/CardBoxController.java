@@ -36,10 +36,12 @@ public class CardBoxController {
 
     private final CardBoxClient cardbox;
     private final CardBoxTokens tokens;
+    private final StoreNames storeNames;
 
-    public CardBoxController(CardBoxClient cardbox, CardBoxTokens tokens) {
+    public CardBoxController(CardBoxClient cardbox, CardBoxTokens tokens, StoreNames storeNames) {
         this.cardbox = cardbox;
         this.tokens = tokens;
+        this.storeNames = storeNames;
     }
 
     @RequestMapping("/api/cardbox/**")
@@ -69,6 +71,8 @@ public class CardBoxController {
             // Keep the Admin tab in step with CardBox between sign-ins.
             tokens.setPlatformOwner(user.auth0Sub(), CardBoxSignIn.parse(result.body()).platformOwner());
         }
+        // A store renamed on CardBox shows its new name here straight away, not only after its people sign in again.
+        if ("account/roles".equals(path) || path.equals("stores") || path.startsWith("stores/")) storeNames.adoptFrom(result.body());
         return ResponseEntity.status(result.status()).body(result.body().isNull() ? null : result.body());
     }
 }
