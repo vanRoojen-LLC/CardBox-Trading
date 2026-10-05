@@ -108,3 +108,7 @@ Bug reports use a user-reviewed issue submission; no shared SMTP password is inc
 ## Release status
 
 This implementation has local deterministic verification and Windows package validation. It is **not yet cleared for production release**. See [implementation status and remaining acceptance work](audit/IMPLEMENTATION_STATUS.md), the original [repair plan](audit/REPAIR_PLAN.md), and [baseline architecture audit](audit/ARCHITECTURE_AUDIT.md).
+
+## License
+
+Copyright © 2026 vanRoojen LLC and the original OCC Card Pricer authors. This is not open-source software. The CardBox Trading web service in `cloud/` is source-available under the [PolyForm Shield License 1.0.0](cloud/LICENSE.md), which forbids using it to build a competing product; everything else is all rights reserved. See [LICENSE.md](LICENSE.md) for which terms cover which files.
