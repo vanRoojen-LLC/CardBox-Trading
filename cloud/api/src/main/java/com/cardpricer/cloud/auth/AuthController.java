@@ -183,7 +183,7 @@ public class AuthController {
             return;
         }
         if (user.isEmpty()) {
-            fail(response, "You're not on a store's team yet. Ask your store manager to add you on CardBox, then sign in again.");
+            fail(response, "You're not on a store's team yet. Open the invite email from your store, accept it on cardbox.club, then sign in again.");
             return;
         }
         setCookie(response, AuthFilter.COOKIE, tokens.issue(user.get()), SessionTokens.LIFETIME, "/");

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
-import { CardBoxPeople, CardBoxStores } from './CardBoxPeople'
+import { CardBoxStores } from './CardBoxStores'
 import SupportReports from '../SupportReports'
 
 interface AdminStore {
@@ -24,8 +24,8 @@ export default function Admin({ me, onChange }: { me: { email: string; cardbox: 
       <h1>Platform admin</h1>
       <p className="lede">Every store on CardBox, with its Trading plan. Stores are created and renamed on CardBox for both sites.</p>
       <CardBoxStores />
-      <h2 style={{ marginTop: 28 }}>People</h2>
-      <CardBoxPeople me={me} onChange={onChange} />
+      <p className="muted small" style={{ marginTop: 20 }}>Each store's team is on its Team page. Platform owner roles and everyone's
+        CardBox accounts are managed on <a href="https://cardbox.club/roles" target="_blank" rel="noreferrer">cardbox.club</a>.</p>
       <SupportReports />
     </section>
   )

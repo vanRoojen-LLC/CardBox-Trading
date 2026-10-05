@@ -120,8 +120,17 @@ With it on:
   roles CardBox no longer lists end here. A CardBox store seen for the first time is tied to the person's existing
   Trading store of the same name, so its data carries over, or else gets a new Trading store in trial. A 403 means
   no CardBox account, and someone with no store role can't sign in to the store app.
-- The Team and Admin tabs use `/api/cardbox/*`, which forwards only the contract's endpoints (account/roles, people,
-  stores, role-grants, role-catalog, role-events) to CardBox. CardBox's `detail` messages are shown as they are.
+- The Team tab shows only the open store's team (`/api/cardbox/team*`, `cardbox/TeamController.java`, calling
+  CardBox's `/api/stores/{id}/team`, `/invites` and `/members`). It never lists CardBox accounts outside the store.
+  New people join by email invite: CardBox emails a single-use link (14 days), and the person accepts on
+  cardbox.club with a new or existing CardBox account, even one under a different email; that account is then their
+  login here. Managers resend or withdraw invites, set a job title, change a role, disable or re-enable access and
+  remove people; CardBox enforces that a store manager handles employees and a platform owner handles managers. A
+  disable or removal ends the person's membership row here at once. A platform owner opens any store's team from
+  the Admin tab (`?store=`).
+- The Admin tab uses `/api/cardbox/*`, which forwards only account/roles, stores, role-catalog and role-events to
+  CardBox. CardBox's `detail` messages are shown as they are. Platform owner roles and CardBox accounts are managed
+  on cardbox.club.
 - Trading's own team changes and store sign-up are refused (409). Plans and trials stay Trading's.
 - Store names: everything (sign-in, roles, the sync, URLs) goes by the CardBox store id, never the name, so a store
   can be renamed safely. A store tied to CardBox keeps CardBox's name. A platform owner renames it from the Store page

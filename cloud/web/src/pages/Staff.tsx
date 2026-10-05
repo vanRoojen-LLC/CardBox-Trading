@@ -1,13 +1,21 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api, type Me } from '../api'
-import { CardBoxPeople } from './CardBoxPeople'
+import { TeamAdmin } from './TeamAdmin'
 
 interface Member { id: string; name: string; email: string; role: 'owner' | 'staff'; joined: boolean }
 
 /** The people on the store. Owners add people, make them owners or staff, and remove them. */
 export default function Staff({ me, onChange }: { me: Me; onChange: () => Promise<void> }) {
-  if (me.cardbox) return <section><h1>Team</h1><CardBoxPeople me={me} onChange={onChange} /></section>
+  if (me.cardbox) return <CardBoxTeam me={me} onChange={onChange} />
   return <LocalStaff me={me} onChange={onChange} />
+}
+
+/** The store's team on CardBox. A platform owner can open another store's team from the Admin tab (?store=). */
+function CardBoxTeam({ me, onChange }: { me: Me; onChange: () => Promise<void> }) {
+  const [params] = useSearchParams()
+  const store = me.admin ? params.get('store') ?? undefined : undefined
+  return <section><TeamAdmin key={store ?? ''} store={store} onChange={onChange} /></section>
 }
 
 function LocalStaff({ me, onChange }: { me: Me; onChange: () => Promise<void> }) {

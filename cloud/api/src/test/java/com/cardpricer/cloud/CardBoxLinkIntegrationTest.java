@@ -58,6 +58,10 @@ class CardBoxLinkIntegrationTest {
     static final Object NO_ACCOUNT = new Object();
     /** CardBox store id -> the name CardBox's rename endpoint stored. */
     static final Map<String, String> RENAMED = new ConcurrentHashMap<>();
+    /** The Auth0 subject CardBox's stand-in names in its answers to team member changes. */
+    static volatile String memberSub = "";
+    /** The CardBox path of the latest team request. */
+    static volatile String lastTeamPath;
 
     static {
         POSTGRES.start();
@@ -97,6 +101,11 @@ class CardBoxLinkIntegrationTest {
                     return;
                 }
                 Object roles = ROLES.get(token);
+                String path = ex.getRequestURI().getPath();
+                if (path.startsWith("/api/stores/") && path.split("/").length > 4) {
+                    team(ex, path);
+                    return;
+                }
                 if (route.startsWith("PATCH /api/stores/")) {
                     // Like account_roles.rename_store: platform owners only, whitespace tidied, the id never changes.
                     boolean owner = roles instanceof Map<?, ?> m && ((List<?>) m.get("roles")).contains("platform_owner");
@@ -120,6 +129,8 @@ class CardBoxLinkIntegrationTest {
                         RENAMED.forEach((id, name) -> stores.add(Map.of("id", id, "name", name, "slug", "kept")));
                         send(ex, 200, JSON.writeValueAsString(stores));
                     }
+                    case "GET /api/role-events" -> send(ex, 200, "[{\"id\":\"e1\",\"action\":\"invite_sent\",\"actor\":\"Pat\",\"store_id\":\"" + lastTeamStore()
+                            + "\",\"created_at\":\"2026-10-05T00:00:00Z\"},{\"id\":\"e2\",\"action\":\"store_created\",\"actor\":\"Pat\",\"store_id\":\"elsewhere\",\"created_at\":\"2026-10-05T00:00:00Z\"}]");
                     case "GET /api/people" -> {
                         lastPeopleAuth = auth;
                         send(ex, 200, "[{\"id\":\"u-1\",\"email\":\"someone@example.com\",\"display_name\":\"Someone\",\"roles\":[]}]");
@@ -136,6 +147,38 @@ class CardBoxLinkIntegrationTest {
             SERVER.start();
         } catch (Exception e) {
             throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    static String lastTeamStore() {
+        return lastTeamPath == null ? "" : lastTeamPath.split("/")[3];
+    }
+
+    /** CardBox's store team endpoints (backend/cardbox/store_team.py), answered just enough for Trading's part. */
+    static void team(HttpExchange ex, String path) throws IOException {
+        lastTeamPath = path;
+        String[] parts = path.split("/");
+        String store = parts[3], what = parts[4], method = ex.getRequestMethod();
+        JsonNode body = "GET".equals(method) || "DELETE".equals(method) ? JSON.createObjectNode() : JSON.readTree(ex.getRequestBody());
+        if ("team".equals(what)) {
+            send(ex, 200, "{\"store\":{\"id\":\"" + store + "\",\"name\":\"Shop\"},\"assignable_roles\":[{\"role\":\"store_employee\",\"label\":\"Store employee\"}],"
+                    + "\"members\":[],\"invites\":[],\"invite_lifetime_days\":14,\"email_enabled\":true}");
+        } else if ("invites".equals(what) && "POST".equals(method) && parts.length == 5) {
+            if ("store_manager".equals(body.path("role").asText())) send(ex, 403, "{\"detail\":\"Only a platform owner can invite a store manager\"}");
+            else send(ex, 201, "{\"invite\":{\"id\":\"inv-1\",\"email\":\"" + body.path("email").asText() + "\"},\"invite_url\":\"https://cardbox.club/invite/tok\"}");
+        } else if ("invites".equals(what) && "DELETE".equals(method)) {
+            ex.sendResponseHeaders(204, -1);
+            ex.close();
+        } else if ("invites".equals(what)) {
+            send(ex, 200, "{\"invite\":{\"id\":\"inv-1\"},\"invite_url\":\"https://cardbox.club/invite/tok2\"}");
+        } else if ("members".equals(what) && "DELETE".equals(method)) {
+            send(ex, 200, "{\"user_id\":\"" + parts[5] + "\",\"status\":\"removed\",\"auth0_sub\":\"" + memberSub + "\"}");
+        } else if ("members".equals(what)) {
+            String status = body.path("disabled").asBoolean(false) ? "disabled" : "active";
+            send(ex, 200, "{\"user_id\":\"" + parts[5] + "\",\"status\":\"" + status + "\",\"role\":\"" + body.path("role").asText("store_employee")
+                    + "\",\"auth0_sub\":\"" + memberSub + "\"}");
+        } else {
+            send(ex, 404, "{\"detail\":\"Not found\"}");
         }
     }
 
@@ -272,30 +315,54 @@ class CardBoxLinkIntegrationTest {
         assertEquals("/login", URI.create(none.location()).getPath());
         var plain = signIn("auth0|" + UUID.randomUUID(), "y-" + UUID.randomUUID() + "@example.com", roles());
         assertEquals("/login", URI.create(plain.location()).getPath());
-        assertTrue(URLDecoder.decode(plain.location(), StandardCharsets.UTF_8).contains("store manager"));
+        assertTrue(URLDecoder.decode(plain.location(), StandardCharsets.UTF_8).contains("invite"));
     }
 
     @Test
-    void teamScreensCallCardBoxAsTheSignedInPerson() throws Exception {
-        String store = "cb-" + UUID.randomUUID();
+    void theTeamScreenManagesOnlyTheOpenStoresTeamOnCardBox() throws Exception {
+        String store = "cb-" + UUID.randomUUID().toString().substring(0, 20);
+        String shop = "Manager Shop " + store;
         var cookie = signIn("auth0|" + UUID.randomUUID(), "m-" + UUID.randomUUID() + "@example.com",
-                roles(storeRole("store_manager", store, "Manager Shop " + store))).cookie();
+                roles(storeRole("store_manager", store, shop))).cookie();
+        String staffSub = "auth0|" + UUID.randomUUID();
+        var staff = signIn(staffSub, "s-" + UUID.randomUUID() + "@example.com", roles(storeRole("store_employee", store, shop))).cookie();
+        memberSub = staffSub;
+        assertEquals(200, call("GET", "/api/app/store", staff, null).status());
 
-        var people = call("GET", "/api/cardbox/people", cookie, null);
-        assertEquals(200, people.status(), people.raw());
-        assertEquals("someone@example.com", people.body().get(0).path("email").asText());
-        assertTrue(lastPeopleAuth.startsWith("Bearer at-"));
+        var team = call("GET", "/api/cardbox/team", cookie, null);
+        assertEquals(200, team.status(), team.raw());
+        assertEquals("/api/stores/" + store + "/team", lastTeamPath, "the store open in this session");
+        assertEquals(1, team.body().path("events").size(), "only this store's history");
 
-        var grant = call("POST", "/api/cardbox/role-grants", cookie, Map.of("email", "new@example.com", "role", "store_employee", "store_id", store));
-        assertEquals(201, grant.status(), grant.raw());
-        var refused = call("POST", "/api/cardbox/role-grants", cookie, Map.of("email", "new@example.com", "role", "platform_owner"));
+        // CardBox's list of every account and its grant-by-email are no longer reachable from Trading.
+        assertEquals(404, call("GET", "/api/cardbox/people", cookie, null).status());
+        assertEquals(404, call("POST", "/api/cardbox/role-grants", cookie, Map.of("email", "x@example.com", "role", "store_employee")).status());
+
+        var invite = call("POST", "/api/cardbox/team/invites", cookie, Map.of("email", "new@example.com", "role", "store_employee"));
+        assertEquals(201, invite.status(), invite.raw());
+        assertEquals("https://cardbox.club/invite/tok", invite.body().path("invite_url").asText());
+        var refused = call("POST", "/api/cardbox/team/invites", cookie, Map.of("email", "boss@example.com", "role", "store_manager"));
         assertEquals(403, refused.status());
-        assertEquals("Only a platform owner can grant that role.", refused.body().path("error").asText(), "CardBox's detail, as it is");
+        assertEquals("Only a platform owner can invite a store manager", refused.body().path("error").asText(), "CardBox's detail, as it is");
+        assertEquals(200, call("POST", "/api/cardbox/team/invites/inv-1/resend", cookie, Map.of()).status());
+        assertEquals(204, call("DELETE", "/api/cardbox/team/invites/inv-1", cookie, Map.of()).status());
 
-        assertEquals(404, call("GET", "/api/cardbox/role-grants", cookie, null).status(), "only the contract's endpoints pass through");
-        assertNotEquals(200, call("GET", "/api/cardbox/../partner/sign-in", cookie, null).status());
-        assertEquals(401, call("GET", "/api/cardbox/people", null, null).status());
+        // Disabling someone on CardBox ends their access here at once, not at their next sign-in.
+        var disabled = call("PATCH", "/api/cardbox/team/members/u-staff", cookie, Map.of("disabled", true));
+        assertEquals(200, disabled.status(), disabled.raw());
+        assertTrue(disabled.body().path("auth0_sub").isMissingNode(), "the login id stays on the server");
+        assertEquals(401, call("GET", "/api/app/store", staff, null).status());
+        var enabled = call("PATCH", "/api/cardbox/team/members/u-staff", cookie, Map.of("disabled", false, "role", "store_manager"));
+        assertEquals(200, enabled.status());
+        assertEquals("owner", jdbc.queryForObject(
+                "SELECT u.role FROM users u JOIN tenants t ON t.id = u.tenant_id WHERE u.auth0_sub = ? AND t.cardbox_store_id = ? AND u.removed_at IS NULL",
+                String.class, staffSub, store));
+        assertEquals(200, call("DELETE", "/api/cardbox/team/members/u-staff", cookie, Map.of()).status());
+        assertEquals(401, call("GET", "/api/app/store", staff, null).status());
 
+        assertEquals(403, call("GET", "/api/cardbox/team?store=elsewhere", cookie, null).status(), "only a platform owner opens another store's team");
+        assertNotEquals(200, call("GET", "/api/cardbox/team/members/..%2Fx", cookie, null).status());
+        assertEquals(401, call("GET", "/api/cardbox/team", null, null).status());
         // Trading no longer changes teams or makes stores itself.
         assertEquals(409, call("POST", "/api/app/staff", cookie, Map.of("name", "A", "email", "a@example.com")).status());
     }
