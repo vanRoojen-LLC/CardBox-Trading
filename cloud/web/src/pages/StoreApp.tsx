@@ -73,7 +73,7 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
           <div className="panel"><h1>Your trial has ended</h1><p>Contact us to keep using trade-ins, history and exports. The free price check still works.</p></div>
         ) : (
           <Routes>
-            <Route path="trade" element={<NewTrade locationId={locationId} />} />
+            <Route path="trade" element={<NewTrade locationId={locationId} draftKey={`cardbox.tradeDraft:${me.email}:${me.stores.find(s => s.current)?.tenantId ?? me.store}`} />} />
             <Route path="price" element={<PriceCheck />} />
             <Route path="history" element={<History locations={store?.locations ?? []} />} />
             <Route path="history/:id" element={<TradeDetail />} />
@@ -83,7 +83,8 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
             <Route path="rates" element={<Rates me={me} />} />
             <Route path="staff" element={<Staff me={me} onChange={onSignOut} />} />
             <Route path="store" element={<Store me={me} store={store} onSaved={info => { loadStore(info); onSignOut() }} />} />
-            <Route path="*" element={<Navigate to="trade" replace />} />
+            {/* Absolute: a relative target inside this splat route resolves against the unknown path and loops. */}
+            <Route path="*" element={<Navigate to="/app/trade" replace />} />
           </Routes>
         )}
       </main>

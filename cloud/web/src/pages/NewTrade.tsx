@@ -8,6 +8,8 @@ interface Line { key: number; card: Card; finish: string; condition: string; qua
 interface PricedLine { valuationUnit: number; creditUnit: number; checkUnit: number; creditRate: number; checkRate: number }
 interface Quote {
   lines: PricedLine[]
+  /** The line keys this quote priced, in order; the server answers line by line. */
+  keys: number[]
   marketTotal: number
   creditOffer: number
   checkOffer: number
@@ -15,6 +17,18 @@ interface Quote {
 }
 interface Saved { id: string; number: number }
 type Payment = 'credit' | 'check' | 'partial'
+interface Draft { lines: Line[]; payment: Payment; splitCredit: string; phone: string; customerName: string; checkNumber: string }
+
+const EMPTY: Draft = { lines: [], payment: 'credit', splitCredit: '', phone: '', customerName: '', checkNumber: '' }
+
+/** A trade in progress survives moving to another page or reloading, until it is saved. Only this tab sees it. */
+function loadDraft(key: string): Draft {
+  try {
+    const saved = sessionStorage.getItem(key)
+    if (saved) return { ...EMPTY, ...JSON.parse(saved) }
+  } catch { /* storage blocked or unreadable: start empty */ }
+  return EMPTY
+}
 
 let nextKey = 1
 
@@ -24,25 +38,42 @@ const times = (unit: number | undefined, qty: number) => unit == null ? undefine
 const typing = (target: EventTarget | null) =>
   target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')
 
-/** `locationId` is this register's location; the trade's cards are tagged to it. */
-export default function NewTrade({ locationId }: { locationId: string | null }) {
+/**
+ * `locationId` is this register's location; the trade's cards are tagged to it. `draftKey` names the trade in
+ * progress for this person and store, so switching store or signing in as someone else never shows it.
+ */
+export default function NewTrade({ locationId, draftKey }: { locationId: string | null; draftKey: string }) {
+  const [draft] = useState(() => loadDraft(draftKey))
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Card[]>([])
   const [active, setActive] = useState(0)
   const [noMatch, setNoMatch] = useState(false)
-  const [lines, setLines] = useState<Line[]>([])
+  const [lines, setLines] = useState<Line[]>(() => {
+    nextKey = Math.max(nextKey, ...draft.lines.map(l => l.key + 1))
+    return draft.lines
+  })
   const [selected, setSelected] = useState<number | null>(null)
-  const [payment, setPayment] = useState<Payment>('credit')
-  const [splitCredit, setSplitCredit] = useState('')
-  const [phone, setPhone] = useState('')
-  const [customerName, setCustomerName] = useState('')
+  const [payment, setPayment] = useState<Payment>(draft.payment)
+  const [splitCredit, setSplitCredit] = useState(draft.splitCredit)
+  const [phone, setPhone] = useState(draft.phone)
+  const [customerName, setCustomerName] = useState(draft.customerName)
   const [known, setKnown] = useState<string | null>(null)
-  const [checkNumber, setCheckNumber] = useState('')
+  const [checkNumber, setCheckNumber] = useState(draft.checkNumber)
   const [quote, setQuote] = useState<Quote | null>(null)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState<Saved | null>(null)
+  const [saving, setSaving] = useState(false)
+  // A ref as well as state: a second Ctrl+S can arrive before React re-renders with saving = true.
+  const savingRef = useRef(false)
   const [enlarged, setEnlarged] = useState<Card | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    try {
+      if (lines.length === 0 && !phone && !customerName) sessionStorage.removeItem(draftKey)
+      else sessionStorage.setItem(draftKey, JSON.stringify({ lines, payment, splitCredit, phone, customerName, checkNumber }))
+    } catch { /* storage blocked: the trade lasts until the page is left */ }
+  }, [draftKey, lines, payment, splitCredit, phone, customerName, checkNumber])
 
   useEffect(() => {
     if (query.trim().length < 2) { setResults([]); setNoMatch(false); return }
@@ -77,17 +108,17 @@ export default function NewTrade({ locationId }: { locationId: string | null }) 
 
   useEffect(() => {
     if (lines.length === 0) { setQuote(null); return }
-    if (payment === 'partial' && splitCredit === '') {
-      api<Quote>('/api/app/trades/quote', { method: 'POST', body: { ...request, payment: 'credit' } })
-        .then(q => { setQuote(q); setError('') }).catch(e => setError(e.message))
-      return
-    }
-    const timer = setTimeout(() => {
-      api<Quote>('/api/app/trades/quote', { method: 'POST', body: request })
-        .then(q => { setQuote(q); setError('') }).catch(e => setError(e.message))
-    }, 200)
-    return () => clearTimeout(timer)
-  }, [request, lines.length, payment, splitCredit])
+    // Prices are matched to lines by key, and a reply that arrives after a newer request started is dropped.
+    const keys = lines.map(l => l.key)
+    let current = true
+    const ask = (body: typeof request) => api<Omit<Quote, 'keys'>>('/api/app/trades/quote', { method: 'POST', body })
+      .then(q => { if (current) { setQuote({ ...q, keys }); setError('') } })
+      .catch(e => { if (current) setError(e.message) })
+    const timer = payment === 'partial' && splitCredit === ''
+      ? (ask({ ...request, payment: 'credit' }), undefined)
+      : setTimeout(() => ask(request), 200)
+    return () => { current = false; clearTimeout(timer) }
+  }, [request, lines, payment, splitCredit])
 
   function add(card: Card) {
     const key = nextKey++
@@ -106,9 +137,11 @@ export default function NewTrade({ locationId }: { locationId: string | null }) 
     if (selected === key) setSelected(null)
   }
 
-  const canSave = lines.length > 0 && quote != null && !(payment === 'partial' && splitCredit === '')
+  const canSave = lines.length > 0 && quote != null && !(payment === 'partial' && splitCredit === '') && !saving
   const save = useCallback(async () => {
-    if (!canSave) return
+    if (!canSave || savingRef.current) return
+    savingRef.current = true
+    setSaving(true)
     try {
       const result = await api<Saved>('/api/app/trades', {
         method: 'POST',
@@ -118,6 +151,7 @@ export default function NewTrade({ locationId }: { locationId: string | null }) 
       setLines([]); setSelected(null); setPhone(''); setCustomerName(''); setCheckNumber(''); setSplitCredit(''); setPayment('credit')
       searchRef.current?.focus()
     } catch (e) { setError((e as Error).message) }
+    finally { savingRef.current = false; setSaving(false) }
   }, [canSave, request, phone, customerName, checkNumber, locationId])
 
   // Counter shortcuts: / search, 1-5 condition, F foil, + and - quantity, Ctrl/Cmd+S save.
@@ -199,8 +233,9 @@ export default function NewTrade({ locationId }: { locationId: string | null }) 
           </div>
           {lines.length === 0 ? <p className="empty">Search above to add the customer's cards.</p> : (
             <>
-              {lines.map((line, i) => {
-                const priced = quote?.lines[i]
+              {lines.map(line => {
+                const at = quote?.keys.indexOf(line.key) ?? -1
+                const priced = at >= 0 ? quote?.lines[at] : undefined
                 const finishes = finishesOf(line.card)
                 return (
                   <div key={line.key} className={line.key === selected ? 'line selected' : 'line'} onPointerDown={() => setSelected(line.key)}>
@@ -279,7 +314,7 @@ export default function NewTrade({ locationId }: { locationId: string | null }) 
           )}
           {payment !== 'credit' && <label>Check number<input value={checkNumber} onChange={e => setCheckNumber(e.target.value)} /></label>}
           <button type="button" className="save" onClick={save} disabled={!canSave}>
-            Save trade <span className="kbd">Ctrl S</span>
+            {saving ? 'Saving…' : <>Save trade <span className="kbd">Ctrl S</span></>}
           </button>
           <p className="muted small" style={{ margin: 0, textAlign: 'center' }}>Saving records the trade and gives you its POS CSV.</p>
         </div>
