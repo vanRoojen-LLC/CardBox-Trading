@@ -104,6 +104,11 @@ public final class InventoryQuery {
                         args.add(tenant);
                     }
                 }
+                case "ids" -> {
+                    sql.append(" AND i.id = ANY (?::uuid[])");
+                    args.add(v.stream().map(id -> uuid(id, "line").toString()).toArray(String[]::new));
+                }
+                case "rules" -> throw ApiException.badRequest("Rule filters must be resolved first");
                 case "game" -> in(sql, args, "c.game", v);
                 case "set" -> in(sql, args, "upper(i.set_code)", v.stream().map(String::toUpperCase).toList());
                 case "year" -> {
