@@ -514,3 +514,8 @@ button.headed { display: block; padding: 0; text-align: left; text-decoration: u
   min-height: 52px; border-bottom: 1px solid var(--line-soft); }
 .put-away-groups .dest { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 @media (max-width: 600px) { .put-away-groups li { grid-template-columns: minmax(0, 1fr) auto; padding: 8px 0; } .put-away-groups li .muted { display: none; } }
+
+.arrival-setting { margin: 8px 0 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.arrival-setting .check-row { display: flex; gap: 10px; align-items: flex-start; }
+.arrival-setting .check-row input { margin-top: 3px; width: 18px; height: 18px; flex: none; }
+.arrival-setting .check-row > span { flex: 1; }

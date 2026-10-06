@@ -58,10 +58,12 @@ public class InventoryController {
     private final JdbcTemplate jdbc;
     private final ClubSync clubSync;
     private final StorageRules rules;
+    private final PutAway putAways;
 
     public InventoryController(InventoryRepository inventory, CatalogRepository catalog, JdbcTemplate jdbc, ClubSync clubSync,
-                               StorageRules rules) {
+                               StorageRules rules, PutAway putAways) {
         this.rules = rules;
+        this.putAways = putAways;
         this.inventory = inventory;
         this.catalog = catalog;
         this.jdbc = jdbc;
@@ -259,7 +261,7 @@ public class InventoryController {
         UUID tenant = CurrentUser.of(request).tenantId();
         UUID target = body.storageId() != null ? inventory.spot(tenant, body.storageId()).locationId() : body.locationId();
         if (target != null) requireLocation(tenant, target);
-        return moveLines(tenant, lines(tenant, body.ids(), body.filter()), target, body.storageId());
+        return putAways.moveLines(tenant, lines(tenant, body.ids(), body.filter()), target, body.storageId());
     }
 
     /** Lines picked by id or by filter, locked for a change. */
@@ -274,34 +276,6 @@ public class InventoryController {
         var lines = jdbc.queryForList("SELECT i.* " + InventoryQuery.FROM + " WHERE " + where.sql() + " FOR UPDATE OF i", where.args().toArray());
         if (lines.size() > MAX_BULK) throw ApiException.badRequest("That is " + lines.size() + " lines; narrow it to " + MAX_BULK + " or fewer");
         return lines;
-    }
-
-    /**
-     * Moves whole lines into a spot, or to "not put away" at {@code location} (null: where each line is). Synced lines
-     * keep syncing from CardBox in their new spot.
-     */
-    Map<String, Object> moveLines(UUID tenant, List<Map<String, Object>> lines, UUID target, UUID storage) {
-        int moved = 0, cards = 0, skipped = 0;
-        Set<UUID> links = new HashSet<>();
-        for (var line : lines) {
-            UUID location = target != null ? target : (UUID) line.get("location_id");
-            if (location.equals(line.get("location_id")) && Objects.equals(storage, line.get("storage_id"))) continue;
-            UUID link = (UUID) line.get("club_link_id");
-            if (link != null) {
-                // A synced card that isn't in a spot sits at its collection's location.
-                UUID home = jdbc.queryForObject("SELECT location_id FROM club_links WHERE id = ?", UUID.class, link);
-                if (storage == null && !location.equals(home)) { skipped++; continue; }
-                clubSync.place(line, storage);
-                links.add(link);
-            } else {
-                jdbc.update("DELETE FROM inventory_items WHERE id = ?", line.get("id"));
-                inventory.add(tenant, location, storage, stock(line, (String) line.get("condition"), (Integer) line.get("quantity")));
-            }
-            moved++;
-            cards += (Integer) line.get("quantity");
-        }
-        links.forEach(clubSync::rebuild);
-        return Map.of("lines", moved, "cards", cards, "skipped", skipped);
     }
 
     // ---- Put away by the store's rules ----
@@ -369,29 +343,7 @@ public class InventoryController {
     @Transactional
     public Map<String, Object> putAway(@RequestBody PutAwayBody body, HttpServletRequest request) {
         UUID tenant = CurrentUser.of(request).tenantId();
-        var lines = lines(tenant, body.ids(), body.filter());
-        var ids = lines.stream().map(l -> ((UUID) l.get("id")).toString()).toArray(String[]::new);
-        var destinations = rules.destinations(tenant, new InventoryQuery.Where("i.id = ANY (?::uuid[])", List.of((Object) ids)), null, null);
-        Map<UUID, UUID> parents = new HashMap<>();
-        for (var spot : inventory.spots(tenant)) parents.put(spot.id(), spot.parentId());
-        Map<UUID, List<Map<String, Object>>> by = new LinkedHashMap<>();
-        int unmatched = 0;
-        lines:
-        for (var line : lines) {
-            UUID to = destinations.get((UUID) line.get("id"));
-            if (to == null) { unmatched++; continue; }
-            // Already in that spot, or somewhere inside it: leave it where staff filed it.
-            for (UUID at = (UUID) line.get("storage_id"); at != null; at = parents.get(at)) if (at.equals(to)) continue lines;
-            if (body.storageId() != null && !body.storageId().equals(to)) continue;
-            by.computeIfAbsent(to, k -> new ArrayList<>()).add(line);
-        }
-        int moved = 0, cards = 0;
-        for (var entry : by.entrySet()) {
-            var result = moveLines(tenant, entry.getValue(), inventory.spot(tenant, entry.getKey()).locationId(), entry.getKey());
-            moved += (Integer) result.get("lines");
-            cards += (Integer) result.get("cards");
-        }
-        return Map.of("lines", moved, "cards", cards, "spots", by.size(), "unmatched", unmatched);
+        return putAways.byRules(tenant, lines(tenant, body.ids(), body.filter()), body.storageId());
     }
 
     @PostMapping("/inventory")
@@ -472,7 +424,7 @@ public class InventoryController {
         return rows.getFirst();
     }
 
-    private static InventoryRepository.Stock stock(Map<String, Object> row, String condition, int quantity) {
+    static InventoryRepository.Stock stock(Map<String, Object> row, String condition, int quantity) {
         return new InventoryRepository.Stock((UUID) row.get("card_id"), (String) row.get("name"), (String) row.get("set_code"),
                 (String) row.get("collector_number"), (String) row.get("rarity"), (String) row.get("lang"),
                 (String) row.get("finish"), condition, quantity);

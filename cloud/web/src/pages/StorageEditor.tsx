@@ -109,6 +109,7 @@ export default function StorageEditor({ owner, locations }: { owner: boolean; lo
       <p className="muted small">Lay out where cards live, as many tiers deep as you need. Each tier gets your own label and options, so a store room can hold shelves, a shelf boxes, and a box sections.</p>
       <p className="muted small">Say what goes in each spot and Inventory suggests where every new card belongs. A card goes down the tree: at each level the first spot that fits wins, so put narrower spots above an “everything else” spot.</p>
       {error && <p className="error">{error}</p>}
+      {rules.length > 0 && <ArrivalSetting owner={owner} />}
       {tree.length === 0 && !editing && <p className="empty">No storage set up here yet. Cards still count toward the location until they're put away.</p>}
       <ul className="spot-tree">
         {tree.map(s => (
@@ -140,6 +141,37 @@ export default function StorageEditor({ owner, locations }: { owner: boolean; lo
       </ul>
       {owner && (editing?.mode === 'add' && editing.parentId === null ? form
         : <button className="secondary small" onClick={() => start({ mode: 'add', parentId: null })}>Add top-level storage</button>)}
+    </div>
+  )
+}
+
+/**
+ * Whether new cards from trades and CardBox collections are filed by the rules straight away. Off, Inventory suggests
+ * a spot and staff confirm from the put-away list.
+ */
+function ArrivalSetting({ owner }: { owner: boolean }) {
+  const [on, setOn] = useState<boolean | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  useEffect(() => { api<{ fileOnArrival: boolean }>('/api/app/storage/settings').then(s => setOn(s.fileOnArrival)).catch(() => setOn(null)) }, [])
+  async function change(next: boolean) {
+    setSaving(true)
+    try { setOn((await api<{ fileOnArrival: boolean }>('/api/app/storage/settings', { method: 'PUT', body: { fileOnArrival: next } })).fileOnArrival); setError('') }
+    catch (e) { setError((e as Error).message) }
+    finally { setSaving(false) }
+  }
+  if (on === null) return null
+  return (
+    <div className="arrival-setting">
+      <label className="check-row">
+        <input type="checkbox" checked={on} disabled={!owner || saving} onChange={e => change(e.target.checked)} />
+        <span><strong>File new cards by these rules as they arrive</strong>
+          <span className="muted small"> {on
+            ? 'Cards from trades and CardBox collections go straight to their spot. Cards no rule fits, and any someone has placed by hand, wait on Inventory.'
+            : 'Off: Inventory suggests a spot for each new card, and staff confirm from the put-away list.'}</span></span>
+      </label>
+      {!owner && <p className="muted small">Only a store owner can change this.</p>}
+      {error && <p className="error">{error}</p>}
     </div>
   )
 }
