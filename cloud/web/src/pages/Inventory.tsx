@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { aborted, api, CONDITIONS, FINISHES, money, type Card, type Money, type StoreLocation } from '../api'
-import { flatTree, pathOf, pathText, type PathPart, type Spot } from '../storage'
+import { flatTree, pathOf, pathText, placeText, subtreeCounts, type PathPart, type Spot } from '../storage'
 import SearchIcon from '../SearchIcon'
 import { FACETS, TREATMENTS, ruleText, titleCase, valueLabel, type Conditions, type Facets } from '../cardDetails'
 import { ColorPips, FacetMenu, PriceMenu } from '../cardFilters'
@@ -65,7 +65,43 @@ function readStored<T>(key: string, fallback: T): T {
 
 function SpotOptions({ spots, locationId }: { spots: Spot[]; locationId: string }) {
   return <>{flatTree(spots, locationId).map(s =>
-    <option key={s.id} value={s.id}>{'  '.repeat(s.depth)}{s.label} {s.name}</option>)}</>
+    <option key={s.id} value={s.id}>{'  '.repeat(s.depth)}{s.name}</option>)}</>
+}
+
+/**
+ * Where to look, one tier at a time: pick an area, then a spot inside it, and so on down. Each spot shows how many
+ * of the cards under the other filters sit in it or anywhere inside it.
+ */
+function LocationPicker({ spots, locationId, value, counts, onChange }: {
+  spots: Spot[]; locationId: string; value: string; counts: Map<string, number>; onChange: (storage: string) => void
+}) {
+  const byId = new Map(spots.map(s => [s.id, s]))
+  const chain: Spot[] = []
+  for (let at = byId.get(value); at; at = at.parentId ? byId.get(at.parentId) : undefined) chain.unshift(at)
+  const place = chain[0]?.locationId ?? locationId
+  const children = (parent: string | null) => spots.filter(s => s.locationId === place && s.parentId === parent)
+  const count = (id: string) => counts.get(id) ? ` · ${counts.get(id)!.toLocaleString()}` : ''
+  const option = (s: Spot) => <option key={s.id} value={s.id}>{s.name}{count(s.id)}</option>
+  const top = place ? children(null) : []
+  return (
+    <span className="loc-picker" role="group" aria-label="Where">
+      <select aria-label="Where" value={chain[0]?.id ?? value} onChange={e => onChange(e.target.value)}>
+        <option value="">Anywhere in this view</option>
+        <option value="none">Not put away</option>
+        <option value="any">Put away anywhere</option>
+        {top.length > 0 && <optgroup label="In">{top.map(option)}</optgroup>}
+      </select>
+      {chain.map((s, i) => children(s.id).length > 0 && (
+        <Fragment key={s.id}>
+          <span className="sep" aria-hidden>›</span>
+          <select aria-label={`Inside ${s.name}`} value={chain[i + 1]?.id ?? s.id} onChange={e => onChange(e.target.value)}>
+            <option value={s.id}>All of {s.name}{count(s.id)}</option>
+            {children(s.id).map(option)}
+          </select>
+        </Fragment>
+      ))}
+    </span>
+  )
 }
 
 
@@ -230,10 +266,15 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
   const sortBy = (k: string) => setSort(s => ({ key: k, dir: s.key === k && s.dir === 'asc' ? 'desc' : 'asc' }))
   // A filter for a spot only makes sense inside its location.
   const filterLocation = filters.location?.[0] || (open.length === 1 ? open[0].id : '')
+  // Cards in each spot itself, and counting the spots inside it, under every filter but where.
+  const inSpot = useMemo(() => new Map((facets.storage ?? []).map(f => [f.value, Number(f.cards ?? 0)])), [facets])
+  const underSpot = useMemo(() => subtreeCounts(spots, inSpot), [spots, inSpot])
+  const grouped = sort.key === 'where'
+  const showSpot = (locationId: string, storageId: string) => setFilters(f => ({ ...f, location: several ? [locationId] : f.location ?? [], storage: [storageId] }))
   const spotValues = useMemo(() => [
     { value: 'none', label: 'Not put away', cards: null }, { value: 'any', label: 'Put away anywhere', cards: null },
-    ...(filterLocation ? flatTree(spots, filterLocation).map(s => ({ value: s.id, label: pathText(pathOf(spots, s.id)), cards: null })) : []),
-  ], [spots, filterLocation])
+    ...(filterLocation ? flatTree(spots, filterLocation).map(s => ({ value: s.id, label: placeText(pathOf(spots, s.id)), cards: underSpot.get(s.id) ?? 0 })) : []),
+  ], [spots, filterLocation, underSpot])
   function columnFilter(c: (typeof COLUMNS)[number]) {
     if (!c.filter) return null
     if (c.filter === 'price') return <PriceMenu header min={filters.priceMin?.[0] ?? ''} max={filters.priceMax?.[0] ?? ''}
@@ -259,7 +300,11 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
       <div className="inv-views" role="tablist" aria-label="Views">
         {VIEWS.filter(v => !v.rules || view === v.key || (misplaced?.lines ?? 0) > 0).map(v => (
           <button key={v.key} role="tab" aria-selected={!savedId && view === v.key && !filters.storage?.length} className="inv-view"
-            onClick={() => { setView(v.key); setSavedId(null); setFilters(f => ({ ...f, storage: [], rules: [] })) }}>
+            onClick={() => {
+              setView(v.key); setSavedId(null); setFilters(f => ({ ...f, storage: [], rules: [] }))
+              // Put-away stock reads best in shelf order, under a heading for each spot.
+              if (v.key === 'any') setSort({ key: 'where', dir: 'asc' })
+            }}>
             {v.label}{v.rules && misplaced?.cards ? <span className="count"> {misplaced.cards.toLocaleString()}</span> : null}</button>
         ))}
         {saved.map(v => (
@@ -291,12 +336,8 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
             {locations.map(l => <option key={l.id} value={l.id}>{l.name}{l.archived ? ' (closed)' : ''}</option>)}
           </select>
         )}
-        <select aria-label="Where" value={filters.storage?.[0] ?? ''} onChange={e => setFilter('storage', e.target.value ? [e.target.value] : [])}>
-          <option value="">Anywhere in this view</option>
-          <option value="none">Not put away</option>
-          <option value="any">Put away anywhere</option>
-          {filterLocation && <SpotOptions spots={spots} locationId={filterLocation} />}
-        </select>
+        <LocationPicker spots={spots} locationId={filterLocation} value={filters.storage?.[0] ?? ''} counts={underSpot}
+          onChange={v => setFilter('storage', v ? [v] : [])} />
         <div className="inv-chips">
           {FACETS.map(f => <FacetMenu key={f.key} facet={f} values={facets[f.key] ?? []} picked={filters[f.key] ?? []} onChange={v => setFilter(f.key, v)} />)}
           <PriceMenu min={filters.priceMin?.[0] ?? ''} max={filters.priceMax?.[0] ?? ''}
@@ -367,13 +408,21 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
             <th><span className="sr-only">Actions</span></th>
           </tr></thead>
           <tbody>
-            {items.map((item, index) => (
-              <InventoryRow key={item.id} item={item} several={several} locations={open} spots={spots}
-                selected={allMatching || selected.has(item.id)} onSelect={shift => toggle(index, shift)}
-                moving={moving === item.id} onMove={() => setMoving(moving === item.id ? null : item.id)}
-                onQuantity={n => setQuantity(item, n)} onError={setError}
-                onMoved={body => { setMoving(null); change(api(`/api/app/inventory/${item.id}/move`, { method: 'POST', body })) }} />
-            ))}
+            {items.map((item, index) => {
+              const before = items[index - 1]
+              const heading = grouped && (!before || before.storageId !== item.storageId || before.locationId !== item.locationId)
+              return (
+                <Fragment key={item.id}>
+                  {heading && <LocationHeading item={item} several={several} spots={spots} cards={item.storageId ? inSpot.get(item.storageId) : undefined}
+                    picked={filters.storage?.[0]} onPick={id => showSpot(item.locationId, id)} />}
+                  <InventoryRow item={item} several={several} locations={open} spots={spots}
+                    selected={allMatching || selected.has(item.id)} onSelect={shift => toggle(index, shift)}
+                    moving={moving === item.id} onMove={() => setMoving(moving === item.id ? null : item.id)}
+                    onQuantity={n => setQuantity(item, n)} onError={setError}
+                    onMoved={body => { setMoving(null); change(api(`/api/app/inventory/${item.id}/move`, { method: 'POST', body })) }} />
+                </Fragment>
+              )
+            })}
           </tbody>
         </table>
         {page && items.length === 0 && <p className="empty">{filtered || view !== 'all' ? 'Nothing here matches.' : 'No stock yet. Cards from saved trades and CardBox collections show up here.'}</p>}
@@ -389,6 +438,30 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
         <SpotPicker locations={open} spots={spots} cards={selectedCards} lines={selectedLines} onCancel={() => setPicking(false)} onPick={bulkMove} />
       )}
     </section>
+  )
+}
+
+/** A heading over each spot's cards when the list is in shelf order; each step of the path narrows the list to it. */
+function LocationHeading({ item, several, spots, cards, picked, onPick }: {
+  item: Item; several: boolean; spots: Spot[]; cards: number | undefined; picked: string | undefined; onPick: (storageId: string) => void
+}) {
+  const path = item.storageId ? pathOf(spots, item.storageId) as Spot[] : []
+  return (
+    <tr className="loc-head">
+      <td colSpan={COLUMNS.length + 2}>
+        <span className="crumbs">
+          {several && <span className="muted">{item.location} › </span>}
+          {path.length === 0 ? <span className="unshelved">Not put away</span> : path.map((s, i) => (
+            <Fragment key={s.id}>
+              {i > 0 && <span className="muted" aria-hidden> › </span>}
+              {s.id === picked ? <strong>{s.name}</strong>
+                : <button type="button" className="link" title={`Show only what's in ${s.name}`} onClick={() => onPick(s.id)}>{s.name}</button>}
+            </Fragment>
+          ))}
+        </span>
+        {cards !== undefined && <span className="muted small"> {cards.toLocaleString()} card{cards === 1 ? '' : 's'}</span>}
+      </td>
+    </tr>
   )
 }
 
@@ -422,7 +495,7 @@ function PutAwayList({ filter, version, onPutAway }: { filter: Filters; version:
       {open && list.groups.length > 0 && (
         <ul className="put-away-groups">
           {list.groups.map(g => {
-            const label = (several ? `${g.location} › ` : '') + pathText(g.path)
+            const label = (several ? `${g.location} › ` : '') + placeText(g.path)
             return (
               <li key={g.storageId}>
                 <span className="dest">{label}</span>
@@ -457,9 +530,11 @@ function SpotPicker({ locations, spots, cards, lines, onCancel, onPick }: {
     for (const l of locations) {
       out.push({ locationId: l.id, storageId: null, label: several ? `${l.name}: not put away` : 'Not put away', depth: 0, words: ['not', 'put', 'away', ...l.name.toLowerCase().split(/\s+/)] })
       for (const s of flatTree(spots, l.id)) {
-        const path = pathText(pathOf(spots, s.id))
-        const label = several ? `${l.name} › ${path}` : path
-        out.push({ locationId: l.id, storageId: s.id, label, depth: s.depth + 1, words: label.toLowerCase().split(/[\s›:]+/).filter(Boolean) })
+        const path = pathOf(spots, s.id)
+        const label = several ? `${l.name} › ${placeText(path)}` : placeText(path)
+        // Tier labels still find a spot ("sh 2 b 3"), though only the names show.
+        const words = `${several ? l.name : ''} ${pathText(path)}`.toLowerCase().split(/[\s›:]+/).filter(Boolean)
+        out.push({ locationId: l.id, storageId: s.id, label, depth: s.depth + 1, words })
       }
     }
     return out
@@ -577,9 +652,9 @@ function InventoryRow({ item, several, locations, spots, selected, onSelect, mov
         <td><span style={{ textTransform: 'capitalize' }}>{item.finish}</span>{treatments.length > 0 && <div className="muted small">{treatments.join(', ')}</div>}</td>
         <td>{item.condition}</td>
         <td>{several && <div className="muted small">{item.location}</div>}
-          {item.path.length ? pathText(item.path) : <span className="unshelved">Not put away</span>}
+          {item.path.length ? placeText(item.path) : <span className="unshelved">Not put away</span>}
           {item.destination?.length > 0 && <button type="button" className="headed link" aria-expanded={!!why}
-            title="Where your storage rules send it. Click to see why." onClick={toggleWhy}>→ {pathText(item.destination)}</button>}</td>
+            title="Where your storage rules send it. Click to see why." onClick={toggleWhy}>→ {placeText(item.destination)}</button>}</td>
         <td>{synced ? item.clubCollection : <span className="muted">Store stock</span>}</td>
         <td>{item.batchName ?? <span className="muted">—</span>}</td>
         <td className="r">{money(item.market)}</td>

@@ -212,6 +212,9 @@ public final class InventoryQuery {
                     + FROM + " WHERE %s GROUP BY 1 ORDER BY (coalesce(i.club_link_id::text, 'store') <> 'store'), 2";
             case "batch" -> "SELECT coalesce(nullif(i.source_batch_id, ''), 'none') AS value, max(nullif(i.source_batch_name, '')) AS label,"
                     + " sum(i.quantity) AS cards " + FROM + " WHERE %s GROUP BY 1 ORDER BY (coalesce(nullif(i.source_batch_id, ''), 'none') <> 'none'), 2, 1";
+            // Cards in each spot itself (not counting spots inside it), under every filter but where.
+            case "storage" -> "SELECT i.storage_id::text AS value, NULL::text AS label, sum(i.quantity) AS cards " + FROM
+                    + " WHERE %s AND i.storage_id IS NOT NULL GROUP BY 1";
             default -> throw new IllegalArgumentException(facet);
         };
     }

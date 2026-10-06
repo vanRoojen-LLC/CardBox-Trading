@@ -390,6 +390,12 @@ label textarea:focus { outline: none; border-color: var(--accent); box-shadow: v
 .inv-search input { flex: 1; min-width: 0; border: 0; padding: 0; background: transparent; font-size: 1.05rem; box-shadow: none; }
 .inv-search input:focus { box-shadow: none; }
 .inv-filters > select { min-height: var(--tap-lg); }
+.loc-picker { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.loc-picker select { min-height: var(--tap-lg); max-width: 100%; }
+.loc-picker .sep { color: var(--muted); }
+.grid tr.loc-head td { background: var(--surface-2); padding-top: 10px; padding-bottom: 6px; }
+.loc-head .crumbs { font-weight: 600; }
+.loc-head .crumbs .link { font-weight: 600; padding: 0; min-height: 0; }
 .inv-chips { display: flex; flex-wrap: wrap; gap: 6px; flex-basis: 100%; }
 .inv-active { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; flex-basis: 100%; }
 button.chip { min-height: 36px; margin: 0; padding: 0 12px; gap: 6px; background: var(--surface); color: var(--text-2);
