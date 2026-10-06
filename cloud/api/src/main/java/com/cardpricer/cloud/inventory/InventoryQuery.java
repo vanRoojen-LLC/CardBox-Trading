@@ -29,7 +29,7 @@ public final class InventoryQuery {
 
     /** Every filter, in the order the page shows them. Multi-valued ones match any of their values. */
     public static final List<String> FACETS = List.of("game", "set", "year", "rarity", "color", "type", "finish", "treatment",
-            "condition", "source");
+            "condition", "source", "batch");
 
     /** Sort keys; "; " separates the expressions of one key. */
     private static final Map<String, String> SORTS = Map.ofEntries(
@@ -45,6 +45,8 @@ public final class InventoryQuery {
             Map.entry("where", "loc.name; w.k"),
             Map.entry("market", MARKET),
             Map.entry("quantity", "i.quantity"),
+            Map.entry("collection", "lower(cl.collection_name)"),
+            Map.entry("batch", "nullif(lower(i.source_batch_name), ''); i.source_batch_id"),
             Map.entry("updated", "i.updated_at"));
 
     /** The spots of one store, each with a key that sorts them in tree order. Join as {@code w} on the line's spot. */
@@ -152,6 +154,14 @@ public final class InventoryQuery {
                     if (!links.isEmpty()) { parts.add("i.club_link_id = ANY (?::uuid[])"); args.add(links.toArray(String[]::new)); }
                     sql.append(" AND (").append(String.join(" OR ", parts)).append(")");
                 }
+                case "batch" -> {
+                    // "none" is stock that came in without an import batch.
+                    List<String> named = v.stream().filter(b -> !b.equals("none")).toList();
+                    List<String> parts = new ArrayList<>();
+                    if (v.contains("none")) parts.add("i.source_batch_id = ''");
+                    if (!named.isEmpty()) { parts.add("i.source_batch_id = ANY (?)"); args.add(named.toArray(String[]::new)); }
+                    sql.append(" AND (").append(String.join(" OR ", parts)).append(")");
+                }
                 case "priceMin" -> { sql.append(" AND ").append(MARKET).append(" >= ?"); args.add(price(v.getFirst())); }
                 case "priceMax" -> { sql.append(" AND ").append(MARKET).append(" <= ?"); args.add(price(v.getFirst())); }
                 // Names from one letter (or prefix) to another, both ends included: A to L takes "Lightning Bolt".
@@ -200,6 +210,8 @@ public final class InventoryQuery {
                     + " WHERE %s GROUP BY 1 ORDER BY min(array_position(ARRAY['NM','LP','MP','HP','DMG'], i.condition))";
             case "source" -> "SELECT coalesce(i.club_link_id::text, 'store') AS value, max(cl.collection_name) AS label, sum(i.quantity) AS cards "
                     + FROM + " WHERE %s GROUP BY 1 ORDER BY (coalesce(i.club_link_id::text, 'store') <> 'store'), 2";
+            case "batch" -> "SELECT coalesce(nullif(i.source_batch_id, ''), 'none') AS value, max(nullif(i.source_batch_name, '')) AS label,"
+                    + " sum(i.quantity) AS cards " + FROM + " WHERE %s GROUP BY 1 ORDER BY (coalesce(nullif(i.source_batch_id, ''), 'none') <> 'none'), 2, 1";
             default -> throw new IllegalArgumentException(facet);
         };
     }

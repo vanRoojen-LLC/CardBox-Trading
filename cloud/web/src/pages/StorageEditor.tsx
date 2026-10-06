@@ -262,7 +262,7 @@ function RuleEditor({ spot, spots, rule, ruleOf, facets, onSaved, onCancel, onCa
       <h3>What goes in {pathText(path)}?</h3>
       {ancestors.length > 0 && <p className="muted small">Only cards that fit {pathText([ancestors.at(-1)!])} come this far.</p>}
       <div className="inv-chips">
-        {FACETS.filter(f => f.key !== 'source').map(f => (
+        {FACETS.filter(f => f.key !== 'source' && f.key !== 'batch').map(f => (
           <FacetMenu key={f.key} facet={f} values={values(f.key)} picked={conditions[f.key] ?? []} onChange={v => set(f.key, v)}
             custom={f.key === 'set' || f.key === 'year'} always />
         ))}

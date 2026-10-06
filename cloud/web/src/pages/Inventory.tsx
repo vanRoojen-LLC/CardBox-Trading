@@ -18,6 +18,8 @@ interface Item {
   destinationId: string | null; destination: PathPart[]
   /** Set on lines synced from a CardBox collection: how many there are is changed on CardBox. */
   clubLinkId: string | null; clubCollection: string | null
+  /** The import batch the cards came in with (a CardBox upload or scan session), when there is one. */
+  batchId: string | null; batchName: string | null
 }
 interface Page { items: Item[]; more: boolean; offset: number; cards: number; lines: number; value: Money }
 /** A search the store saved by name; everyone on the store sees it. */
@@ -40,12 +42,14 @@ const VIEWS: { key: string; label: string; storage: string | null; rules?: strin
   { key: 'misplaced', label: 'Not where rules say', storage: null, rules: 'misplaced' },
 ]
 
-const COLUMNS: { key: string; label: string; right?: boolean; sort?: string }[] = [
-  { key: 'card', label: 'Card', sort: 'name' }, { key: 'set', label: 'Set', sort: 'set' }, { key: 'year', label: 'Year', sort: 'year' },
-  { key: 'color', label: 'Color', sort: 'color' }, { key: 'rarity', label: 'Rarity', sort: 'rarity' },
-  { key: 'finish', label: 'Finish', sort: 'finish' }, { key: 'condition', label: 'Cond.', sort: 'condition' },
-  { key: 'where', label: 'Where', sort: 'where' }, { key: 'market', label: 'Market', right: true, sort: 'market' },
-  { key: 'quantity', label: 'Qty', right: true, sort: 'quantity' },
+/** Each column sorts by {@code sort} and filters by the facet {@code filter} (price and spot have their own menus). */
+const COLUMNS: { key: string; label: string; right?: boolean; sort?: string; filter?: string }[] = [
+  { key: 'card', label: 'Card', sort: 'name', filter: 'type' }, { key: 'set', label: 'Set', sort: 'set', filter: 'set' },
+  { key: 'year', label: 'Year', sort: 'year', filter: 'year' }, { key: 'color', label: 'Color', sort: 'color', filter: 'color' },
+  { key: 'rarity', label: 'Rarity', sort: 'rarity', filter: 'rarity' }, { key: 'finish', label: 'Finish', sort: 'finish', filter: 'finish' },
+  { key: 'condition', label: 'Cond.', sort: 'condition', filter: 'condition' }, { key: 'where', label: 'Where', sort: 'where', filter: 'storage' },
+  { key: 'collection', label: 'Collection', sort: 'collection', filter: 'source' }, { key: 'batch', label: 'Batch', sort: 'batch', filter: 'batch' },
+  { key: 'market', label: 'Market', right: true, sort: 'market', filter: 'price' }, { key: 'quantity', label: 'Qty', right: true, sort: 'quantity' },
 ]
 
 function query(filters: Filters, extra: Record<string, string> = {}): string {
@@ -226,6 +230,19 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
   const sortBy = (k: string) => setSort(s => ({ key: k, dir: s.key === k && s.dir === 'asc' ? 'desc' : 'asc' }))
   // A filter for a spot only makes sense inside its location.
   const filterLocation = filters.location?.[0] || (open.length === 1 ? open[0].id : '')
+  const spotValues = useMemo(() => [
+    { value: 'none', label: 'Not put away', cards: null }, { value: 'any', label: 'Put away anywhere', cards: null },
+    ...(filterLocation ? flatTree(spots, filterLocation).map(s => ({ value: s.id, label: pathText(pathOf(spots, s.id)), cards: null })) : []),
+  ], [spots, filterLocation])
+  function columnFilter(c: (typeof COLUMNS)[number]) {
+    if (!c.filter) return null
+    if (c.filter === 'price') return <PriceMenu header min={filters.priceMin?.[0] ?? ''} max={filters.priceMax?.[0] ?? ''}
+      onChange={(min, max) => setFilters(f => ({ ...f, priceMin: min ? [min] : [], priceMax: max ? [max] : [] }))} />
+    if (c.filter === 'storage') return <FacetMenu header single facet={{ key: 'storage', label: 'Where', searchable: true }} values={spotValues}
+      picked={filters.storage ?? []} onChange={v => setFilter('storage', v)} />
+    const facet = FACETS.find(f => f.key === c.filter)
+    return facet ? <FacetMenu header facet={facet} values={facets[facet.key] ?? []} picked={filters[facet.key] ?? []} onChange={v => setFilter(facet.key, v)} /> : null
+  }
 
   return (
     <section className="inventory-page">
@@ -341,7 +358,10 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
             <th className="check"><input type="checkbox" aria-label="Select every line shown" checked={allVisible || allMatching} onChange={toggleAll} /></th>
             {COLUMNS.map(c => (
               <th key={c.key} className={c.right ? 'r' : ''} aria-sort={sort.key === c.sort ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}>
-                {c.sort ? <button className="sort" onClick={() => sortBy(c.sort!)}>{c.label}<span className="arrow" aria-hidden>{sort.key === c.sort ? (sort.dir === 'asc' ? '▲' : '▼') : ''}</span></button> : c.label}
+                <span className="th-inner">
+                  {c.sort ? <button className="sort" title={`Sort by ${c.label.toLowerCase()}`} onClick={() => sortBy(c.sort!)}>{c.label}<span className="arrow" aria-hidden>{sort.key === c.sort ? (sort.dir === 'asc' ? '▲' : '▼') : ''}</span></button> : c.label}
+                  {columnFilter(c)}
+                </span>
               </th>
             ))}
             <th><span className="sr-only">Actions</span></th>
@@ -549,7 +569,7 @@ function InventoryRow({ item, several, locations, spots, selected, onSelect, mov
         <td className="check"><input type="checkbox" aria-label={`Select ${item.name}`} checked={selected}
           onClick={e => onSelect(e.shiftKey)} onChange={() => { /* the click handler knows about Shift */ }} /></td>
         <td className="card-cell"><strong>{item.name}</strong>
-          <div className="muted small">{[item.typeLine, synced ? `CardBox: ${item.clubCollection}` : null].filter(Boolean).join(' · ')}</div></td>
+          {item.typeLine && <div className="muted small">{item.typeLine}</div>}</td>
         <td className="set-cell" title={item.setName ?? undefined}><span className="set-code">{item.set.toUpperCase()}</span> <span className="muted">#{item.number}</span></td>
         <td className="num">{item.year ?? <span className="muted">—</span>}</td>
         <td><ColorPips colors={item.colors} /></td>
@@ -560,6 +580,8 @@ function InventoryRow({ item, several, locations, spots, selected, onSelect, mov
           {item.path.length ? pathText(item.path) : <span className="unshelved">Not put away</span>}
           {item.destination?.length > 0 && <button type="button" className="headed link" aria-expanded={!!why}
             title="Where your storage rules send it. Click to see why." onClick={toggleWhy}>→ {pathText(item.destination)}</button>}</td>
+        <td>{synced ? item.clubCollection : <span className="muted">Store stock</span>}</td>
+        <td>{item.batchName ?? <span className="muted">—</span>}</td>
         <td className="r">{money(item.market)}</td>
         <td className="r">
           {synced ? item.quantity : <QuantityStepper item={item} onQuantity={onQuantity} />}

@@ -290,6 +290,50 @@ class ClubSyncIntegrationTest {
         assertEquals(1, club("POST", "/items", Map.of("upserts", List.of(resent))).body().path("skipped").asInt());
     }
 
+    static Map<String, Object> inBatch(Map<String, Object> item, String batchId, String batchName) {
+        Map<String, Object> out = new HashMap<>(item);
+        out.put("batch_id", batchId);
+        out.put("batch_name", batchName);
+        return out;
+    }
+
+    @Test
+    void cardsFromEachImportBatchGetTheirOwnLineAndFilterAndSortByIt() throws Exception {
+        link();
+        // Sent before Club named batches: one line for both Bolts.
+        club("POST", "/items", Map.of("upserts", List.of(item("b1", 1, BOLT, "normal", 2), item("b2", 2, BOLT, "normal", 1))));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM inventory_items WHERE tenant_id = ?", Integer.class, tenant));
+
+        // The nightly snapshot resends them at the same version, now with their batches, and they split.
+        var resent = club("POST", "/items", Map.of("upserts", List.of(inBatch(item("b1", 1, BOLT, "normal", 2), "batch-a", "Box 10-3"),
+                inBatch(item("b2", 2, BOLT, "normal", 1), "batch-b", "Binder scan"))));
+        assertEquals(2, resent.body().path("applied").asInt(), resent.raw());
+        // Unchanged after that, and a resend without a batch doesn't clear it.
+        assertEquals(1, club("POST", "/items", Map.of("upserts", List.of(inBatch(item("b1", 1, BOLT, "normal", 2), "batch-a", "Box 10-3"))))
+                .body().path("skipped").asInt());
+        assertEquals(1, club("POST", "/items", Map.of("upserts", List.of(item("b1", 1, BOLT, "normal", 2)))).body().path("skipped").asInt());
+
+        var page = call("GET", "/api/app/inventory?sort=batch&dir=asc", null, owner, null).body();
+        assertEquals(2, page.path("lines").asInt());
+        assertEquals("Binder scan", page.path("items").get(0).path("batchName").asText());
+        assertEquals("Box 10-3", page.path("items").get(1).path("batchName").asText());
+        assertEquals(2, call("GET", "/api/app/inventory?batch=batch-a", null, owner, null).body().path("cards").asInt());
+        assertEquals(0, call("GET", "/api/app/inventory?batch=none", null, owner, null).body().path("cards").asInt());
+        assertEquals(200, call("GET", "/api/app/inventory?sort=collection", null, owner, null).status());
+        var facet = call("GET", "/api/app/inventory/facets", null, owner, null).body().path("batch");
+        assertEquals(2, facet.size(), facet.toString());
+
+        // Putting one batch's line away moves only its cards, and they stay in their batch.
+        UUID location = jdbc.queryForObject("SELECT id FROM locations WHERE tenant_id = ?", UUID.class, tenant);
+        String shelf = spot(location, null, "Shelf", "4");
+        var moved = call("POST", "/api/app/inventory/move", null, owner, Map.of("filter", Map.of("batch", List.of("batch-b")), "storageId", shelf));
+        assertEquals(200, moved.status(), moved.raw());
+        var onShelf = call("GET", "/api/app/inventory?storage=" + shelf, null, owner, null).body();
+        assertEquals(1, onShelf.path("cards").asInt());
+        assertEquals("batch-b", onShelf.path("items").get(0).path("batchId").asText());
+        assertEquals(2, call("GET", "/api/app/inventory?storage=none", null, owner, null).body().path("cards").asInt());
+    }
+
     @Test
     void endingALinkKeepsOrRemovesItsCards() throws Exception {
         link();

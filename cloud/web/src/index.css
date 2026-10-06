@@ -547,3 +547,17 @@ button.headed { display: block; padding: 0; text-align: left; text-decoration: u
 .inv-save { margin-left: auto; font-size: 13px; }
 .inv-save-form { display: inline-flex; gap: 6px; align-items: center; margin-left: auto; }
 .inv-save-form input { width: 220px; }
+
+/* Column headers: sort by the name, filter from the funnel beside it. */
+.grid th .th-inner { display: inline-flex; align-items: center; gap: 2px; }
+.grid th.r .th-inner { justify-content: flex-end; }
+.facet.in-header { display: inline-flex; text-transform: none; letter-spacing: normal; font-weight: 400; }
+.grid th button.col-filter { min-height: 28px; min-width: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: 0; border-radius: 6px; color: var(--muted); opacity: .55; }
+.grid th button.col-filter svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
+.grid th:hover button.col-filter, .grid th button.col-filter:focus-visible, .grid th button.col-filter[aria-expanded="true"] { opacity: 1; }
+.grid th button.col-filter:hover { background: var(--surface-2); color: var(--text); }
+.grid th button.col-filter.on { opacity: 1; color: var(--accent); }
+.grid th button.col-filter.on svg { fill: currentColor; }
+.facet.in-header .facet-menu { max-width: none; text-align: left; }
+@media (pointer: coarse) { .grid th button.col-filter { opacity: 1; min-width: 36px; min-height: 36px; } }
