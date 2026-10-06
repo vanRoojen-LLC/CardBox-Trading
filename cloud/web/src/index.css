@@ -158,6 +158,8 @@ label input, label select { display: block; width: 100%; margin-top: .3rem; font
   .result .price-col { flex: 1; text-align: left; padding: 8px 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); }
   .price-col small { display: block; font-size: 12px; font-weight: 400; color: var(--muted); }
 }
+.game-switch { margin: 0 0 12px; }
+.variant { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-soft-text); }
 .rarity { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--line-soft); color: var(--text-2); text-transform: capitalize; }
 .rarity.mythic { background: #fde8d3; color: #8a3b06; }
 .rarity.rare { background: #f6eed2; color: #6b5208; }

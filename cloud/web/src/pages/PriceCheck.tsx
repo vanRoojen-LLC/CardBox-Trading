@@ -3,32 +3,60 @@ import { api, money, type Card } from '../api'
 import SearchIcon from '../SearchIcon'
 import CardLightbox from '../CardLightbox'
 
-interface SearchResult { cards: Card[]; pricesUpdatedAt: string | null }
+/** A public result row; Star Wars: Unlimited rows also name their variant and link to TCGplayer. */
+type PriceCard = Card & { variant?: string | null; url?: string | null }
+interface SearchResult { cards: PriceCard[]; pricesUpdatedAt: string | null }
+type Game = 'mtg' | 'swu'
+
+const GAMES: Record<Game, { label: string; title: string; example: string }> = {
+  mtg: { label: 'Magic', title: 'Magic card price check', example: 'e.g. Lightning Bolt or DMU 391' },
+  swu: { label: 'Star Wars: Unlimited', title: 'Star Wars: Unlimited price check', example: 'e.g. Darth Vader or SOR 010' },
+}
+
+/** The game in the address (?game=swu), so a store can link straight to it. Magic otherwise. */
+function gameFromUrl(): Game {
+  return new URLSearchParams(window.location.search).get('game') === 'swu' ? 'swu' : 'mtg'
+}
 
 /** The free price check: search a card, see its market price. Nothing else, by design. */
 export default function PriceCheck() {
+  const [game, setGame] = useState<Game>(gameFromUrl)
   const [query, setQuery] = useState('')
   const [result, setResult] = useState<SearchResult | null>(null)
   const [error, setError] = useState('')
-  const [enlarged, setEnlarged] = useState<Card | null>(null)
+  const [enlarged, setEnlarged] = useState<PriceCard | null>(null)
 
   useEffect(() => {
     if (query.trim().length < 2) { setResult(null); setError(''); return }
     const timer = setTimeout(() => {
-      api<SearchResult>(`/api/public/cards?q=${encodeURIComponent(query.trim())}&v=${__BUILD_ID__}`)
+      api<SearchResult>(`/api/public/cards?game=${game}&q=${encodeURIComponent(query.trim())}&v=${__BUILD_ID__}`)
         .then(r => { setResult(r); setError('') })
         .catch(e => setError(e.message))
     }, 300)
     return () => clearTimeout(timer)
-  }, [query])
+  }, [query, game])
+
+  function choose(next: Game) {
+    setGame(next)
+    setResult(null)
+    const url = new URL(window.location.href)
+    if (next === 'mtg') url.searchParams.delete('game')
+    else url.searchParams.set('game', next)
+    window.history.replaceState(null, '', url)
+  }
 
   return (
     <section>
-      <h1>Magic card price check</h1>
+      <h1>{GAMES[game].title}</h1>
       <p className="lede">Free, no account. Search by name, set code or collector number.</p>
+      <div className="seg game-switch" role="group" aria-label="Game">
+        {(Object.keys(GAMES) as Game[]).map(g => (
+          <button key={g} type="button" aria-pressed={g === game} onClick={() => choose(g)}>{GAMES[g].label}</button>
+        ))}
+      </div>
       <div className="search">
         <SearchIcon />
-        <input autoFocus placeholder="e.g. Lightning Bolt or DMU 391" value={query}
+        <input autoFocus placeholder={GAMES[game].example} value={query}
                onChange={e => setQuery(e.target.value)} aria-label="Card name, set or number" />
         {result && <span className="aside">{result.cards.length} {result.cards.length === 1 ? 'match' : 'matches'}</span>}
       </div>
@@ -47,7 +75,9 @@ export default function PriceCheck() {
                     : <div className="noimg" />}
                   <div className="info">
                     <h3>{card.name}</h3>
-                    <div className="meta"><span>{card.setName}</span><b>{card.set.toUpperCase()} #{card.number}</b><span className={`rarity ${card.rarity}`}>{card.rarity}</span></div>
+                    <div className="meta"><span>{card.setName}</span><b>{card.set.toUpperCase()} #{card.number}</b><span className={`rarity ${card.rarity}`}>{card.rarity}</span>
+                      {card.variant && <span className="variant">{card.variant}</span>}
+                      {card.url && <a href={card.url} target="_blank" rel="noreferrer">TCGplayer</a>}</div>
                   </div>
                   <div className="price-col"><small>Normal</small>{money(card.usd)}</div>
                   <div className="price-col foil"><small>Foil</small>{money(card.usdFoil)}
