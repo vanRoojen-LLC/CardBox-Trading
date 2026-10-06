@@ -25,7 +25,8 @@ public class ClubSync {
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     public record Upsert(String itemId, Long version, String game, String scryfallId, String finish, Integer quantity,
                          String condition, String name, String setCode, String collectorNumber,
-                         String storageId, String imageUrl, JsonNode details, String clubPrintingId, String treatment) {}
+                         String storageId, String imageUrl, JsonNode details, String clubPrintingId, String treatment,
+                         String batchId, String batchName) {}
 
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     public record Removal(String itemId, Long version) {}
@@ -50,9 +51,10 @@ public class ClubSync {
             LEFT JOIN storage_spots ps ON ps.id = i.placed_storage_id AND ps.tenant_id = l.tenant_id""";
     private static final String LOCATION = "CASE WHEN i.placed THEN coalesce(ps.location_id, l.location_id) ELSE coalesce(s.location_id, l.location_id) END";
     private static final String STORAGE = "CASE WHEN i.placed THEN ps.id ELSE coalesce(s.id, l.storage_id) END";
-    /** The club_link_items behind one synced inventory line: link, card, finish, condition, location and spot. */
+    /** The club_link_items behind one synced inventory line: link, card, finish, condition, location, spot and batch. */
     private static final String LINE = " i.link_id = ? AND NOT i.removed AND i.card_id = ? AND i.finish = ?"
-            + " AND coalesce(i.condition, l.default_condition) = ? AND " + LOCATION + " = ? AND " + STORAGE + " IS NOT DISTINCT FROM ?";
+            + " AND coalesce(i.condition, l.default_condition) = ? AND " + LOCATION + " = ? AND " + STORAGE + " IS NOT DISTINCT FROM ?"
+            + " AND i.batch_id = ?";
 
     private final JdbcTemplate jdbc;
     private final InventoryRepository inventory;
@@ -118,25 +120,30 @@ public class ClubSync {
                 notMatched.add(Map.of("item_id", u.itemId(), "reason", match.reason() != null ? match.reason() : NOT_IN_LIST));
             int changed = jdbc.update("""
                     INSERT INTO club_link_items (link_id, item_id, version, removed, card_id, finish, condition, quantity, game,
-                                                 name, set_code, collector_number, unmatched_reason, storage_id, image_url, details)
-                    VALUES (?, ?, ?, false, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
+                                                 name, set_code, collector_number, unmatched_reason, storage_id, image_url, details,
+                                                 batch_id, batch_name)
+                    VALUES (?, ?, ?, false, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)
                     ON CONFLICT (link_id, item_id) DO UPDATE SET version = EXCLUDED.version, removed = false,
                         card_id = EXCLUDED.card_id, finish = EXCLUDED.finish, condition = EXCLUDED.condition,
                         quantity = EXCLUDED.quantity, game = EXCLUDED.game, name = EXCLUDED.name, set_code = EXCLUDED.set_code,
                         collector_number = EXCLUDED.collector_number, unmatched_reason = EXCLUDED.unmatched_reason,
                         storage_id = EXCLUDED.storage_id, image_url = EXCLUDED.image_url, details = EXCLUDED.details,
+                        batch_id = EXCLUDED.batch_id, batch_name = EXCLUDED.batch_name,
                         -- A new spot from a scan on Club is a person's choice too, and the latest one wins.
                         placed = club_link_items.placed AND club_link_items.storage_id IS NOT DISTINCT FROM EXCLUDED.storage_id,
                         updated_at = now()
                     -- A resend of a card that could not go in before (its game was not supported yet, say) goes in now.
                     WHERE club_link_items.version < EXCLUDED.version
                        OR (club_link_items.version = EXCLUDED.version AND club_link_items.card_id IS NULL
-                           AND EXCLUDED.card_id IS NOT NULL)""",
+                           AND EXCLUDED.card_id IS NOT NULL)
+                       -- So does the batch of a card sent before Club named batches, or of a renamed batch.
+                       OR (club_link_items.version = EXCLUDED.version AND EXCLUDED.batch_id <> ''
+                           AND (club_link_items.batch_id, club_link_items.batch_name) <> (EXCLUDED.batch_id, EXCLUDED.batch_name))""",
                     linkId, u.itemId(), u.version(), match.reason() == null ? match.cardId() : null,
                     match.finish() == null ? "normal" : match.finish(), condition(u.condition()),
                     u.quantity() == null ? 1 : u.quantity(), text(u.game()), text(u.name()), text(u.setCode()),
                     text(u.collectorNumber()), match.reason(), spotIn((UUID) link.get("tenant_id"), u.storageId()),
-                    imageUrl(u.imageUrl()), details(u.details()));
+                    imageUrl(u.imageUrl()), details(u.details()), batch(u.batchId()), batch(u.batchName()));
             if (changed > 0) applied++; else skipped++;
             if (snapshotId != null)
                 jdbc.update("UPDATE club_link_items SET snapshot_id = ? WHERE link_id = ? AND item_id = ?", snapshotId, linkId, u.itemId());
@@ -253,7 +260,7 @@ public class ClubSync {
         return jdbc.queryForList("SELECT i.item_id AS \"itemId\", i.quantity, i.image_url AS image, i.details::text AS details"
                         + " FROM club_link_items i " + SPOTS + " WHERE " + LINE + " ORDER BY i.item_id LIMIT 200",
                 line.get("club_link_id"), line.get("card_id"), line.get("finish"), line.get("condition"),
-                line.get("location_id"), line.get("storage_id"));
+                line.get("location_id"), line.get("storage_id"), line.get("source_batch_id"));
     }
 
     /** A CardBox store's open locations and storage spots, for Club to tag scans with. */
@@ -304,13 +311,15 @@ public class ClubSync {
         jdbc.update("DELETE FROM inventory_items WHERE club_link_id = ?", linkId);
         jdbc.update("""
                 INSERT INTO inventory_items (id, tenant_id, location_id, storage_id, card_id, name, set_code, collector_number,
-                                             rarity, lang, finish, condition, quantity, club_link_id)
+                                             rarity, lang, finish, condition, quantity, club_link_id,
+                                             source_batch_id, source_batch_name)
                 SELECT gen_random_uuid(), l.tenant_id, %1$s, %2$s, c.id, c.name, c.set_code, c.collector_number,
-                       c.rarity, c.lang, i.finish, coalesce(i.condition, l.default_condition), sum(i.quantity), l.id
+                       c.rarity, c.lang, i.finish, coalesce(i.condition, l.default_condition), sum(i.quantity), l.id,
+                       i.batch_id, max(i.batch_name)
                 FROM club_link_items i JOIN inventory_cards c ON c.id = i.card_id %3$s
                 WHERE i.link_id = ? AND NOT i.removed
                 GROUP BY l.tenant_id, %1$s, %2$s, l.id, c.id, c.name, c.set_code,
-                         c.collector_number, c.rarity, c.lang, i.finish, coalesce(i.condition, l.default_condition)""".formatted(LOCATION, STORAGE, SPOTS),
+                         c.collector_number, c.rarity, c.lang, i.finish, coalesce(i.condition, l.default_condition), i.batch_id""".formatted(LOCATION, STORAGE, SPOTS),
                 linkId);
         jdbc.update("UPDATE club_links SET last_synced_at = now() WHERE id = ?", linkId);
     }
@@ -323,7 +332,7 @@ public class ClubSync {
         jdbc.update("UPDATE club_link_items u SET placed = true, placed_storage_id = ? FROM club_link_items i " + SPOTS
                         + " WHERE u.link_id = i.link_id AND u.item_id = i.item_id AND " + LINE,
                 storage, line.get("club_link_id"), line.get("card_id"), line.get("finish"), line.get("condition"),
-                line.get("location_id"), line.get("storage_id"));
+                line.get("location_id"), line.get("storage_id"), line.get("source_batch_id"));
     }
 
     /** Ends a link: its lines become the store's own stock (merged with any matching line) or leave inventory. */
@@ -333,10 +342,11 @@ public class ClubSync {
         if (keep) {
             jdbc.update("""
                     INSERT INTO inventory_items (id, tenant_id, location_id, storage_id, card_id, name, set_code, collector_number,
-                                                 rarity, lang, finish, condition, quantity)
+                                                 rarity, lang, finish, condition, quantity, source_batch_id, source_batch_name)
                     SELECT gen_random_uuid(), tenant_id, location_id, storage_id, card_id, name, set_code, collector_number,
-                           rarity, lang, finish, condition, quantity FROM inventory_items WHERE club_link_id = ?
-                    ON CONFLICT (location_id, storage_id, card_id, finish, condition, club_link_id)
+                           rarity, lang, finish, condition, quantity, source_batch_id, source_batch_name
+                    FROM inventory_items WHERE club_link_id = ?
+                    ON CONFLICT (location_id, storage_id, card_id, finish, condition, club_link_id, source_batch_id)
                     DO UPDATE SET quantity = inventory_items.quantity + EXCLUDED.quantity, updated_at = now()""", linkId);
         }
         jdbc.update("DELETE FROM inventory_items WHERE club_link_id = ?", linkId);
@@ -465,6 +475,13 @@ public class ClubSync {
     /** Only https links are shown as images. */
     public static String imageUrl(String url) {
         return url != null && url.startsWith("https://") && url.length() <= 2000 ? url : null;
+    }
+
+    /** An import batch's id or name as Club sent it: trimmed, at most 200 characters, '' for none. */
+    static String batch(String value) {
+        if (value == null) return "";
+        String trimmed = value.strip();
+        return trimmed.length() > 200 ? trimmed.substring(0, 200) : trimmed;
     }
 
     /** Free-form detail (grading, serial number, notes) as Club sent it, if it is a JSON object of modest size. */

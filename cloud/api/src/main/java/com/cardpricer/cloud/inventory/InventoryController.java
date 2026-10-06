@@ -166,10 +166,10 @@ public class InventoryController {
             throw ApiException.badRequest("Remove what's inside " + spot.label() + " " + spot.name() + " first");
         jdbc.update("""
                 INSERT INTO inventory_items (id, tenant_id, location_id, storage_id, card_id, name, set_code, collector_number,
-                                             rarity, lang, finish, condition, quantity, club_link_id)
+                                             rarity, lang, finish, condition, quantity, club_link_id, source_batch_id, source_batch_name)
                 SELECT gen_random_uuid(), tenant_id, location_id, ?, card_id, name, set_code, collector_number, rarity, lang,
-                       finish, condition, quantity, club_link_id FROM inventory_items WHERE storage_id = ?
-                ON CONFLICT (location_id, storage_id, card_id, finish, condition, club_link_id)
+                       finish, condition, quantity, club_link_id, source_batch_id, source_batch_name FROM inventory_items WHERE storage_id = ?
+                ON CONFLICT (location_id, storage_id, card_id, finish, condition, club_link_id, source_batch_id)
                 DO UPDATE SET quantity = inventory_items.quantity + EXCLUDED.quantity, updated_at = now()""", spot.parentId(), id);
         // Club collections synced into this spot land in the spot that held it from now on.
         jdbc.update("UPDATE club_links SET storage_id = ?, updated_at = now() WHERE storage_id = ?", spot.parentId(), id);
@@ -202,6 +202,7 @@ public class InventoryController {
                 SELECT i.id, i.location_id AS "locationId", loc.name AS location, i.storage_id AS "storageId", i.card_id AS "cardId",
                        i.name, i.set_code AS "set", i.collector_number AS number, i.rarity, i.finish, i.condition, i.quantity,
                        c.image_small AS image, i.club_link_id AS "clubLinkId", cl.collection_name AS "clubCollection",
+                       nullif(i.source_batch_id, '') AS "batchId", nullif(i.source_batch_name, '') AS "batchName",
                        c.game, c.set_name AS "setName", extract(year FROM c.released_at)::int AS year, c.type_line AS "typeLine",
                        array_to_string(c.colors, '') AS colors, array_to_string(c.treatments, ',') AS treatments,
                        c.mana_value AS "manaValue", """ + InventoryQuery.MARKET + " AS market "

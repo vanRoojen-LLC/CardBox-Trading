@@ -8,7 +8,7 @@ export const FACETS: { key: string; label: string; searchable?: boolean }[] = [
   { key: 'game', label: 'Game' }, { key: 'set', label: 'Set', searchable: true }, { key: 'year', label: 'Year' },
   { key: 'rarity', label: 'Rarity' }, { key: 'color', label: 'Color' }, { key: 'type', label: 'Type' },
   { key: 'finish', label: 'Finish' }, { key: 'treatment', label: 'Treatment' }, { key: 'condition', label: 'Condition' },
-  { key: 'source', label: 'Came from' },
+  { key: 'source', label: 'Came from' }, { key: 'batch', label: 'Import batch', searchable: true },
 ]
 
 export const GAMES: Record<string, string> = { 'magic-the-gathering': 'Magic', 'star-wars-unlimited': 'Star Wars: Unlimited' }
@@ -27,6 +27,8 @@ export function valueLabel(facet: string, v: { value: string; label?: string | n
     case 'color': return COLORS[v.value] ?? v.value
     case 'treatment': return TREATMENTS[v.value] ?? titleCase(v.value)
     case 'source': return v.value === 'store' ? 'Store stock' : `CardBox: ${v.label ?? 'collection'}`
+    case 'batch': return v.value === 'none' ? 'No import batch' : v.label ?? 'Unnamed batch'
+    case 'storage': return v.label ?? v.value
     case 'rarity': case 'finish': return titleCase(v.value)
     default: return v.value
   }
