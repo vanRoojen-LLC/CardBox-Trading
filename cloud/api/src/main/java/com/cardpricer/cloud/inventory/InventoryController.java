@@ -251,6 +251,9 @@ public class InventoryController {
             args.addAll(where.args());
             out.put(facet, jdbc.queryForList(query.facetSql(facet).formatted(where.sql()), args.toArray()));
         }
+        // Not a filter menu: the location picker and the list's location headings count cards per spot.
+        var where = query.where("storage");
+        out.put("storage", jdbc.queryForList(query.facetSql("storage").formatted(where.sql()), where.args().toArray()));
         return out;
     }
 

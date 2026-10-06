@@ -651,6 +651,11 @@ class CloudApiIntegrationTest {
         assertEquals(5, call("GET", "/api/app/inventory?storage=" + shelf, owner, null).body().path("cards").asInt());
         assertEquals(2, call("GET", "/api/app/inventory?storage=none", owner, null).body().path("cards").asInt());
         assertEquals(5, call("GET", "/api/app/inventory?storage=any", owner, null).body().path("cards").asInt());
+        // The location picker counts cards per spot under the other filters, ignoring the picked spot itself.
+        var perSpot = call("GET", "/api/app/inventory/facets?storage=none", owner, null).body().path("storage");
+        assertEquals(1, perSpot.size(), perSpot.toString());
+        assertEquals(shelf, perSpot.get(0).path("value").asText());
+        assertEquals(5, perSpot.get(0).path("cards").asInt());
 
         // Or by picked lines, back to "not put away"; another store's ids are ignored.
         String sol = call("GET", "/api/app/inventory?q=sol%20ring", owner, null).body().path("items").get(0).path("id").asText();

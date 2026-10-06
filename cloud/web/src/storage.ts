@@ -25,6 +25,19 @@ export function pathText(path: PathPart[]): string {
   return path.map(spotText).join(' › ')
 }
 
+/** Where a card sits, as just the spot names ("Bulk › Card Display › MTG Black"); stores name tiers in the value when they want them. */
+export function placeText(path: PathPart[]): string {
+  return path.map(p => p.name).join(' › ')
+}
+
+/** Cards in each spot counting every spot inside it, from counts of cards sitting in each spot itself. */
+export function subtreeCounts(spots: Spot[], direct: Map<string, number>): Map<string, number> {
+  const parent = new Map(spots.map(s => [s.id, s.parentId]))
+  const out = new Map<string, number>()
+  for (const [id, n] of direct) for (let at: string | null | undefined = id; at; at = parent.get(at)) out.set(at, (out.get(at) ?? 0) + n)
+  return out
+}
+
 /** Path of a spot from the top of its location. */
 export function pathOf(spots: Spot[], id: string): PathPart[] {
   const byId = new Map(spots.map(s => [s.id, s]))
