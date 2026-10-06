@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { api, money, phoneText, type StoreLocation } from '../api'
+import { aborted, api, money, phoneText, type StoreLocation } from '../api'
 
 interface TradeSummary {
   id: string; number: number; created_at: string; payment: string; credit_total: number; check_total: number
@@ -18,25 +18,34 @@ export function History({ locations }: { locations: StoreLocation[] }) {
   const [phone, setPhone] = useState('')
   const [location, setLocation] = useState('')
   const several = locations.length > 1
-  const [trades, setTrades] = useState<TradeSummary[]>([])
+  // null while loading, so "no trades" is only said once the server has answered.
+  const [trades, setTrades] = useState<TradeSummary[] | null>(null)
   const [error, setError] = useState('')
   const navigate = useNavigate()
+  const digits = phone.replace(/\D/g, '')
+  // A partial number would match nearly everyone, so the list waits for 8 digits rather than showing stale results.
+  const partial = phone !== '' && digits.length < 8
   useEffect(() => {
+    if (partial) return
+    const controller = new AbortController()
     const timer = setTimeout(() => {
-      const digits = phone.replace(/\D/g, '')
-      if (phone && digits.length < 8) return
+      setTrades(null)
       const params = new URLSearchParams()
       if (phone) params.set('phone', phone)
       if (location) params.set('location', location)
-      api<TradeSummary[]>(`/api/app/trades${params.size ? `?${params}` : ''}`)
-        .then(t => { setTrades(t); setError('') }).catch(e => setError(e.message))
+      // URLSearchParams.size is missing on Safari before 17 (older counter iPads), so test the string instead.
+      const search = params.toString()
+      api<TradeSummary[]>(`/api/app/trades${search ? `?${search}` : ''}`, { signal: controller.signal })
+        .then(t => { setTrades(t); setError('') }).catch(e => { if (!aborted(e)) { setTrades([]); setError(e.message) } })
     }, 300)
-    return () => clearTimeout(timer)
-  }, [phone, location])
+    return () => { clearTimeout(timer); controller.abort() }
+  }, [phone, location, partial])
 
   // The list holds the latest 50 trades, so today's totals are exact unless a store does more than 50 in a day.
-  const today = trades.filter(t => sameDay(new Date(t.created_at), new Date()))
-  const sum = (key: 'credit_total' | 'check_total') => today.reduce((n, t) => n + Number(t[key] ?? 0), 0)
+  const shown = partial ? [] : trades ?? []
+  const today = shown.filter(t => sameDay(new Date(t.created_at), new Date()))
+  const capped = today.length >= 50
+  const sum = (key: 'credit_total' | 'check_total') => money(today.reduce((n, t) => n + Number(t[key] ?? 0), 0)) + (capped ? '+' : '')
 
   return (
     <section>
@@ -50,11 +59,11 @@ export function History({ locations }: { locations: StoreLocation[] }) {
           </select>
         )}
       </div>
-      {!phone && (
+      {!phone && trades && (
         <div className="stats">
-          <div className="stat"><span>Trades today</span><strong>{today.length === 50 ? '50+' : today.length}</strong></div>
-          <div className="stat copper"><span>Credit paid out today</span><strong>{money(sum('credit_total'))}</strong></div>
-          <div className="stat"><span>Checks written today</span><strong>{money(sum('check_total'))}</strong></div>
+          <div className="stat"><span>Trades today{location ? ' here' : ''}</span><strong>{capped ? '50+' : today.length}</strong></div>
+          <div className="stat copper"><span>Credit paid out today</span><strong>{sum('credit_total')}</strong></div>
+          <div className="stat"><span>Checks written today</span><strong>{sum('check_total')}</strong></div>
         </div>
       )}
       {error && <p className="error">{error}</p>}
@@ -62,7 +71,7 @@ export function History({ locations }: { locations: StoreLocation[] }) {
         <table className="grid">
           <thead><tr><th>#</th><th>When</th><th>Customer</th><th className="r">Cards</th><th className="r">Credit</th><th className="r">Check</th>{several && <th>Location</th>}<th>By</th><th><span className="sr-only">POS export</span></th></tr></thead>
           <tbody>
-            {trades.map(t => (
+            {shown.map(t => (
               <tr key={t.id} className="clickable" onClick={() => navigate(`/app/history/${t.id}`)}>
                 <td><Link to={`/app/history/${t.id}`} onClick={e => e.stopPropagation()}><strong>{t.number}</strong></Link></td>
                 <td className="num">{when(t.created_at)}</td>
@@ -77,7 +86,9 @@ export function History({ locations }: { locations: StoreLocation[] }) {
             ))}
           </tbody>
         </table>
-        {trades.length === 0 && <p className="empty">No trades yet.</p>}
+        {partial ? <p className="empty">Keep typing: enter at least 8 digits of the phone number.</p>
+          : trades === null ? <p className="empty">Loading…</p>
+          : trades.length === 0 && !error ? <p className="empty">{phone || location ? 'No trades match.' : 'No trades yet.'}</p> : null}
       </div>
     </section>
   )
@@ -118,7 +129,7 @@ export function TradeDetail() {
         </table>
       </div>
       <div className="totals">
-        <div className="sum"><span>Market value</span><strong>{money(trade.market_total)}</strong></div>
+        <div className="sum" title="The market price after the store's pricing rules, which the offer was worked out from"><span>Our value</span><strong>{money(trade.market_total)}</strong></div>
         <div className="sum"><span>Store credit paid</span><strong style={{ color: 'var(--copper-text)' }}>{money(trade.credit_total)}</strong></div>
         <div className="sum"><span>Check paid</span><strong>{money(trade.check_total)}</strong></div>
       </div>
