@@ -134,7 +134,7 @@ export default function StorageEditor({ owner, locations }: { owner: boolean; lo
                   <button className="link icon" aria-label={`Move ${s.label} ${s.name} down`} title="Move down"
                     disabled={tree.filter(o => o.parentId === s.parentId).at(-1)?.id === s.id} onClick={() => move(s, 'down')}>↓</button>
                   <button className="link" onClick={() => start({ mode: 'add', parentId: s.id })}>Add inside</button>
-                  <button className="link" onClick={() => start({ mode: 'rename', spot: s })}>Rename</button>
+                  <button className="link" title={`Change the tier label or name of ${s.label} ${s.name}`} onClick={() => start({ mode: 'rename', spot: s })}>Edit</button>
                   <button className="link" onClick={() => remove(s)}>Remove</button>
                 </span>
               )}
