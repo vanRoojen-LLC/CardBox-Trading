@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, CONDITIONS, FINISHES, money, type Card, type Money, type StoreLocation } from '../api'
+import { aborted, api, CONDITIONS, FINISHES, money, type Card, type Money, type StoreLocation } from '../api'
 import { flatTree, pathOf, pathText, type PathPart, type Spot } from '../storage'
 import SearchIcon from '../SearchIcon'
 import { FACETS, TREATMENTS, ruleText, titleCase, valueLabel, type Conditions, type Facets } from '../cardDetails'
@@ -118,10 +118,7 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
   async function change(request: Promise<unknown>) {
     try { await request; await refresh() } catch (e) { setError((e as Error).message) }
   }
-  const setQuantity = (item: Item, quantity: number) => {
-    if (quantity === 0 && !confirm(`Remove ${item.name} (${item.condition}) from inventory?`)) return
-    change(api(`/api/app/inventory/${item.id}`, { method: 'PUT', body: { quantity } }))
-  }
+  const setQuantity = (item: Item, quantity: number) => change(api(`/api/app/inventory/${item.id}`, { method: 'PUT', body: { quantity } }))
 
   const items = page?.items ?? []
   const current = selection.key === key
@@ -310,7 +307,7 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
               <InventoryRow key={item.id} item={item} several={several} locations={open} spots={spots}
                 selected={allMatching || selected.has(item.id)} onSelect={shift => toggle(index, shift)}
                 moving={moving === item.id} onMove={() => setMoving(moving === item.id ? null : item.id)}
-                onQuantity={n => setQuantity(item, n)}
+                onQuantity={n => setQuantity(item, n)} onError={setError}
                 onMoved={body => { setMoving(null); change(api(`/api/app/inventory/${item.id}/move`, { method: 'POST', body })) }} />
             ))}
           </tbody>
@@ -444,14 +441,59 @@ function SpotPicker({ locations, spots, cards, lines, onCancel, onPick }: {
   )
 }
 
-function InventoryRow({ item, several, locations, spots, selected, onSelect, moving, onMove, onQuantity, onMoved }: {
+/** Scan details are stored as JSON text; a bad one shows as nothing rather than breaking the whole page. */
+function scanDetails(details: string | null): string {
+  if (!details) return ''
+  try {
+    const parsed: unknown = JSON.parse(details)
+    if (!parsed || typeof parsed !== 'object') return ''
+    return Object.entries(parsed as Record<string, unknown>).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${String(v)}`).join(' · ')
+  } catch { return '' }
+}
+
+/**
+ * The +/- buttons count up locally and send one total once the clicks stop: saving replaces the line, so each click
+ * sending its own count from the row as last loaded used to lose quick clicks.
+ */
+function QuantityStepper({ item, onQuantity }: { item: Item; onQuantity: (n: number) => Promise<void> }) {
+  const [pending, setPending] = useState<number | null>(null)
+  const [saving, setSaving] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => clearTimeout(timer.current), [])
+  const shown = pending ?? item.quantity
+  async function send(quantity: number) {
+    clearTimeout(timer.current)
+    if (quantity === item.quantity) { setPending(null); return }
+    if (quantity === 0 && !confirm(`Remove ${item.name} (${item.condition}) from inventory?`)) { setPending(null); return }
+    setSaving(true)
+    try { await onQuantity(quantity) } finally { setSaving(false); setPending(null) }
+  }
+  function step(by: number) {
+    const next = Math.max(0, shown + by)
+    setPending(next)
+    clearTimeout(timer.current)
+    // Going to zero asks straight away; otherwise wait for a pause in the clicking.
+    if (next === 0) send(0)
+    else timer.current = setTimeout(() => send(next), 500)
+  }
+  return (
+    <span className="stepper" aria-busy={saving || undefined}>
+      <button aria-label={`One fewer ${item.name}`} disabled={saving || shown === 0} onClick={() => step(-1)}>−</button>
+      <span aria-live="polite">{shown}</span>
+      <button aria-label={`One more ${item.name}`} disabled={saving} onClick={() => step(1)}>+</button>
+    </span>
+  )
+}
+
+function InventoryRow({ item, several, locations, spots, selected, onSelect, moving, onMove, onQuantity, onError, onMoved }: {
   item: Item; several: boolean; locations: StoreLocation[]; spots: Spot[]; selected: boolean; onSelect: (shift: boolean) => void
-  moving: boolean; onMove: () => void; onQuantity: (n: number) => void
+  moving: boolean; onMove: () => void; onQuantity: (n: number) => Promise<void>; onError: (message: string) => void
   onMoved: (body: { locationId: string; storageId: string | null; quantity: number }) => void
 }) {
   const [target, setTarget] = useState({ locationId: item.locationId, storageId: '', quantity: item.quantity })
   const [scans, setScans] = useState<{ itemId: string; quantity: number; image: string | null; details: string | null }[] | null>(null)
-  const toggleScans = () => scans ? setScans(null) : api<typeof scans>(`/api/app/club-links/scans/${item.id}`).then(setScans).catch(() => setScans([]))
+  const toggleScans = () => scans ? setScans(null) : api<typeof scans>(`/api/app/club-links/scans/${item.id}`).then(setScans)
+    .catch(e => { onError(`Couldn’t load the scans for ${item.name}: ${(e as Error).message}`); setScans(null) })
   const [why, setWhy] = useState<Why | null>(null)
   const toggleWhy = () => why ? setWhy(null) : api<Why>(`/api/app/inventory/${item.id}/why`).then(setWhy).catch(() => setWhy({ steps: [], destination: [] }))
   const synced = !!item.clubLinkId
@@ -476,13 +518,7 @@ function InventoryRow({ item, several, locations, spots, selected, onSelect, mov
             title="Where your storage rules send it. Click to see why." onClick={toggleWhy}>→ {pathText(item.destination)}</button>}</td>
         <td className="r">{money(item.market)}</td>
         <td className="r">
-          {synced ? item.quantity : (
-            <span className="stepper">
-              <button aria-label="One fewer" onClick={() => onQuantity(item.quantity - 1)}>−</button>
-              <span>{item.quantity}</span>
-              <button aria-label="One more" onClick={() => onQuantity(item.quantity + 1)}>+</button>
-            </span>
-          )}
+          {synced ? item.quantity : <QuantityStepper item={item} onQuantity={onQuantity} />}
         </td>
         <td className="r row-links">
           <button className="link" onClick={onMove}>{moving ? 'Cancel' : 'Move'}</button>
@@ -500,7 +536,7 @@ function InventoryRow({ item, several, locations, spots, selected, onSelect, mov
                 {s.image ? <a href={s.image} target="_blank" rel="noreferrer"><img src={s.image} alt={`Scan of ${item.name}`} className="scan-thumb" loading="lazy" /></a>
                   : <span className="muted small">No photo</span>}
                 {s.quantity > 1 && <span className="small"> ×{s.quantity}</span>}
-                {s.details && <span className="muted small"> · {Object.entries(JSON.parse(s.details) as Record<string, unknown>).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${String(v)}`).join(' · ')}</span>}
+                {scanDetails(s.details) && <span className="muted small"> · {scanDetails(s.details)}</span>}
               </li>
             ))}
           </ul>
@@ -570,40 +606,63 @@ function AddCards({ locations, spots, defaultLocation, onAdded }: {
   const [form, setForm] = useState({ finish: 'normal', condition: 'NM', quantity: 1, locationId: defaultLocation, storageId: '' })
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [active, setActive] = useState(0)
+  const [busy, setBusy] = useState(false)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const qtyRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
     if (query.trim().length < 2) return
-    const t = setTimeout(() => api<Card[]>(`/api/app/cards?q=${encodeURIComponent(query.trim())}`)
-      .then(setResults).catch(e => setError(e.message)), 250)
-    return () => clearTimeout(t)
+    const controller = new AbortController()
+    const t = setTimeout(() => api<Card[]>(`/api/app/cards?q=${encodeURIComponent(query.trim())}`, { signal: controller.signal })
+      .then(r => { setResults(r); setActive(0) }).catch(e => { if (!aborted(e)) setError(e.message) }), 250)
+    return () => { clearTimeout(t); controller.abort() }
   }, [query])
   const finishes = useMemo(() => card ? FINISHES.filter(f => f.price(card) != null) : [], [card])
+  const shown = query.trim().length >= 2 ? results.slice(0, 12) : []
 
   function pick(c: Card) {
     setCard(c); setResults([]); setQuery('')
     const available = FINISHES.filter(f => f.price(c) != null)
     setForm(f => ({ ...f, finish: available.some(x => x.key === f.finish) ? f.finish : available[0]?.key ?? 'normal' }))
+    // Straight to the count: type it and press Enter to add.
+    requestAnimationFrame(() => qtyRef.current?.select())
+  }
+  function onSearchKey(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive(i => Math.min(shown.length - 1, i + 1)) }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(i => Math.max(0, i - 1)) }
+    else if (e.key === 'Enter' && shown[active]) { e.preventDefault(); pick(shown[active]) }
+    else if (e.key === 'Escape') setQuery('')
   }
   async function add(e: React.FormEvent) {
     e.preventDefault()
-    if (!card) return
+    if (!card || busy) return
+    setBusy(true)
     try {
       await api('/api/app/inventory', { method: 'POST', body: { cardId: card.id, ...form, storageId: form.storageId || null } })
       setMessage(`Added ${form.quantity} × ${card.name}.`); setError('')
       setCard(null); setForm(f => ({ ...f, quantity: 1 }))
+      // Back to the search for the next card; location, spot, finish and condition carry over.
+      searchRef.current?.focus()
       onAdded()
     } catch (err) { setError((err as Error).message); setMessage('') }
+    finally { setBusy(false) }
   }
 
   return (
     <div className="panel add-cards">
       <div className="search">
         <SearchIcon />
-        <input autoFocus placeholder="Find a card to add" aria-label="Find a card to add" value={query} onChange={e => setQuery(e.target.value)} />
+        <input ref={searchRef} autoFocus placeholder="Find a card to add" aria-label="Find a card to add" value={query}
+          onChange={e => setQuery(e.target.value)} onKeyDown={onSearchKey}
+          role="combobox" aria-autocomplete="list" aria-expanded={shown.length > 0} aria-controls="add-matches"
+          aria-activedescendant={shown[active] ? `add-match-${active}` : undefined} />
+        {shown.length > 0 && <span className="aside hints"><span className="kbd">↑</span><span className="kbd">↓</span> <span className="kbd">Enter</span> picks</span>}
       </div>
-      {query.trim().length >= 2 && results.length > 0 && (
-        <ul className="pick-list">
-          {results.slice(0, 12).map(c => (
-            <li key={c.id}><button type="button" className="secondary" onClick={() => pick(c)}>
+      {shown.length > 0 && (
+        <ul className="pick-list" id="add-matches" role="listbox">
+          {shown.map((c, i) => (
+            <li key={c.id} id={`add-match-${i}`} role="option" aria-selected={i === active}>
+              <button type="button" tabIndex={-1} className={i === active ? 'secondary active' : 'secondary'} onMouseEnter={() => setActive(i)} onClick={() => pick(c)}>
               <strong>{c.name}</strong><span className="muted">{c.set.toUpperCase()} #{c.number} · {c.setName}</span>
               <span className="price">{money(c.usd)}</span>
             </button></li>
@@ -617,14 +676,14 @@ function AddCards({ locations, spots, defaultLocation, onAdded }: {
             {finishes.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}</select></label>
           <label>Condition<select value={form.condition} onChange={e => setForm({ ...form, condition: e.target.value })}>
             {CONDITIONS.map(c => <option key={c}>{c}</option>)}</select></label>
-          <label>Qty<input type="number" min={1} max={9999} value={form.quantity} onChange={e => setForm({ ...form, quantity: Number(e.target.value) })} /></label>
+          <label>Qty<input ref={qtyRef} type="number" min={1} max={9999} value={form.quantity} onChange={e => setForm({ ...form, quantity: Number(e.target.value) })} /></label>
           {locations.length > 1 && (
             <label>Location<select value={form.locationId} onChange={e => setForm({ ...form, locationId: e.target.value, storageId: '' })}>
               {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
           )}
           <label>Put in<select value={form.storageId} onChange={e => setForm({ ...form, storageId: e.target.value })}>
             <option value="">Not put away</option><SpotOptions spots={spots} locationId={form.locationId} /></select></label>
-          <button type="submit">Add to inventory</button>
+          <button type="submit" disabled={busy}>{busy ? 'Adding…' : 'Add to inventory'}</button>
         </form>
       )}
       {message && <p className="notice">{message}</p>}
