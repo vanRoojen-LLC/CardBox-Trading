@@ -97,8 +97,11 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
   const [enlarged, setEnlarged] = useState<Card | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const linesRef = useRef<HTMLDivElement>(null)
-  const focusLine = useCallback((key: number) =>
-    requestAnimationFrame(() => linesRef.current?.querySelector<HTMLElement>(`#${lineId(key)}`)?.focus()), [])
+  // Waits a frame for the line to render, and gives way if staff already started typing the next search.
+  const focusLine = useCallback((key: number) => requestAnimationFrame(() => {
+    if (document.activeElement === searchRef.current && searchRef.current?.value) return
+    linesRef.current?.querySelector<HTMLElement>(`#${lineId(key)}`)?.focus()
+  }), [])
 
   useEffect(() => {
     try {
