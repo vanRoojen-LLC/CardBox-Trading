@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
-import { api, ApiError, type Me } from './api'
+import { api, ApiError, SIGNED_OUT, type Me } from './api'
 import PriceCheck from './pages/PriceCheck'
 import { Login, Signup } from './pages/Auth'
 import StoreApp from './pages/StoreApp'
@@ -13,6 +13,13 @@ export default function App() {
     [],
   )
   useEffect(() => { refresh() }, [refresh])
+  // A request that finds the session gone sends the person to sign in again; a trade in progress is kept as a draft.
+  const [expired, setExpired] = useState(false)
+  useEffect(() => {
+    const onSignedOut = () => { setExpired(true); setMe(null) }
+    window.addEventListener(SIGNED_OUT, onSignedOut)
+    return () => window.removeEventListener(SIGNED_OUT, onSignedOut)
+  }, [])
 
   return (
     <Routes>
@@ -21,7 +28,7 @@ export default function App() {
       <Route path="/signup" element={me ? <Navigate to="/app" replace /> : <Public me={me}><Signup onDone={refresh} /></Public>} />
       <Route path="/app/*" element={
         me === undefined ? <p className="page muted">Loading…</p>
-          : me === null ? <Navigate to="/login" replace />
+          : me === null ? <Navigate to={expired ? `/login?error=${encodeURIComponent('Your session ended. Sign in again to carry on.')}` : '/login'} replace />
           : <StoreApp me={me} onSignOut={refresh} />
       } />
       <Route path="*" element={<Navigate to="/" replace />} />
