@@ -1040,6 +1040,9 @@ class CloudApiIntegrationTest {
         var off = call("POST", "/api/partner/club-sync/links/c1/items", null, Map.of("upserts", List.of()));
         assertEquals(503, off.status(), off.raw());
         assertEquals("Collection sync is switched off on cardbox.trading", off.body().path("detail").asText());
+        var metrics = call("GET", "/api/partner/club-sync/metrics", null, null);
+        assertEquals(503, metrics.status(), metrics.raw());
+        assertEquals("Collection sync is switched off on cardbox.trading", metrics.body().path("detail").asText());
     }
 
     @Test

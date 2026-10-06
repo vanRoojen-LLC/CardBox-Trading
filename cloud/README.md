@@ -166,6 +166,15 @@ machine-to-machine application, client id `WB4mbh9ky62gjPZHFOHBQCXhYytIie7K`, wh
 `CLUB_SYNC_CLIENT_IDS`).
 The contract Club builds against is [CLUB_SYNC.md](CLUB_SYNC.md).
 
+With the same machine token, Club's health dashboard reads `GET /api/partner/club-sync/metrics`
+(`clubsync/ClubMetricsController.java`): trades in the last 7 days, synced Club items, stores active in the last 30
+days (a trade or inventory change), free price checks in the last 7 days (counted per UTC day in
+`public_price_checks`; searches answered from a browser or CDN cache are not counted) and the resource group's
+month-to-date Azure cost. The cost is asked of Cost Management as the app's managed identity (Bicep grants it Cost
+Management Reader on the resource group and sets `AZURE_CLIENT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`)
+and kept for an hour; when it cannot be read, `azureMonthToDateUsd` is null and `azureCostError` says why. Any figure
+that fails comes back null without failing the rest.
+
 ### Help & feedback reports (GitHub filing off until a token is set)
 
 "Help & feedback" in the store app's top bar sends a bug, question or idea to `POST /api/support/reports`, with the
