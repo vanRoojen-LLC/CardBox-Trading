@@ -126,6 +126,8 @@ class CloudApiIntegrationTest {
     @LocalServerPort int port;
     @Autowired CatalogImporter importer;
     @Autowired SwuCatalogImporter swuImporter;
+    @Autowired com.cardpricer.cloud.catalog.SwuTcgplayerPrices tcgplayerPrices;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
     final ObjectMapper json = new ObjectMapper();
     final HttpClient http = HttpClient.newBuilder().proxy(HttpClient.Builder.NO_PROXY).build();
 
@@ -235,7 +237,7 @@ class CloudApiIntegrationTest {
     @Test
     void swuPriceCheckFindsEveryVariantWithItsOwnPrice() throws Exception {
         var r = call("GET", "/api/public/cards?game=swu&q=vader", null, null);
-        assertEquals("TCGplayer via swu-db", r.body().path("source").asText());
+        assertEquals("TCGplayer", r.body().path("source").asText());
         assertFalse(r.body().path("pricesUpdatedAt").isNull());
         var cards = r.body().path("cards");
         assertEquals(5, cards.size(), "leader, normal, foil, hyperspace and hyperspace foil");
@@ -277,6 +279,31 @@ class CloudApiIntegrationTest {
         var promo = searchSwu("Adamant Ewoks").get(0);
         assertTrue(promo.path("usd").isNull(), "swu-db's 0.00 means no price");
         assertEquals("OP Promo", promo.path("variant").asText());
+    }
+
+    @Test
+    void swuTcgcsvPricesWinByProductAndFinishAndSwuDbFillsTheGaps() throws Exception {
+        // TCGCSV prices for Darth Vader's SOR products: 540208 holds Normal and Foil, 540473 the Hyperspace pair.
+        var prices = com.cardpricer.cloud.catalog.SwuTcgplayerPrices.parse(json.readTree("""
+                {"results":[
+                 {"productId":540208,"lowPrice":5.00,"marketPrice":6.45,"subTypeName":"Normal"},
+                 {"productId":540208,"lowPrice":12.00,"marketPrice":14.15,"subTypeName":"Foil"},
+                 {"productId":540473,"lowPrice":11.00,"marketPrice":40.25,"subTypeName":"Normal"},
+                 {"productId":540473,"lowPrice":50.00,"marketPrice":null,"subTypeName":"Foil"}]}"""));
+        try {
+            tcgplayerPrices.apply(prices, java.time.Instant.now());
+            var byId = new java.util.HashMap<String, JsonNode>();
+            searchSwu("vader").forEach(c -> byId.put(c.path("id").asText(), c));
+            assertEquals("6.45", byId.get("SOR-087").path("usd").asText(), "Normal reads the Normal price");
+            assertEquals("14.15", byId.get("SOR-087F").path("usdFoil").asText(), "Foil reads the Foil price of the same product");
+            assertEquals("40.25", byId.get("SOR-351").path("usd").asText());
+            assertEquals("59.15", byId.get("SOR-351F").path("usdFoil").asText(), "no TCGCSV market, so swu-db's price stands in");
+            assertEquals("4.45", byId.get("SOR-010").path("usd").asText(), "a product TCGCSV did not list keeps swu-db's price");
+            var disagreeing = jdbc.queryForList("SELECT source_number FROM swu_cards WHERE price_disagrees", String.class);
+            assertEquals(List.of("351"), disagreeing, "40.25 against swu-db's 14.88 is flagged; 6.45 against 6.50 is not");
+        } finally {
+            jdbc.update("UPDATE swu_cards SET tcgplayer_market = NULL, tcgplayer_low = NULL, tcgplayer_observed_at = NULL, price_disagrees = false");
+        }
     }
 
     @Test

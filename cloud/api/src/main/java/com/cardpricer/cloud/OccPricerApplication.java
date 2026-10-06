@@ -2,6 +2,7 @@ package com.cardpricer.cloud;
 
 import com.cardpricer.cloud.catalog.CatalogImporter;
 import com.cardpricer.cloud.catalog.SwuCatalogImporter;
+import com.cardpricer.cloud.catalog.SwuTcgplayerPrices;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -30,6 +31,13 @@ public class OccPricerApplication {
             if (file.isBlank()) {
                 try {
                     context.getBean(SwuCatalogImporter.class).importFromSwuDb();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    status = 1;
+                }
+                // TCGplayer's prices from TCGCSV, matched through the product ids swu-db just loaded.
+                try {
+                    context.getBean(SwuTcgplayerPrices.class).importFromTcgcsv();
                 } catch (Exception e) {
                     e.printStackTrace();
                     status = 1;

@@ -50,7 +50,7 @@ function Public({ me, children }: { me: Me | null | undefined; children: React.R
       <main className="page">{children}</main>
       <footer className="footer">
         Magic prices from <a href="https://scryfall.com" target="_blank" rel="noreferrer">Scryfall</a>. Star Wars: Unlimited prices
-        from <a href="https://www.tcgplayer.com" target="_blank" rel="noreferrer">TCGplayer</a> via <a href="https://www.swu-db.com" target="_blank" rel="noreferrer">swu-db</a>.
+        from <a href="https://www.tcgplayer.com" target="_blank" rel="noreferrer">TCGplayer</a>, via <a href="https://tcgcsv.com" target="_blank" rel="noreferrer">TCGCSV</a> and <a href="https://www.swu-db.com" target="_blank" rel="noreferrer">swu-db</a>.
         Price lookup is free, with no account needed. Magic card names and data are property of Wizards of the Coast.
         Star Wars: Unlimited is a trademark of Lucasfilm and Fantasy Flight Games.
       </footer>
