@@ -537,11 +537,11 @@ function InventoryRow({ item, several, locations, spots, selected, onSelect, mov
   )
 }
 
-interface WhyStep { spotId: string; path: PathPart[]; level: number; outcome: 'fits' | 'no' | 'through' | 'empty' | 'later'; conditions: Conditions | null }
+interface WhyStep { spotId: string; path: PathPart[]; level: number; outcome: 'fits' | 'no' | 'full' | 'through' | 'empty' | 'later'; conditions: Conditions | null }
 interface Why { steps: WhyStep[]; destination: PathPart[] }
 
 const OUTCOMES: Record<WhyStep['outcome'], string> = {
-  fits: 'takes it', no: "doesn't fit", through: 'no rule of its own, passes it inside', empty: 'no rule', later: 'not checked: an earlier spot took it',
+  fits: 'takes it', no: "doesn't fit", full: 'fits, but has no room left', through: 'no rule of its own, passes it inside', empty: 'no rule', later: 'not checked: an earlier spot took it',
 }
 
 /** How the rules walked a card down the storage tree: each spot they looked at, in order, and what its rule said. */

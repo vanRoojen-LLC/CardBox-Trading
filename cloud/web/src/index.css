@@ -506,7 +506,7 @@ button.headed { display: block; padding: 0; text-align: left; text-decoration: u
 .why-here .why { padding: 2px 0; }
 .why-here .why.fits .spot, .why-here .why.through .spot { font-weight: 600; }
 .why-here .why.fits .outcome { color: var(--accent-soft-text); }
-.why-here .why.no, .why-here .why.empty, .why-here .why.later { color: var(--muted); }
+.why-here .why.no, .why-here .why.full, .why-here .why.empty, .why-here .why.later { color: var(--muted); }
 .panel.put-away { margin-bottom: 12px; padding: 14px 16px; }
 .panel.put-away > p { margin: .25rem 0 .5rem; }
 .put-away-groups { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line-soft); }
@@ -519,3 +519,9 @@ button.headed { display: block; padding: 0; text-align: left; text-decoration: u
 .arrival-setting .check-row { display: flex; gap: 10px; align-items: flex-start; }
 .arrival-setting .check-row input { margin-top: 3px; width: 18px; height: 18px; flex: none; }
 .arrival-setting .check-row > span { flex: 1; }
+
+.fill { color: var(--muted); font-size: 13px; }
+.fill.over { color: var(--error); }
+.fill .bar { display: inline-block; vertical-align: middle; width: 48px; height: 5px; margin-left: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.fill .bar > span { display: block; height: 100%; background: var(--accent-soft-text); }
+.fill.over .bar > span { background: var(--error); }

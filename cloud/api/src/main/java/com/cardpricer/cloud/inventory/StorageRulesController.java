@@ -67,6 +67,18 @@ public class StorageRulesController {
         return list(request);
     }
 
+    public record CapacityBody(Integer capacity) {}
+
+    /** Sets how many cards a spot holds (null: no limit). A full spot passes cards its rule fits to the next one. */
+    @PutMapping("/{id}/capacity")
+    public Map<String, Object> capacity(@PathVariable UUID id, @RequestBody CapacityBody body, HttpServletRequest request) {
+        CurrentUser user = requireOwner(request);
+        rules.setCapacity(user.tenantId(), id, body.capacity());
+        Map<String, Object> out = new HashMap<>();
+        out.put("capacity", body.capacity());
+        return out;
+    }
+
     /** How the store uses its rules: whether arriving cards are filed by them straight away. */
     @GetMapping("/settings")
     public Map<String, Object> settings(HttpServletRequest request) {

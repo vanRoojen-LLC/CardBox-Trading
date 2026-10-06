@@ -82,21 +82,73 @@ public class StorageRules {
         var children = children(spots);
         Set<UUID> lines = new HashSet<>();
         fits.values().forEach(lines::addAll);
+        var room = new Room(tenant, spots, lines);
         Map<UUID, UUID> out = new HashMap<>();
-        for (UUID line : lines) {
+        for (UUID line : room.order(lines)) {
             UUID at = null;
             for (List<InventoryRepository.Spot> level = children.getOrDefault(null, List.of()); ; ) {
-                UUID next = null;
-                for (var spot : level) {
-                    if (takes(spot.id(), line, fits, children)) { next = spot.id(); break; }
-                }
+                UUID next = room.pick(level.stream().filter(s -> takes(s.id(), line, fits, children)).toList(), line);
                 if (next == null) break;
                 at = next;
                 level = children.getOrDefault(next, List.of());
             }
-            if (at != null) out.put(line, at);
+            if (at != null) { out.put(line, at); room.add(at, line); }
         }
         return out;
+    }
+
+    /**
+     * Spot capacities while routing cards: a spot that fits but has no room for a whole line passes it to the next
+     * sibling that fits, so boxes fill in order. When every fitting sibling is full, the card goes to the last one
+     * and Storage shows it over capacity, rather than the card having nowhere to go. Stock already put away counts,
+     * except the lines being routed, which count where they are sent.
+     */
+    private final class Room {
+        final Map<UUID, Integer> capacity = new HashMap<>();
+        final Map<UUID, Long> used = new HashMap<>();
+        final Map<UUID, Integer> quantity = new HashMap<>();
+        final Map<UUID, String> name = new HashMap<>();
+        final Map<UUID, UUID> parents = new HashMap<>();
+
+        Room(UUID tenant, List<InventoryRepository.Spot> spots, Set<UUID> lines) {
+            jdbc.query("SELECT id, capacity FROM storage_spots WHERE tenant_id = ? AND capacity IS NOT NULL",
+                    rs -> { capacity.put(rs.getObject(1, UUID.class), rs.getInt(2)); }, tenant);
+            if (capacity.isEmpty() || lines.isEmpty()) return;
+            for (var spot : spots) parents.put(spot.id(), spot.parentId());
+            String[] ids = lines.stream().map(UUID::toString).toArray(String[]::new);
+            jdbc.query("SELECT id, quantity, name FROM inventory_items WHERE id = ANY (?::uuid[])", rs -> {
+                quantity.put(rs.getObject(1, UUID.class), rs.getInt(2));
+                name.put(rs.getObject(1, UUID.class), rs.getString(3));
+            }, (Object) ids);
+            jdbc.query("SELECT storage_id, sum(quantity) FROM inventory_items WHERE tenant_id = ? AND storage_id IS NOT NULL"
+                    + " AND NOT (id = ANY (?::uuid[])) GROUP BY storage_id", rs -> {
+                for (UUID at = rs.getObject(1, UUID.class); at != null; at = parents.get(at)) used.merge(at, rs.getLong(2), Long::sum);
+            }, tenant, ids);
+        }
+
+        /** Alphabetical, so a run of boxes fills A to Z; without capacities the order doesn't matter. */
+        List<UUID> order(Set<UUID> lines) {
+            if (capacity.isEmpty()) return new ArrayList<>(lines);
+            return lines.stream().sorted(java.util.Comparator.comparing((UUID l) -> name.getOrDefault(l, "").toLowerCase())
+                    .thenComparing(UUID::toString)).toList();
+        }
+
+        boolean fits(UUID spot, UUID line) {
+            Integer cap = capacity.get(spot);
+            return cap == null || used.getOrDefault(spot, 0L) + quantity.getOrDefault(line, 0) <= cap;
+        }
+
+        /** The first candidate with room, else the last one; null when there are none. */
+        UUID pick(List<InventoryRepository.Spot> candidates, UUID line) {
+            if (candidates.isEmpty()) return null;
+            for (var spot : candidates) if (fits(spot.id(), line)) return spot.id();
+            return candidates.getLast().id();
+        }
+
+        void add(UUID spot, UUID line) {
+            if (capacity.isEmpty()) return;
+            for (UUID at = spot; at != null; at = parents.get(at)) used.merge(at, (long) quantity.getOrDefault(line, 0), Long::sum);
+        }
     }
 
     /** Which lines each rule fits, within its own location. */
@@ -126,7 +178,7 @@ public class StorageRules {
 
     /**
      * One spot the rules looked at for a line. {@code outcome} is {@code fits} (its rule takes the card), {@code no}
-     * (its rule doesn't), {@code through} (no rule of its own, but a spot inside it takes the card), {@code empty} (no
+     * (its rule doesn't), {@code full} (it fits but has no room left), {@code through} (no rule of its own, but a spot inside it takes the card), {@code empty} (no
      * rule, and nothing inside takes it) or {@code later} (not tried: an earlier spot at this level already won).
      */
     public record Step(UUID spotId, int level, String outcome, Map<String, List<String>> conditions) {}
@@ -137,15 +189,18 @@ public class StorageRules {
         var spots = inventory.spots(tenant).stream().filter(s -> s.locationId().equals(locationId)).toList();
         var fits = fits(tenant, rules, spots, new InventoryQuery.Where("i.id = ?", List.of(line)));
         var children = children(spots);
+        var room = new Room(tenant, spots, Set.of(line));
         List<Step> out = new ArrayList<>();
         int depth = 0;
         for (List<InventoryRepository.Spot> level = children.getOrDefault(null, List.of()); !level.isEmpty(); depth++) {
-            UUID next = null;
+            UUID next = room.pick(level.stream().filter(s -> takes(s.id(), line, fits, children)).toList(), line);
+            boolean passed = false;
             for (var spot : level) {
-                String outcome = next != null ? "later"
-                        : fits.containsKey(spot.id()) ? (fits.get(spot.id()).contains(line) ? "fits" : "no")
-                        : takes(spot.id(), line, fits, children) ? "through" : "empty";
-                if (next == null && (outcome.equals("fits") || outcome.equals("through"))) next = spot.id();
+                String outcome = passed ? "later"
+                        : spot.id().equals(next) ? (fits.containsKey(spot.id()) ? "fits" : "through")
+                        : takes(spot.id(), line, fits, children) ? "full"
+                        : fits.containsKey(spot.id()) ? "no" : "empty";
+                if (spot.id().equals(next)) passed = true;
                 out.add(new Step(spot.id(), depth, outcome, rules.get(spot.id())));
             }
             if (next == null) break;
@@ -211,6 +266,13 @@ public class StorageRules {
             out.add(spot);
             walk(children, spot.id(), out);
         }
+    }
+
+    /** How many cards a spot holds, counting everything inside it; null for no limit. */
+    public void setCapacity(UUID tenant, UUID spot, Integer capacity) {
+        inventory.spot(tenant, spot);
+        if (capacity != null && (capacity < 1 || capacity > 1_000_000)) throw ApiException.badRequest("A spot holds 1 to 1,000,000 cards");
+        jdbc.update("UPDATE storage_spots SET capacity = ? WHERE id = ? AND tenant_id = ?", capacity, spot, tenant);
     }
 
     /** Only known fields with values; checks they make a valid filter. */

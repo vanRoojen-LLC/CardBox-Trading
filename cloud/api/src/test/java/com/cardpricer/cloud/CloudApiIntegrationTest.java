@@ -705,6 +705,44 @@ class CloudApiIntegrationTest {
     }
 
     @Test
+    void fullSpotsPassCardsToTheNextSpotTheirRuleFits() throws Exception {
+        String owner = signup("Box Shop", "box-" + UUID.randomUUID() + "@example.com");
+        String main = call("GET", "/api/app/store", owner, null).body().path("locations").get(0).path("id").asText();
+        call("POST", "/api/app/inventory", owner, Map.of("cardId", "11111111-1111-1111-1111-111111111111", "finish", "normal", "condition", "NM", "quantity", 4, "locationId", main));
+        call("POST", "/api/app/inventory", owner, Map.of("cardId", "22222222-2222-2222-2222-222222222222", "finish", "normal", "condition", "NM", "quantity", 1, "locationId", main));
+        call("POST", "/api/app/inventory", owner, Map.of("cardId", "33333333-3333-3333-3333-333333333333", "finish", "normal", "condition", "NM", "quantity", 2, "locationId", main));
+        Map<String, String> ids = new java.util.HashMap<>();
+        for (var s : call("POST", "/api/app/storage", owner, Map.of("locationId", main, "label", "Box", "names", java.util.List.of("1", "2"))).body())
+            ids.put(s.path("name").asText(), s.path("id").asText());
+        for (String box : ids.values()) call("PUT", "/api/app/storage/" + box + "/rule", owner, Map.of("conditions", Map.of("game", java.util.List.of("magic-the-gathering"))));
+        assertEquals(400, call("PUT", "/api/app/storage/" + ids.get("1") + "/capacity", owner, Map.of("capacity", 0)).status());
+        var capped = call("PUT", "/api/app/storage/" + ids.get("1") + "/capacity", owner, Map.of("capacity", 3));
+        assertEquals(200, capped.status(), capped.raw());
+        for (var s : call("GET", "/api/app/storage", owner, null).body())
+            if (s.path("id").asText().equals(ids.get("1"))) assertEquals(3, s.path("capacity").asInt());
+
+        // Alphabetically: 4 Bolts don't fit in Box 1's 3, so they go on to Box 2; Ragavan and the Sol Rings fill Box 1.
+        Map<String, String> headed = new java.util.HashMap<>();
+        String bolt = null;
+        for (var item : call("GET", "/api/app/inventory?storage=none", owner, null).body().path("items")) {
+            headed.put(item.path("name").asText(), item.path("destination").get(0).path("name").asText());
+            if (item.path("name").asText().equals("Lightning Bolt")) bolt = item.path("id").asText();
+        }
+        assertEquals(Map.of("Lightning Bolt", "2", "Ragavan, Nimble Pilferer", "1", "Sol Ring", "1"), headed);
+        Map<String, String> outcomes = new java.util.HashMap<>();
+        for (var step : call("GET", "/api/app/inventory/" + bolt + "/why", owner, null).body().path("steps"))
+            outcomes.put(step.path("spotId").asText(), step.path("outcome").asText());
+        assertEquals(Map.of(ids.get("1"), "full", ids.get("2"), "fits"), outcomes);
+        var filed = call("POST", "/api/app/inventory/put-away", owner, Map.of("filter", Map.of("storage", java.util.List.of("none")))).body();
+        assertEquals(7, filed.path("cards").asInt());
+        assertEquals(3, call("GET", "/api/app/inventory?storage=" + ids.get("1"), owner, null).body().path("cards").asInt());
+
+        // No limit: everything fits the first box again, and the Bolts show as filed somewhere else.
+        call("PUT", "/api/app/storage/" + ids.get("1") + "/capacity", owner, java.util.Collections.singletonMap("capacity", null));
+        assertEquals(1, call("GET", "/api/app/inventory?rules=misplaced", owner, null).body().path("lines").asInt());
+    }
+
+    @Test
     void storesCanHaveSeveralOwners() throws Exception {
         String firstEmail = "f-" + UUID.randomUUID() + "@example.com";
         String first = signup("Partners", firstEmail);
