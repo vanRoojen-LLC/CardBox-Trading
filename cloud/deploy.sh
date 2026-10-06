@@ -75,7 +75,7 @@ echo "== Stage 2: database, app and nightly import job"
 out=$(az deployment group create -g "$GROUP" -n "${PREFIX}-apps" -f "$INFRA" \
   -p prefix="$PREFIX" deployerObjectId="$DEPLOYER" deployApps=true image="$SERVER/occ-pricer:$TAG" cardboxEnabled="${CARDBOX_ENABLED:-false}" \
      clubSyncEnabled="${CLUB_SYNC_ENABLED:-false}" clubSyncClientIds="${CLUB_SYNC_CLIENT_IDS:-WB4mbh9ky62gjPZHFOHBQCXhYytIie7K}" \
-     githubIssues="$GITHUB_ISSUES" githubIssuesRepo="${GITHUB_ISSUES_REPO:-vanRoojen-LLC/OCC_PRICER}" \
+     githubIssues="$GITHUB_ISSUES" githubIssuesRepo="${GITHUB_ISSUES_REPO:-vanRoojen-LLC/CardBox}" \
      postgresPassword="$PG_PASSWORD" --query properties.outputs -o json)
 URL=$(jq -r .appUrl.value <<<"$out")
 JOB=$(jq -r .importJobName.value <<<"$out")

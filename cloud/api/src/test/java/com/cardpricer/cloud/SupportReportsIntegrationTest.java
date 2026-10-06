@@ -61,7 +61,7 @@ class SupportReportsIntegrationTest {
                 } else {
                     int number = NUMBER.incrementAndGet();
                     status = 201;
-                    reply = "{\"number\":" + number + ",\"html_url\":\"https://github.com/vanRoojen-LLC/OCC_PRICER/issues/" + number
+                    reply = "{\"number\":" + number + ",\"html_url\":\"https://github.com/vanRoojen-LLC/CardBox/issues/" + number
                             + "\",\"state\":\"open\"}";
                 }
                 byte[] bytes = reply.getBytes(StandardCharsets.UTF_8);
@@ -220,7 +220,7 @@ class SupportReportsIntegrationTest {
     @Test
     void withoutATokenReportsAreOnlySaved() throws Exception {
         UUID id = submit("bug", "Nothing happens when I press save");
-        var off = new SupportReportFiler(jdbc, new GitHubIssues("", "vanRoojen-LLC/OCC_PRICER", githubUrl()), "https://cardbox.trading/app/admin");
+        var off = new SupportReportFiler(jdbc, new GitHubIssues("", "vanRoojen-LLC/CardBox", githubUrl()), "https://cardbox.trading/app/admin");
         assertEquals(0, off.fileDue());
         assertTrue(REQUESTS.isEmpty());
         assertEquals("saved", row(id).get("status"));
@@ -234,12 +234,12 @@ class SupportReportsIntegrationTest {
         var saved = row(id);
         assertEquals("filed", saved.get("status"));
         assertEquals(NUMBER.get(), saved.get("github_issue_number"));
-        assertEquals("https://github.com/vanRoojen-LLC/OCC_PRICER/issues/" + NUMBER.get(), saved.get("github_issue_url"));
+        assertEquals("https://github.com/vanRoojen-LLC/CardBox/issues/" + NUMBER.get(), saved.get("github_issue_url"));
         assertEquals("open", saved.get("github_state"));
 
         assertEquals(1, REQUESTS.size());
         String[] request = REQUESTS.getFirst();
-        assertEquals("POST /repos/vanRoojen-LLC/OCC_PRICER/issues", request[0]);
+        assertEquals("POST /repos/vanRoojen-LLC/CardBox/issues", request[0]);
         assertEquals("Bearer test-github-token", request[1]);
         JsonNode issue = JSON.readTree(request[2]);
         String title = issue.path("title").asText();
@@ -248,7 +248,7 @@ class SupportReportsIntegrationTest {
         assertTrue(title.length() <= "[Trading web] bug: ".length() + 71, title);
         var labels = new ArrayList<String>();
         issue.path("labels").forEach(l -> labels.add(l.asText()));
-        assertEquals(List.of("type:bug", "surface:web", "source:user-report", "needs-triage"), labels);
+        assertEquals(List.of("type:bug", "product:trading", "surface:web", "source:user-report", "needs-triage"), labels);
         String body = issue.path("body").asText();
         assertTrue(body.contains("CardBox Trading"));
         assertTrue(body.contains(id.toString()));

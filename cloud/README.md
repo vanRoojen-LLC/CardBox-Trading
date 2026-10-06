@@ -176,17 +176,17 @@ name, email and store. Anyone signed in can send one, even after their store's t
 an hour.
 
 When a GitHub token is set, a job in the app (`support/SupportReportFiler.java`, every 30 seconds while a replica is
-up) files each report as an issue in this repository, retrying with backoff up to five times and giving up at once on
-401, 403, 404 or 422. The issue is readable by anyone who can read the repo, so it carries no name, email or store
+up) files each report as an issue in the private CardBox repository (this repository is public, so reports never go here), retrying with backoff up to five times and giving up at once on
+401, 403, 404 or 422. The issue still carries no name, email or store
 name: just the kind, build, route, browser, viewport, report and store ids, the person's words (email addresses
 taken out, @mentions broken), and a link back to the report on the admin page. Its labels are `type:bug`,
-`type:support` (questions) or `type:idea`, plus `surface:web`, `source:user-report` and `needs-triage`; if GitHub
+`type:support` (questions) or `type:idea`, plus `product:trading`, `surface:web`, `source:user-report` and `needs-triage`; if GitHub
 refuses the labels, the issue is filed without them. Without a token, reports are only saved.
 
 | Setting | Default | What |
 |---|---|---|
-| `GITHUB_ISSUES_TOKEN` | empty (off) | A **fine-grained** personal access token for this repository only, with **Issues: read and write** and nothing else. Vault secret `github-issues-token`. |
-| `GITHUB_ISSUES_REPO` | `vanRoojen-LLC/OCC_PRICER` | Where issues are filed (Bicep `githubIssuesRepo`). |
+| `GITHUB_ISSUES_TOKEN` | empty (off) | A **fine-grained** personal access token for vanRoojen-LLC/CardBox only, with **Issues: read and write** and nothing else. Vault secret `github-issues-token`. |
+| `GITHUB_ISSUES_REPO` | `vanRoojen-LLC/CardBox` | Where issues are filed (Bicep `githubIssuesRepo`). |
 
 To switch filing on, put the token in the vault once (or run `GITHUB_ISSUES_TOKEN=... cloud/deploy.sh`, which stores
 it there), then deploy; `deploy.sh` turns on Bicep `githubIssues` whenever the vault has the secret:

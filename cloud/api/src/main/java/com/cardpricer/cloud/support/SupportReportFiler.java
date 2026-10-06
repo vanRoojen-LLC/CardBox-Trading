@@ -28,7 +28,7 @@ import java.util.UUID;
 @Component
 public class SupportReportFiler {
     static final int MAX_ATTEMPTS = 5;
-    static final List<String> BASE_LABELS = List.of("surface:web", "source:user-report", "needs-triage");
+    static final List<String> BASE_LABELS = List.of("product:trading", "surface:web", "source:user-report", "needs-triage");
     private static final Logger log = LoggerFactory.getLogger(SupportReportFiler.class);
 
     /** Scheduling is only used for this job. */

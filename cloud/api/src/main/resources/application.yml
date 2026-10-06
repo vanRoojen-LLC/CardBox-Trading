@@ -41,7 +41,7 @@ app:
   support:
     github:
       token: ${GITHUB_ISSUES_TOKEN:}
-      repo: ${GITHUB_ISSUES_REPO:vanRoojen-LLC/OCC_PRICER}
+      repo: ${GITHUB_ISSUES_REPO:vanRoojen-LLC/CardBox}
       api-url: ${GITHUB_API_URL:https://api.github.com}
     admin-url: ${SUPPORT_ADMIN_URL:https://cardbox.trading/app/admin}
   # Platform owner. Only counts once Auth0 has verified the address.
