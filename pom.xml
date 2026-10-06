@@ -4,7 +4,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>com.cardpricer</groupId>
   <artifactId>occ-trade-pricer</artifactId>
-  <version>5.0.7</version>
+  <version>5.0.8</version>
   <name>OCC Card Pricer</name>
   <properties>
     <maven.compiler.release>25</maven.compiler.release>
