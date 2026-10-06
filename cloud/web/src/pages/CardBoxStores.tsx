@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
+import DateField from '../DateField'
+import { confirmPlan, planLabel, PLANS } from '../plans'
 
 /*
  * Stores live on CardBox (cardbox.club). The Admin screen reads and changes them through /api/cardbox/*, which
@@ -13,15 +15,14 @@ interface CardBoxStore { id: string; name: string; slug?: string }
 interface TradingStore { id: string; name: string; planStatus: string; trialEndsAt: string; entitled: boolean; cardboxStoreId: string | null
   people: number; trades: number; cards: number }
 
-const PLANS = ['trial', 'active', 'past_due', 'canceled'] as const
-
 /**
  * The platform owner's store list with the link on: CardBox's stores (created and renamed there), each with the
  * Trading plan and trial that go with it, and any Trading store not yet tied to a CardBox store.
  */
 export function CardBoxStores() {
-  const [stores, setStores] = useState<CardBoxStore[]>([])
+  const [stores, setStores] = useState<CardBoxStore[] | null>(null)
   const [trading, setTrading] = useState<TradingStore[]>([])
+  const [busy, setBusy] = useState(false)
   const [newName, setNewName] = useState('')
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
@@ -31,9 +32,14 @@ export function CardBoxStores() {
   ]), [])
   useEffect(() => { load().catch(e => setError(e.message)) }, [load])
 
-  async function run(request: Promise<unknown>, done: string) {
-    try { await request; await load(); setMessage(done); setError('') } catch (e) { setError((e as Error).message); setMessage('') }
+  /** Runs one change at a time (controls are disabled meanwhile) and says whether it worked. */
+  async function run(request: () => Promise<unknown>, done: string): Promise<boolean> {
+    setBusy(true)
+    try { await request(); await load(); setMessage(done); setError(''); return true }
+    catch (e) { setError((e as Error).message); setMessage(''); return false }
+    finally { setBusy(false) }
   }
+  if (stores === null) return error ? <p className="error">{error}</p> : <p className="muted">Loading stores…</p>
   const byCardBox = new Map(trading.filter(t => t.cardboxStoreId).map(t => [t.cardboxStoreId as string, t]))
   const unlinked = trading.filter(t => !t.cardboxStoreId)
   // An unlinked store sharing its name with a CardBox store that already has a Trading store is usually a leftover
@@ -48,11 +54,15 @@ export function CardBoxStores() {
       {error && <p className="error">{error}</p>}
       <div className="table-wrap"><table className="grid">
         <thead><tr><th>Store</th><th>Plan</th><th>Trial ends</th><th className="r">Trades</th><th className="r">Cards</th></tr></thead>
-        <tbody>{stores.map(s => <CardBoxStoreRow key={`${s.id}:${s.name}`} store={s} trading={byCardBox.get(s.id)} run={run} />)}</tbody>
+        <tbody>{stores.map(s => <CardBoxStoreRow key={`${s.id}:${s.name}`} store={s} trading={byCardBox.get(s.id)} run={run} busy={busy} />)}</tbody>
       </table></div>
-      <form className="inline-form" onSubmit={e => { e.preventDefault(); run(api('/api/cardbox/stores', { method: 'POST', body: { name: newName.trim() } }), `${newName.trim()} created.`).then(() => setNewName('')) }}>
+      <form className="inline-form" onSubmit={async e => {
+        e.preventDefault()
+        // Cleared only once CardBox has the store, so a failed create keeps the name to retry.
+        if (await run(() => api('/api/cardbox/stores', { method: 'POST', body: { name: newName.trim() } }), `${newName.trim()} created.`)) setNewName('')
+      }}>
         <label>New store<input required maxLength={120} value={newName} onChange={e => setNewName(e.target.value)} /></label>
-        <button type="submit" className="small">Create on CardBox</button>
+        <button type="submit" className="small" disabled={busy}>Create on CardBox</button>
       </form>
       {unlinked.length > 0 && (
         <>
@@ -63,8 +73,8 @@ export function CardBoxStores() {
                 {leftover(t) && <div className="muted small">{t.trades === 0 && t.cards === 0 ? 'An empty leftover. ' : ''}The {t.name} above
                   is the one in use, tied to a different Trading store. Nobody can switch to this one.</div>}</td>
               <td className="muted small">{t.people} {t.people === 1 ? 'person' : 'people'} · {t.trades} trades · {t.cards} cards</td>
-              <td><select aria-label={`CardBox store for ${t.name}`} value="" onChange={e => e.target.value &&
-                run(api(`/api/admin/stores/${t.id}/cardbox`, { method: 'PUT', body: { cardboxStoreId: e.target.value } }), `${t.name} now belongs to ${stores.find(s => s.id === e.target.value)?.name}.`)}>
+              <td><select aria-label={`CardBox store for ${t.name}`} value="" disabled={busy} onChange={e => e.target.value &&
+                run(() => api(`/api/admin/stores/${t.id}/cardbox`, { method: 'PUT', body: { cardboxStoreId: e.target.value } }), `${t.name} now belongs to ${stores.find(s => s.id === e.target.value)?.name}.`)}>
                 <option value="">Tie to a CardBox store…</option>
                 {linkable.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select></td></tr>
@@ -75,25 +85,27 @@ export function CardBoxStores() {
   )
 }
 
-function CardBoxStoreRow({ store: s, trading: t, run }: { store: CardBoxStore; trading?: TradingStore; run: (r: Promise<unknown>, done: string) => Promise<void> }) {
+function CardBoxStoreRow({ store: s, trading: t, run, busy }: {
+  store: CardBoxStore; trading?: TradingStore; run: (r: () => Promise<unknown>, done: string) => Promise<boolean>; busy: boolean
+}) {
   const [name, setName] = useState(s.name)
   return (
     <tr>
       <td>
-        <form className="inline-form" onSubmit={e => { e.preventDefault(); run(api(`/api/cardbox/stores/${encodeURIComponent(s.id)}`, { method: 'PATCH', body: { name: name.trim() } }), `Renamed to ${name.trim()}.`) }}>
+        <form className="inline-form" onSubmit={e => { e.preventDefault(); run(() => api(`/api/cardbox/stores/${encodeURIComponent(s.id)}`, { method: 'PATCH', body: { name: name.trim() } }), `Renamed to ${name.trim()}.`) }}>
           <input aria-label={`Name of ${s.name}`} required maxLength={120} value={name} onChange={e => setName(e.target.value)} />
-          {name.trim() !== s.name && <button type="submit" className="small secondary">Rename</button>}
+          {name.trim() !== s.name && <button type="submit" className="small secondary" disabled={busy}>Rename</button>}
         </form>
         <Link className="small" to={`/app/staff?store=${encodeURIComponent(s.id)}`}>Team</Link>
         {!t && <div className="muted small">No one has used it on Trading yet</div>}
         {t && !t.entitled && <div className="error small">Locked</div>}
       </td>
-      <td>{t && <select aria-label={`Plan for ${s.name}`} value={t.planStatus}
-        onChange={e => run(api(`/api/admin/stores/${t.id}`, { method: 'PUT', body: { planStatus: e.target.value } }), `${s.name} is now ${e.target.value.replace('_', ' ')}.`)}>
-        {PLANS.map(p => <option key={p} value={p}>{p.replace('_', ' ')}</option>)}
+      <td>{t && <select aria-label={`Plan for ${s.name}`} value={t.planStatus} disabled={busy}
+        onChange={e => confirmPlan(s.name, e.target.value) && run(() => api(`/api/admin/stores/${t.id}`, { method: 'PUT', body: { planStatus: e.target.value } }), `${s.name} is now ${planLabel(e.target.value)}.`)}>
+        {PLANS.map(p => <option key={p} value={p}>{planLabel(p)}</option>)}
       </select>}</td>
-      <td>{t && <input type="date" aria-label={`Trial end for ${s.name}`} value={t.trialEndsAt.slice(0, 10)}
-        onChange={e => e.target.value && run(api(`/api/admin/stores/${t.id}`, { method: 'PUT', body: { trialEndsAt: e.target.value } }), `${s.name}'s trial now ends ${e.target.value}.`)} />}</td>
+      <td>{t && <DateField label={`Trial end for ${s.name}`} value={t.trialEndsAt.slice(0, 10)} disabled={busy}
+        onSave={day => run(() => api(`/api/admin/stores/${t.id}`, { method: 'PUT', body: { trialEndsAt: day } }), `${s.name}'s trial now ends ${day}.`)} />}</td>
       <td className="r">{t?.trades ?? '—'}</td><td className="r">{t?.cards ?? '—'}</td>
     </tr>
   )

@@ -70,8 +70,10 @@ h2 { font-size: 1.05rem; font-weight: 650; margin: 0; }
   .topbar { gap: 0 16px; padding: 8px 16px 0; }
   .topbar .brand { min-height: 48px; }
   .topbar .who { margin-left: auto; padding-bottom: 8px; flex-wrap: wrap; justify-content: flex-end; gap: 8px 14px; }
-  .tabs { order: 3; width: 100%; }
-  .tabs a { min-height: 48px; }
+  /* Every tab stays in sight (a sideways-scrolling bar hid Team, Store and Admin off the edge on phones). */
+  .tabs { order: 3; width: 100%; flex-wrap: wrap; overflow-x: visible; }
+  .tabs a { min-height: 44px; padding: 0 10px; font-size: 14px; }
+  .topbar .who-name { display: none; }
 }
 
 .banner { background: var(--banner); color: var(--banner-text); padding: .55rem 16px; text-align: center; font-size: .9rem; }
@@ -118,6 +120,8 @@ label input, label select { display: block; width: 100%; margin-top: .3rem; font
 .stepper button { min-height: var(--tap); min-width: var(--tap); padding: 0; background: transparent; border: 0; color: var(--text-2); font-size: 20px; }
 .stepper button:hover { background: var(--surface-2); }
 .stepper span { min-width: 2ch; text-align: center; font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.stepper input.qty { width: 4ch; min-height: var(--tap); padding: 0; border: 0; border-radius: 0; background: transparent; text-align: center;
+  font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; }
 
 .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 20px; }
 .panel > h2 { margin-bottom: .5rem; }
@@ -170,6 +174,17 @@ button.thumb { min-height: 0; padding: 0; background: none; border: 0; border-ra
 .trade-rail { position: sticky; top: 20px; display: flex; flex-direction: column; gap: 16px; }
 @media (max-width: 1100px) { .trade { grid-template-columns: minmax(0, 1fr) 340px; } }
 @media (max-width: 860px) { .trade { grid-template-columns: 1fr; } .trade-rail { position: static; } }
+.line:focus { outline: none; }
+.line:focus-visible { box-shadow: inset 4px 0 0 var(--accent), var(--focus); }
+.trade-sticky { display: none; }
+@media (max-width: 860px) {
+  .trade-sticky { position: sticky; bottom: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    margin: 0 -20px -20px; padding: 10px 20px calc(10px + env(safe-area-inset-bottom)); background: var(--surface);
+    border-top: 1px solid var(--line); box-shadow: 0 -6px 18px rgb(10 17 23 / 10%); }
+  .trade-sticky small { display: block; font-size: 12px; color: var(--copper-text); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+  .trade-sticky strong { font-size: 1.5rem; }
+  .trade-sticky button { min-width: 160px; }
+}
 .picker { position: relative; }
 .matches { position: absolute; z-index: 10; left: 0; right: 0; list-style: none; margin: 6px 0 0; padding: 6px; background: var(--surface);
   border: 1px solid var(--line-strong); border-radius: var(--radius-panel); box-shadow: 0 12px 32px rgb(10 17 23 / 14%); max-height: 420px; overflow-y: auto; }
@@ -272,6 +287,7 @@ button.thumb { min-height: 0; padding: 0; background: none; border: 0; border-ra
 .location-list li.archived strong { color: var(--muted); }
 .row-actions { display: flex; gap: 16px; flex: none; }
 .location-form { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.location-list li > .location-form { flex: 1; margin: 0; padding: 0; border: 0; }
 .grid select { min-height: 36px; }
 .topbar select.register { min-height: 36px; padding: 0 .5rem; background: #17222c; color: var(--chrome-text); border-color: #384553; }
 .panel.storage { margin-top: 20px; }
@@ -309,6 +325,7 @@ button.thumb { min-height: 0; padding: 0; background: none; border: 0; border-ra
 .pick-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 4px; }
 .pick-list button { width: 100%; justify-content: flex-start; gap: 12px; min-height: var(--tap); text-align: left; }
 .pick-list .price { margin-left: auto; font-variant-numeric: tabular-nums; }
+.pick-list button.active { background: var(--accent-soft); border-color: var(--accent); }
 .add-form { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin-top: 14px; }
 .add-form label { margin: 0; }
 .add-form input { width: 6rem; }

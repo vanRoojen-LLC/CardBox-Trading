@@ -442,7 +442,13 @@ function EditDialog({ member, team, onClose, onSave }: {
   if (role !== member.role) change.role = role
   return (
     <Dialog title={`Edit ${member.display_name}`} onClose={onClose}>
-      <form onSubmit={async e => { e.preventDefault(); setBusy(true); await onSave(change); setBusy(false) }}>
+      <form onSubmit={async e => {
+        e.preventDefault()
+        // Stepping down from manager takes away the team controls at once, so it asks first.
+        if (member.is_self && member.role === 'store_manager' && change.role && change.role !== 'store_manager'
+          && !confirm(`Step down from manager at ${team.store.name}? You won't be able to manage the team or store settings any more.`)) return
+        setBusy(true); await onSave(change); setBusy(false)
+      }}>
         <p className="muted small">{member.email}. Their name and email come from their CardBox account, which they manage themselves.</p>
         <label>Job title<input value={title} maxLength={80} onChange={e => setTitle(e.target.value)} placeholder="e.g. Weekend lead" /></label>
         {member.can_change_role && (
