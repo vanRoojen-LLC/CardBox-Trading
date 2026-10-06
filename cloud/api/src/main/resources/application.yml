@@ -47,4 +47,4 @@ app:
   # Platform owner. Only counts once Auth0 has verified the address.
   owner-email: ${OWNER_EMAIL:toby@vanroojen.com}
   trial-days: 30
-  catalog.user-agent: OCCPricerCloud/0.1 (+https://github.com/vanRoojen-LLC/OCC_PRICER)
+  catalog.user-agent: OCCPricerCloud/0.1 (+https://github.com/vanRoojen-LLC/CardBox-Trading)

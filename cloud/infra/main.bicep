@@ -1,4 +1,4 @@
-// OCC Pricer cloud MVP. Deployed into an existing resource group by cloud/deploy.sh.
+// CardBox Trading cloud MVP. Deployed into an existing resource group by cloud/deploy.sh.
 // Stage 1 (deployApps=false) creates the registry, vault, database and environment;
 // stage 2 adds the web/API container app and the nightly catalog import job once the image exists.
 

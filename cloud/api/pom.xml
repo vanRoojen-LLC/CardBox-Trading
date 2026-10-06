@@ -11,7 +11,7 @@
   <groupId>com.cardpricer</groupId>
   <artifactId>occ-pricer-cloud</artifactId>
   <version>0.1.0</version>
-  <name>OCC Pricer Cloud API</name>
+  <name>CardBox Trading Cloud API</name>
   <properties>
     <java.version>21</java.version>
     <!-- Desktop sources reused unchanged until the core is extracted into its own module (roadmap Phase 2). -->

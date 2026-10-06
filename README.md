@@ -1,10 +1,12 @@
-# OCC Card Pricer
+# CardBox Trading
+
+The retail and vendor side of CardBox (formerly OCC Card Pricer).
 
 Java 25 / Swing desktop card pricing, receiving, inventory and trade history.
 
 The multi-store web version runs at **https://cardbox.trading**; see [cloud/README.md](cloud/README.md).
 
-This repository lives at **https://github.com/vanRoojen-LLC/OCC_PRICER** (moved from `tvanroo/OCC_PRICER`; GitHub redirects the old URL). It is a fork of [NinjaPanda351/OCC_PRICER](https://github.com/NinjaPanda351/OCC_PRICER), which still publishes the desktop releases the update check reads. Point an existing clone at the new home with `git remote set-url origin https://github.com/vanRoojen-LLC/OCC_PRICER.git`.
+This repository lives at **https://github.com/vanRoojen-LLC/CardBox-Trading** (renamed from `vanRoojen-LLC/OCC_PRICER`, and before that `tvanroo/OCC_PRICER`; GitHub redirects both old URLs). It is a fork of [NinjaPanda351/OCC_PRICER](https://github.com/NinjaPanda351/OCC_PRICER), which still publishes the desktop releases the update check reads. Point an existing clone at the new home with `git remote set-url origin https://github.com/vanRoojen-LLC/CardBox-Trading.git`.
 
 ## Appearance
 
