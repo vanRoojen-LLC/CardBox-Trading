@@ -411,6 +411,35 @@ class ClubSyncIntegrationTest {
     }
 
     @Test
+    void storesThatAskForItFileDeliveredCardsByTheirRules() throws Exception {
+        link();
+        UUID location = jdbc.queryForObject("SELECT id FROM locations WHERE tenant_id = ?", UUID.class, tenant);
+        String shelf = spot(location, null, "Shelf", "M");
+        assertEquals(200, call("PUT", "/api/app/storage/" + shelf + "/rule", null, owner, Map.of("conditions", Map.of("game", List.of("magic-the-gathering")))).status());
+
+        // Off by default: the rules only suggest, and delivered cards wait for staff.
+        assertFalse(call("GET", "/api/app/storage/settings", null, owner, null).body().path("fileOnArrival").asBoolean());
+        club("POST", "/items", Map.of("upserts", List.of(item("a", 1, BOLT, "normal", 2))));
+        assertEquals(2, call("GET", "/api/app/inventory?storage=none", null, owner, null).body().path("cards").asInt());
+
+        // Turned on, the next delivery files everything from the collection nobody has placed yet.
+        var on = call("PUT", "/api/app/storage/settings", null, owner, Map.of("fileOnArrival", true));
+        assertEquals(200, on.status(), on.raw());
+        assertTrue(on.body().path("fileOnArrival").asBoolean());
+        club("POST", "/items", Map.of("upserts", List.of(item("b", 2, RAGAVAN, "normal", 1))));
+        assertEquals(3, call("GET", "/api/app/inventory?storage=" + shelf, null, owner, null).body().path("cards").asInt());
+        assertEquals(0, call("GET", "/api/app/inventory?storage=none", null, owner, null).body().path("cards").asInt());
+
+        // A card someone sent back to "not put away" on purpose stays there through later deliveries.
+        String ragavan = jdbc.queryForObject("SELECT id::text FROM inventory_items WHERE club_link_id IS NOT NULL AND card_id = ?::uuid AND tenant_id = ?",
+                String.class, RAGAVAN, tenant);
+        call("POST", "/api/app/inventory/move", null, owner, Map.of("ids", List.of(ragavan), "locationId", location.toString()));
+        club("POST", "/items", Map.of("upserts", List.of(item("c", 3, SOL_RING, "normal", 1))));
+        assertEquals(3, call("GET", "/api/app/inventory?storage=" + shelf, null, owner, null).body().path("cards").asInt());
+        assertEquals(1, call("GET", "/api/app/inventory?storage=none", null, owner, null).body().path("cards").asInt());
+    }
+
+    @Test
     void scansCarryTheirSpotPhotoAndDetail() throws Exception {
         link();
         UUID location = jdbc.queryForObject("SELECT id FROM locations WHERE tenant_id = ?", UUID.class, tenant);

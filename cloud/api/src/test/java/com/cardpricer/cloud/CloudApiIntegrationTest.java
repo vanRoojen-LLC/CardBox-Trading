@@ -687,6 +687,24 @@ class CloudApiIntegrationTest {
     }
 
     @Test
+    void tradedCardsAreFiledByRulesWhenTheStoreAsks() throws Exception {
+        String owner = signup("Arrival Shop", "arrive-" + UUID.randomUUID() + "@example.com");
+        String main = call("GET", "/api/app/store", owner, null).body().path("locations").get(0).path("id").asText();
+        String shelf = call("POST", "/api/app/storage", owner, Map.of("locationId", main, "label", "Shelf", "names", java.util.List.of("Red"))).body().get(0).path("id").asText();
+        call("PUT", "/api/app/storage/" + shelf + "/rule", owner, Map.of("conditions", Map.of("color", java.util.List.of("R"))));
+        var lines = java.util.List.of(Map.of("cardId", "11111111-1111-1111-1111-111111111111", "finish", "normal", "condition", "NM", "quantity", 2),
+                Map.of("cardId", "33333333-3333-3333-3333-333333333333", "finish", "normal", "condition", "NM", "quantity", 1));
+        assertEquals(200, call("POST", "/api/app/trades", owner, Map.of("lines", lines, "payment", "credit", "locationId", main)).status());
+        assertEquals(3, call("GET", "/api/app/inventory?storage=none", owner, null).body().path("cards").asInt(), "off: cards wait");
+
+        assertEquals(200, call("PUT", "/api/app/storage/settings", owner, Map.of("fileOnArrival", true)).status());
+        assertEquals(200, call("POST", "/api/app/trades", owner, Map.of("lines", lines, "payment", "credit", "locationId", main)).status());
+        // The red Bolts (both trades' worth) go to the shelf; colorless Sol Ring has no rule and waits.
+        assertEquals(4, call("GET", "/api/app/inventory?storage=" + shelf, owner, null).body().path("cards").asInt());
+        assertEquals(2, call("GET", "/api/app/inventory?storage=none", owner, null).body().path("cards").asInt());
+    }
+
+    @Test
     void storesCanHaveSeveralOwners() throws Exception {
         String firstEmail = "f-" + UUID.randomUUID() + "@example.com";
         String first = signup("Partners", firstEmail);

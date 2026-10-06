@@ -18,15 +18,18 @@ import java.util.UUID;
 @RequestMapping("/api/app/storage")
 public class StorageRulesController {
     public record RuleBody(Map<String, List<String>> conditions) {}
+    public record SettingsBody(boolean fileOnArrival) {}
 
     private static final InventoryQuery.Where ALL = new InventoryQuery.Where("true", List.of());
 
     private final StorageRules rules;
     private final InventoryRepository inventory;
     private final JdbcTemplate jdbc;
+    private final PutAway putAway;
 
-    public StorageRulesController(StorageRules rules, InventoryRepository inventory, JdbcTemplate jdbc) {
+    public StorageRulesController(StorageRules rules, InventoryRepository inventory, JdbcTemplate jdbc, PutAway putAway) {
         this.rules = rules;
+        this.putAway = putAway;
         this.inventory = inventory;
         this.jdbc = jdbc;
     }
@@ -62,6 +65,19 @@ public class StorageRulesController {
         inventory.spot(user.tenantId(), id);
         rules.remove(user.tenantId(), id);
         return list(request);
+    }
+
+    /** How the store uses its rules: whether arriving cards are filed by them straight away. */
+    @GetMapping("/settings")
+    public Map<String, Object> settings(HttpServletRequest request) {
+        return Map.of("fileOnArrival", putAway.filesOnArrival(CurrentUser.of(request).tenantId()));
+    }
+
+    @PutMapping("/settings")
+    public Map<String, Object> saveSettings(@RequestBody SettingsBody body, HttpServletRequest request) {
+        CurrentUser user = requireOwner(request);
+        putAway.setFilesOnArrival(user.tenantId(), body.fileOnArrival());
+        return settings(request);
     }
 
     /** What a spot would take with this rule (null conditions: with no rule), before it is saved. */

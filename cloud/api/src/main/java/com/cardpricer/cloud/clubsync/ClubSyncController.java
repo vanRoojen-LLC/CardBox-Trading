@@ -2,6 +2,7 @@ package com.cardpricer.cloud.clubsync;
 
 import com.cardpricer.cloud.cardbox.StoreNames;
 import com.cardpricer.cloud.inventory.InventoryCounts;
+import com.cardpricer.cloud.inventory.PutAway;
 import com.cardpricer.cloud.web.ApiException;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
@@ -52,9 +53,11 @@ public class ClubSyncController {
     private final ClubSync sync;
     private final InventoryCounts counts;
     private final StoreNames storeNames;
+    private final PutAway putAway;
 
-    public ClubSyncController(ClubSyncAuth auth, ClubSync sync, InventoryCounts counts, StoreNames storeNames) {
+    public ClubSyncController(ClubSyncAuth auth, ClubSync sync, InventoryCounts counts, StoreNames storeNames, PutAway putAway) {
         this.auth = auth;
+        this.putAway = putAway;
         this.sync = sync;
         this.counts = counts;
         this.storeNames = storeNames;
@@ -78,8 +81,10 @@ public class ClubSyncController {
     @PostMapping("/links/{collectionId}/items")
     public Map<String, Object> items(@PathVariable String collectionId, @RequestBody ItemsBody body, HttpServletRequest request) {
         check(request, collectionId);
-        return sync.apply(collectionId, body.snapshotId(), body.upserts() == null ? List.of() : body.upserts(),
+        var result = sync.apply(collectionId, body.snapshotId(), body.upserts() == null ? List.of() : body.upserts(),
                 body.removals() == null ? List.of() : body.removals());
+        putAway.arrived(() -> putAway.collectionArrived(collectionId));
+        return result;
     }
 
     @PostMapping("/links/{collectionId}/snapshots")
@@ -94,7 +99,9 @@ public class ClubSyncController {
                                         @RequestBody CompleteBody body, HttpServletRequest request) {
         check(request, collectionId);
         if (body.itemCount() == null || body.itemCount() < 0) throw ApiException.badRequest("item_count is required");
-        return sync.completeSnapshot(collectionId, snapshotId, body.itemCount());
+        var result = sync.completeSnapshot(collectionId, snapshotId, body.itemCount());
+        putAway.arrived(() -> putAway.collectionArrived(collectionId));
+        return result;
     }
 
     @PostMapping("/links/{collectionId}/unlink")
