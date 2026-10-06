@@ -31,6 +31,13 @@ export default function StorageEditor({ owner, locations }: { owner: boolean; lo
   }, [locationId])
   const ruleOf = useMemo(() => new Map(rules.map(r => [r.spotId, r])), [rules])
   const tree = useMemo(() => flatTree(spots, locationId), [spots, locationId])
+  // Cards in each spot counting everything inside it, which is what a capacity limits.
+  const held = useMemo(() => {
+    const parent = new Map(spots.map(s => [s.id, s.parentId]))
+    const out = new Map<string, number>()
+    for (const s of spots) for (let at: string | null | undefined = s.id; at; at = parent.get(at)) out.set(at, (out.get(at) ?? 0) + s.cards)
+    return out
+  }, [spots])
   const preview = expandNames(names)
 
   /** Labels to suggest: what siblings already use first, then anything used at the same depth, then everywhere. */
@@ -116,7 +123,8 @@ export default function StorageEditor({ owner, locations }: { owner: boolean; lo
           <li key={s.id} style={{ paddingLeft: s.depth * 22 }}>
             <div className="spot-row">
               <span><span className="muted">{s.label}</span> <strong>{s.name}</strong>
-                {s.cards > 0 && <span className="muted small"> · {s.cards} card{s.cards === 1 ? '' : 's'}</span>}
+                {s.capacity ? <Fill held={held.get(s.id) ?? 0} capacity={s.capacity} />
+                  : s.cards > 0 && <span className="muted small"> · {s.cards} card{s.cards === 1 ? '' : 's'}</span>}
                 <RuleSummary rule={ruleOf.get(s.id)} facets={facets} /></span>
               {owner && (
                 <span className="row-actions">
@@ -134,7 +142,8 @@ export default function StorageEditor({ owner, locations }: { owner: boolean; lo
             {editing && ((editing.mode === 'add' && editing.parentId === s.id) || (editing.mode === 'rename' && editing.spot.id === s.id)) && form}
             {ruleFor === s.id && (
               <RuleEditor spot={s} spots={spots} rule={ruleOf.get(s.id)} ruleOf={ruleOf} facets={facets}
-                onSaved={next => { setRules(next); setRuleFor(null) }} onCancel={() => setRuleFor(null)} />
+                onSaved={next => { setRules(next); setRuleFor(null) }} onCancel={() => setRuleFor(null)}
+                onCapacity={() => api<Spot[]>('/api/app/storage').then(setSpots)} />
             )}
           </li>
         ))}
@@ -176,6 +185,17 @@ function ArrivalSetting({ owner }: { owner: boolean }) {
   )
 }
 
+/** How full a spot with a limit is; over the limit when every spot its cards fit was already full. */
+function Fill({ held, capacity }: { held: number; capacity: number }) {
+  const over = held > capacity
+  return (
+    <span className={over ? 'fill over' : 'fill'} title={over ? 'Over its limit: every spot these cards fit was full' : undefined}>
+      {' · '}{held.toLocaleString()} of {capacity.toLocaleString()} cards{over ? `, ${(held - capacity).toLocaleString()} over` : ''}
+      <span className="bar" aria-hidden><span style={{ width: `${Math.min(100, Math.round(held / capacity * 100))}%` }} /></span>
+    </span>
+  )
+}
+
 function RuleSummary({ rule, facets }: { rule: Rule | undefined; facets: Facets }) {
   if (!rule) return null
   return (
@@ -187,11 +207,12 @@ function RuleSummary({ rule, facets }: { rule: Rule | undefined; facets: Facets 
 }
 
 /** Picks what goes in one spot, showing live how many cards in stock that would send there. */
-function RuleEditor({ spot, spots, rule, ruleOf, facets, onSaved, onCancel }: {
+function RuleEditor({ spot, spots, rule, ruleOf, facets, onSaved, onCancel, onCapacity }: {
   spot: Spot; spots: Spot[]; rule: Rule | undefined; ruleOf: Map<string, Rule>; facets: Facets
-  onSaved: (rules: Rule[]) => void; onCancel: () => void
+  onSaved: (rules: Rule[]) => void; onCancel: () => void; onCapacity: () => void
 }) {
   const [conditions, setConditions] = useState<Conditions>(rule?.conditions ?? {})
+  const [capacity, setCapacity] = useState(spot.capacity ? String(spot.capacity) : '')
   const [count, setCount] = useState<{ cards: number; waiting: number } | null>(null)
   const [error, setError] = useState('')
   const path = pathOf(spots, spot.id)
@@ -221,8 +242,15 @@ function RuleEditor({ spot, spots, rule, ruleOf, facets, onSaved, onCancel }: {
 
   async function save(e: React.FormEvent) {
     e.preventDefault()
-    try { onSaved(await api<Rule[]>(`/api/app/storage/${spot.id}/rule`, { method: 'PUT', body: { conditions } })) }
-    catch (err) { setError((err as Error).message) }
+    const limit = capacity.trim() === '' ? null : Number(capacity)
+    if (limit !== null && (!Number.isInteger(limit) || limit < 1)) { setError('Holds up to must be a whole number of cards, or blank for no limit.'); return }
+    try {
+      if (limit !== (spot.capacity ?? null)) {
+        await api(`/api/app/storage/${spot.id}/capacity`, { method: 'PUT', body: { capacity: limit } })
+        onCapacity()
+      }
+      onSaved(await api<Rule[]>(`/api/app/storage/${spot.id}/rule`, { method: 'PUT', body: { conditions } }))
+    } catch (err) { setError((err as Error).message) }
   }
   async function remove() {
     try { onSaved(await api<Rule[]>(`/api/app/storage/${spot.id}/rule`, { method: 'DELETE', body: {} })) }
@@ -244,6 +272,8 @@ function RuleEditor({ spot, spots, rule, ruleOf, facets, onSaved, onCancel }: {
         <label>to<input maxLength={20} placeholder="Z" value={one('nameTo')} onChange={e => set('nameTo', e.target.value.trim() ? [e.target.value.trim()] : [])} /></label>
         <label>Price from $<input inputMode="decimal" placeholder="0" value={one('priceMin')} onChange={e => set('priceMin', e.target.value.trim() ? [e.target.value.trim()] : [])} /></label>
         <label>to $<input inputMode="decimal" placeholder="any" value={one('priceMax')} onChange={e => set('priceMax', e.target.value.trim() ? [e.target.value.trim()] : [])} /></label>
+        <label title="When it's full, cards go on to the next spot whose rule fits them">Holds up to
+          <input inputMode="numeric" placeholder="no limit" value={capacity} onChange={e => setCapacity(e.target.value.replace(/[^\d]/g, ''))} /> cards</label>
       </div>
       <p className="rule-preview">
         <strong>{ruleText(conditions, facets)}</strong>

@@ -20,6 +20,8 @@ interface Item {
   clubLinkId: string | null; clubCollection: string | null
 }
 interface Page { items: Item[]; more: boolean; offset: number; cards: number; lines: number; value: Money }
+/** A search the store saved by name; everyone on the store sees it. */
+interface SavedView { id: string; name: string; filters: Filters; sort: string; dir: string; by: string | null; canRemove: boolean }
 
 /** Every filter as a list of values; single-valued ones (q, location, storage, prices) hold one. */
 type Filters = Record<string, string[]>
@@ -81,6 +83,9 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
   const [adding, setAdding] = useState(false)
   const [loading, setLoading] = useState(false)
   const [misplaced, setMisplaced] = useState<{ lines: number; cards: number } | null>(null)
+  const [saved, setSaved] = useState<SavedView[]>([])
+  const [savedId, setSavedId] = useState<string | null>(null)
+  const [naming, setNaming] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const lastClicked = useRef<number | null>(null)
@@ -88,12 +93,13 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
 
   useEffect(() => { try { localStorage.setItem('inventory.view', JSON.stringify(view)); localStorage.setItem('inventory.sort', JSON.stringify(sort)) } catch { /* private window */ } }, [view, sort])
   useEffect(() => { api<Spot[]>('/api/app/storage').then(setSpots).catch(e => setError(e.message)) }, [])
+  useEffect(() => { api<SavedView[]>('/api/app/inventory/views').then(setSaved).catch(() => setSaved([])) }, [])
 
   // Everything the server filters on: the view's storage, the search and the picked filters.
   const active = useMemo<Filters>(() => {
     const current = VIEWS.find(v => v.key === view)
     const storage = filters.storage?.length ? filters.storage : current?.storage ? [current.storage] : []
-    const rules = !filters.storage?.length && current?.rules ? [current.rules] : []
+    const rules = filters.rules?.length ? filters.rules : !filters.storage?.length && current?.rules ? [current.rules] : []
     return { ...filters, storage, rules, q: q.trim() ? [q.trim()] : [] }
   }, [filters, view, q])
   const key = query(active)
@@ -191,7 +197,29 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
   }, [selectedLines, picking, key])
 
   const setFilter = (k: string, values: string[]) => setFilters(f => ({ ...f, [k]: values }))
-  const chips = Object.entries(filters).flatMap(([k, values]) => ['location', 'storage', 'priceMin', 'priceMax'].includes(k) ? []
+
+  function openSaved(v: SavedView) {
+    const { q: search, ...rest } = v.filters
+    setView('all'); setSavedId(v.id)
+    setFilters({ ...rest, location: rest.location ?? filters.location ?? [] })
+    setQ(search?.[0] ?? '')
+    setSort({ key: v.sort, dir: v.dir })
+  }
+  async function saveView(e: React.FormEvent) {
+    e.preventDefault()
+    if (!naming?.trim()) return
+    try {
+      const next = await api<SavedView[]>('/api/app/inventory/views', { method: 'POST', body: { name: naming.trim(), filters: active, sort: sort.key, dir: sort.dir } })
+      setSaved(next); setSavedId(next.find(v => v.name === naming.trim())?.id ?? null); setNaming(null)
+      setNotice(`Saved “${naming.trim()}” for everyone on the store.`); setError('')
+    } catch (err) { setError((err as Error).message) }
+  }
+  async function removeView(v: SavedView) {
+    if (!confirm(`Remove the saved view “${v.name}” for everyone on the store?`)) return
+    try { setSaved(await api<SavedView[]>(`/api/app/inventory/views/${v.id}`, { method: 'DELETE', body: {} })); if (savedId === v.id) setSavedId(null) }
+    catch (err) { setError((err as Error).message) }
+  }
+  const chips = Object.entries(filters).flatMap(([k, values]) => ['location', 'storage', 'rules', 'priceMin', 'priceMax'].includes(k) ? []
     : values.map(v => ({ k, v, label: valueLabel(k, { value: v, label: facets[k]?.find(f => f.value === v)?.label }) })))
   const price = [filters.priceMin?.[0] && `≥ $${filters.priceMin[0]}`, filters.priceMax?.[0] && `≤ $${filters.priceMax[0]}`].filter(Boolean).join(' and ')
   const filtered = chips.length > 0 || !!price || !!filters.storage?.length || !!q.trim()
@@ -213,10 +241,26 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
 
       <div className="inv-views" role="tablist" aria-label="Views">
         {VIEWS.filter(v => !v.rules || view === v.key || (misplaced?.lines ?? 0) > 0).map(v => (
-          <button key={v.key} role="tab" aria-selected={view === v.key && !filters.storage?.length} className="inv-view"
-            onClick={() => { setView(v.key); setFilter('storage', []) }}>
+          <button key={v.key} role="tab" aria-selected={!savedId && view === v.key && !filters.storage?.length} className="inv-view"
+            onClick={() => { setView(v.key); setSavedId(null); setFilters(f => ({ ...f, storage: [], rules: [] })) }}>
             {v.label}{v.rules && misplaced?.cards ? <span className="count"> {misplaced.cards.toLocaleString()}</span> : null}</button>
         ))}
+        {saved.map(v => (
+          <span key={v.id} className="inv-saved">
+            <button role="tab" aria-selected={savedId === v.id} className="inv-view" title={v.by ? `Saved by ${v.by}` : undefined}
+              onClick={() => openSaved(v)}>{v.name}</button>
+            {v.canRemove && savedId === v.id && <button className="link icon" aria-label={`Remove saved view ${v.name}`} onClick={() => removeView(v)}>×</button>}
+          </span>
+        ))}
+        {naming === null
+          ? <button className="link inv-save" onClick={() => setNaming(saved.find(v => v.id === savedId)?.name ?? '')}
+              title="Keep this search, filters and sort as a view everyone on the store can open">{savedId ? 'Update or save as…' : 'Save view…'}</button>
+          : <form className="inv-save-form" onSubmit={saveView}>
+              <input autoFocus maxLength={60} placeholder="Name, e.g. Red rares to sort" aria-label="View name" value={naming}
+                onChange={e => setNaming(e.target.value)} onKeyDown={e => e.key === 'Escape' && setNaming(null)} />
+              <button type="submit" className="small" disabled={!naming.trim()}>Save</button>
+              <button type="button" className="small ghost" onClick={() => setNaming(null)}>Cancel</button>
+            </form>}
       </div>
       <div className="inv-filters">
         <div className="inv-search">
@@ -573,11 +617,11 @@ function InventoryRow({ item, several, locations, spots, selected, onSelect, mov
   )
 }
 
-interface WhyStep { spotId: string; path: PathPart[]; level: number; outcome: 'fits' | 'no' | 'through' | 'empty' | 'later'; conditions: Conditions | null }
+interface WhyStep { spotId: string; path: PathPart[]; level: number; outcome: 'fits' | 'no' | 'full' | 'through' | 'empty' | 'later'; conditions: Conditions | null }
 interface Why { steps: WhyStep[]; destination: PathPart[] }
 
 const OUTCOMES: Record<WhyStep['outcome'], string> = {
-  fits: 'takes it', no: "doesn't fit", through: 'no rule of its own, passes it inside', empty: 'no rule', later: 'not checked: an earlier spot took it',
+  fits: 'takes it', no: "doesn't fit", full: 'fits, but has no room left', through: 'no rule of its own, passes it inside', empty: 'no rule', later: 'not checked: an earlier spot took it',
 }
 
 /** How the rules walked a card down the storage tree: each spot they looked at, in order, and what its rule said. */
