@@ -44,6 +44,15 @@ app:
       repo: ${GITHUB_ISSUES_REPO:vanRoojen-LLC/CardBox}
       api-url: ${GITHUB_API_URL:https://api.github.com}
     admin-url: ${SUPPORT_ADMIN_URL:https://cardbox.trading/app/admin}
+  # Month-to-date Azure cost for the health dashboard (GET /api/partner/club-sync/metrics), asked as the app's
+  # user-assigned managed identity (Cost Management Reader on the resource group). Container Apps sets
+  # IDENTITY_ENDPOINT and IDENTITY_HEADER; Bicep sets the rest. Anything missing just leaves the figure out.
+  azure-cost:
+    subscription-id: ${AZURE_SUBSCRIPTION_ID:}
+    resource-group: ${AZURE_RESOURCE_GROUP:}
+    client-id: ${AZURE_CLIENT_ID:}
+    identity-endpoint: ${IDENTITY_ENDPOINT:}
+    identity-header: ${IDENTITY_HEADER:}
   # Platform owner. Only counts once Auth0 has verified the address.
   owner-email: ${OWNER_EMAIL:toby@vanroojen.com}
   trial-days: 30

@@ -23,10 +23,12 @@ import java.util.Map;
 public class PublicCardController {
     private final CatalogRepository catalog;
     private final SwuCatalogRepository swu;
+    private final PriceChecks priceChecks;
 
-    public PublicCardController(CatalogRepository catalog, SwuCatalogRepository swu) {
+    public PublicCardController(CatalogRepository catalog, SwuCatalogRepository swu, PriceChecks priceChecks) {
         this.catalog = catalog;
         this.swu = swu;
+        this.priceChecks = priceChecks;
     }
 
     @GetMapping("/cards")
@@ -35,8 +37,15 @@ public class PublicCardController {
                                                       @RequestParam(value = "game", defaultValue = "mtg") String game) {
         if (q.trim().length() < 2) throw ApiException.badRequest("Type at least 2 characters");
         if (q.length() > 100) throw ApiException.badRequest("Search is too long");
-        if (game.equals("swu")) return swu(q, set);
-        if (!game.equals("mtg")) throw ApiException.badRequest("Unknown game");
+        if (!game.equals("mtg") && !game.equals("swu")) throw ApiException.badRequest("Unknown game");
+        var response = game.equals("swu") ? swu(q, set) : mtg(q, set);
+        // Counted only once the search has succeeded. Answers are cacheable for an hour (below), so searches a
+        // browser or CDN serves from its cache never reach us and are not counted.
+        priceChecks.count();
+        return response;
+    }
+
+    private ResponseEntity<Map<String, Object>> mtg(String q, String set) {
         List<Map<String, Object>> cards = catalog.search(q, set.trim().toUpperCase(Locale.ROOT), 40).stream()
                 .map(PublicCardController::view).toList();
         Map<String, Object> body = new HashMap<>();

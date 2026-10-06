@@ -88,6 +88,7 @@ resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
 var acrPull = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 var secretsUser = '4633458b-17de-408a-b874-0445c86b69e6'
 var secretsOfficer = 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
+var costReader = '72fafb9e-0641-4937-9268-a91bfd8191a3'
 
 resource appPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(registry.id, identity.id, acrPull)
@@ -106,6 +107,16 @@ resource appSecrets 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
     principalId: identity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', secretsUser)
+  }
+}
+
+// Lets the app read this resource group's month-to-date cost for the health dashboard (clubsync/AzureCost.java).
+resource appCostReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(resourceGroup().id, identity.id, costReader)
+  properties: {
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', costReader)
   }
 }
 
@@ -206,6 +217,10 @@ var webEnv = concat(env, [
   { name: 'CLUB_SYNC_ENABLED', value: string(clubSyncEnabled) }
   { name: 'CLUB_SYNC_CLIENT_IDS', value: clubSyncClientIds }
   { name: 'GITHUB_ISSUES_REPO', value: githubIssuesRepo }
+  // The app's identity and where to ask for its resource group's cost (health dashboard).
+  { name: 'AZURE_CLIENT_ID', value: identity.properties.clientId }
+  { name: 'AZURE_SUBSCRIPTION_ID', value: subscription().subscriptionId }
+  { name: 'AZURE_RESOURCE_GROUP', value: resourceGroup().name }
 ], githubIssues ? [
   { name: 'GITHUB_ISSUES_TOKEN', secretRef: 'github-issues-token' }
 ] : [])
