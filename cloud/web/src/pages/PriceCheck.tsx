@@ -13,6 +13,9 @@ const GAMES: Record<Game, { label: string; title: string; example: string }> = {
   swu: { label: 'Star Wars: Unlimited', title: 'Star Wars: Unlimited price check', example: 'e.g. Darth Vader or SOR 010' },
 }
 
+/** Prices refresh nightly; two days without a good refresh is said on the page rather than shown as current. */
+const STALE_MS = 48 * 3600 * 1000
+
 /** The game in the address (?game=swu), so a store can link straight to it. Magic otherwise. */
 function gameFromUrl(): Game {
   return new URLSearchParams(window.location.search).get('game') === 'swu' ? 'swu' : 'mtg'
@@ -86,7 +89,8 @@ export default function PriceCheck() {
               ))}
             </div>
           )}
-          {result.pricesUpdatedAt && <p className="muted small">Prices updated {new Date(result.pricesUpdatedAt).toLocaleString()}.</p>}
+          {result.pricesUpdatedAt && <p className="muted small">Prices updated {new Date(result.pricesUpdatedAt).toLocaleString()}.
+            {Date.now() - Date.parse(result.pricesUpdatedAt) > STALE_MS && <> <b>Prices may be out of date.</b></>}</p>}
         </>
       )}
       {enlarged?.image && (

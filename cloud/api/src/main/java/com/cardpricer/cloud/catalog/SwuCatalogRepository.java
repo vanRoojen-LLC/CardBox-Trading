@@ -14,8 +14,16 @@ import java.util.Optional;
 
 @Repository
 public class SwuCatalogRepository {
+    /**
+     * TCGplayer's price from TCGCSV is the price of record. swu-db's stands in when TCGCSV has none, or when TCGCSV's
+     * is more than three days older than swu-db's (TCGCSV has stopped updating).
+     */
+    private static final String TCGCSV_CURRENT = "(tcgplayer_market IS NOT NULL AND (price_observed_at IS NULL"
+            + " OR tcgplayer_observed_at > price_observed_at - interval '3 days'))";
     private static final String COLUMNS = "set_code, source_number, set_name, collector_number, treatment, variant, name,"
-            + " subtitle, rarity, image, tcgplayer_id, market, price_observed_at";
+            + " subtitle, rarity, image, tcgplayer_id,"
+            + " CASE WHEN " + TCGCSV_CURRENT + " THEN tcgplayer_market ELSE market END,"
+            + " CASE WHEN " + TCGCSV_CURRENT + " THEN tcgplayer_observed_at ELSE price_observed_at END";
     private static final RowMapper<SwuCard> ROW = (rs, i) -> {
         Timestamp observed = rs.getTimestamp(13);
         return new SwuCard(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getString(5),

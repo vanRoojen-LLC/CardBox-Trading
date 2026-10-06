@@ -62,7 +62,7 @@ public class PublicCardController {
         Map<String, Object> body = new HashMap<>();
         body.put("cards", cards);
         body.put("pricesUpdatedAt", swu.lastImport().map(Object::toString).orElse(null));
-        body.put("source", "TCGplayer via swu-db");
+        body.put("source", "TCGplayer");
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(Duration.ofHours(1)).cachePublic()).body(body);
     }
 
