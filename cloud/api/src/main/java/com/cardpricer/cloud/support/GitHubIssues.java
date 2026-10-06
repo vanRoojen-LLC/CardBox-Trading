@@ -46,10 +46,10 @@ public class GitHubIssues {
 
     /** {@code apiUrl} overrides https://api.github.com; the tests point it at a local stand-in. */
     public GitHubIssues(@Value("${app.support.github.token:}") String token,
-                        @Value("${app.support.github.repo:vanRoojen-LLC/OCC_PRICER}") String repo,
+                        @Value("${app.support.github.repo:vanRoojen-LLC/CardBox}") String repo,
                         @Value("${app.support.github.api-url:https://api.github.com}") String apiUrl) {
         this.token = token == null ? "" : token.strip();
-        this.repo = repo == null || repo.isBlank() ? "vanRoojen-LLC/OCC_PRICER" : repo.strip();
+        this.repo = repo == null || repo.isBlank() ? "vanRoojen-LLC/CardBox" : repo.strip();
         if (!this.repo.matches("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"))
             throw new IllegalArgumentException("app.support.github.repo must look like owner/name");
         this.apiUrl = apiUrl.endsWith("/") ? apiUrl.substring(0, apiUrl.length() - 1) : apiUrl;

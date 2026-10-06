@@ -37,7 +37,7 @@ param clubSyncClientIds string = 'WB4mbh9ky62gjPZHFOHBQCXhYytIie7K'
 param githubIssues bool = false
 
 @description('Repository (owner/name) that Help & feedback reports are filed in.')
-param githubIssuesRepo string = 'vanRoojen-LLC/OCC_PRICER'
+param githubIssuesRepo string = 'vanRoojen-LLC/CardBox'
 
 @description('Verified email of the platform owner.')
 param ownerEmail string = 'toby@vanroojen.com'
