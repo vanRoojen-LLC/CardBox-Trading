@@ -1,6 +1,6 @@
-# OCC Pricer Cloud (MVP)
+# CardBox Trading Cloud (MVP)
 
-The multi-store web version of OCC Pricer, live at **https://cardbox.trading**. One container serves the React client
+The multi-store web version of CardBox Trading (formerly OCC Pricer), live at **https://cardbox.trading**. One container serves the React client
 and the API; PostgreSQL holds the data.
 
 - **Free price check** at `/`: search a card and see its Scryfall market price. No account, as Scryfall's terms require.
@@ -49,7 +49,7 @@ cd ../web && npm install && npm run dev                          # client on :51
 
 ## Azure
 
-Everything lives in one resource group:
+Everything lives in one resource group. The Azure resources, the jar (`occ-pricer-cloud.jar`), the image repository (`occ-pricer`) and the Java packages keep their original OCC Pricer names on purpose: renaming them is a redeploy, not a label change.
 
 | Resource | SKU | Purpose |
 |---|---|---|

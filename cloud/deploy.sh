@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploys the OCC Pricer cloud MVP into an existing Azure resource group.
+# Deploys the CardBox Trading cloud MVP into an existing Azure resource group.
 # Needs the Azure CLI, signed in (az login --use-device-code --tenant "$AZURE_TENANT_ID").
 # Safe to re-run: secrets are created once and kept, the image is rebuilt and the app updated.
 set -euo pipefail
