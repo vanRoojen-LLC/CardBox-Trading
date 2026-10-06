@@ -636,6 +636,75 @@ class CloudApiIntegrationTest {
     }
 
     @Test
+    void rulesExplainThemselvesAndFindCardsFiledElsewhere() throws Exception {
+        String owner = signup("Why Shop", "why-" + UUID.randomUUID() + "@example.com");
+        String main = call("GET", "/api/app/store", owner, null).body().path("locations").get(0).path("id").asText();
+        call("POST", "/api/app/inventory", owner, Map.of("cardId", "11111111-1111-1111-1111-111111111111", "finish", "normal", "condition", "NM", "quantity", 4, "locationId", main));
+        call("POST", "/api/app/inventory", owner, Map.of("cardId", "22222222-2222-2222-2222-222222222222", "finish", "normal", "condition", "NM", "quantity", 1, "locationId", main));
+        var tree = call("POST", "/api/app/storage", owner, Map.of("locationId", main, "label", "Shelf", "names", java.util.List.of("1", "2"))).body();
+        Map<String, String> ids = new java.util.HashMap<>();
+        for (var s : tree) ids.put("Shelf " + s.path("name").asText(), s.path("id").asText());
+        tree = call("POST", "/api/app/storage", owner, Map.of("locationId", main, "parentId", ids.get("Shelf 2"), "label", "Box", "names", java.util.List.of("A", "B"))).body();
+        for (var s : tree) if (s.path("label").asText().equals("Box")) ids.put("Box " + s.path("name").asText(), s.path("id").asText());
+        call("PUT", "/api/app/storage/" + ids.get("Shelf 1") + "/rule", owner, Map.of("conditions", Map.of("color", java.util.List.of("C"))));
+        call("PUT", "/api/app/storage/" + ids.get("Shelf 2") + "/rule", owner, Map.of("conditions", Map.of("game", java.util.List.of("magic-the-gathering"))));
+        call("PUT", "/api/app/storage/" + ids.get("Box A") + "/rule", owner, Map.of("conditions", Map.of("nameFrom", java.util.List.of("A"), "nameTo", java.util.List.of("L"))));
+        call("PUT", "/api/app/storage/" + ids.get("Box B") + "/rule", owner, Map.of("conditions", Map.of("nameFrom", java.util.List.of("M"), "nameTo", java.util.List.of("Z"))));
+        Map<String, String> lines = new java.util.HashMap<>();
+        for (var item : call("GET", "/api/app/inventory", owner, null).body().path("items")) lines.put(item.path("name").asText(), item.path("id").asText());
+
+        // Why Lightning Bolt goes to Box A: Shelf 1 doesn't take it, Shelf 2 does, then Box A wins before Box B is tried.
+        var why = call("GET", "/api/app/inventory/" + lines.get("Lightning Bolt") + "/why", owner, null);
+        assertEquals(200, why.status(), why.raw());
+        Map<String, String> outcomes = new java.util.HashMap<>();
+        for (var step : why.body().path("steps")) outcomes.put(step.path("spotId").asText(), step.path("outcome").asText());
+        assertEquals(Map.of(ids.get("Shelf 1"), "no", ids.get("Shelf 2"), "fits", ids.get("Box A"), "fits", ids.get("Box B"), "later"), outcomes);
+        assertEquals("A", why.body().path("destination").get(1).path("name").asText());
+        assertEquals(404, call("GET", "/api/app/inventory/" + UUID.randomUUID() + "/why", owner, null).status());
+
+        // Bolt filed on Shelf 1 by hand is somewhere the rules wouldn't put it; Ragavan inside Box B's own section is not.
+        call("POST", "/api/app/inventory/move", owner, Map.of("ids", java.util.List.of(lines.get("Lightning Bolt")), "storageId", ids.get("Shelf 1")));
+        var section = call("POST", "/api/app/storage", owner, Map.of("locationId", main, "parentId", ids.get("Box B"), "label", "Section", "names", java.util.List.of("1"))).body();
+        String sectionId = null;
+        for (var s : section) if (s.path("label").asText().equals("Section")) sectionId = s.path("id").asText();
+        call("POST", "/api/app/inventory/move", owner, Map.of("ids", java.util.List.of(lines.get("Ragavan, Nimble Pilferer")), "storageId", sectionId));
+        var misplaced = call("GET", "/api/app/inventory?rules=misplaced", owner, null);
+        assertEquals(200, misplaced.status(), misplaced.raw());
+        assertEquals(1, misplaced.body().path("lines").asInt());
+        var bolt = misplaced.body().path("items").get(0);
+        assertEquals("Lightning Bolt", bolt.path("name").asText());
+        assertEquals("A", bolt.path("destination").get(1).path("name").asText(), "a misplaced line shows where it belongs");
+        assertEquals(200, call("GET", "/api/app/inventory/facets?rules=misplaced", owner, null).status());
+        var everything = call("GET", "/api/app/inventory?storage=any", owner, null).body().path("items");
+        for (var item : everything) if (item.path("name").asText().startsWith("Ragavan")) assertEquals(0, item.path("destination").size());
+
+        // Putting everything by the rules moves Bolt to Box A and leaves Ragavan in its section.
+        var fixed = call("POST", "/api/app/inventory/put-away", owner, Map.of("filter", Map.of("storage", java.util.List.of("any"))));
+        assertEquals(200, fixed.status(), fixed.raw());
+        assertEquals(4, fixed.body().path("cards").asInt());
+        assertEquals(0, call("GET", "/api/app/inventory?rules=misplaced", owner, null).body().path("lines").asInt());
+        assertEquals(1, call("GET", "/api/app/inventory?storage=" + sectionId, owner, null).body().path("cards").asInt());
+    }
+
+    @Test
+    void tradedCardsAreFiledByRulesWhenTheStoreAsks() throws Exception {
+        String owner = signup("Arrival Shop", "arrive-" + UUID.randomUUID() + "@example.com");
+        String main = call("GET", "/api/app/store", owner, null).body().path("locations").get(0).path("id").asText();
+        String shelf = call("POST", "/api/app/storage", owner, Map.of("locationId", main, "label", "Shelf", "names", java.util.List.of("Red"))).body().get(0).path("id").asText();
+        call("PUT", "/api/app/storage/" + shelf + "/rule", owner, Map.of("conditions", Map.of("color", java.util.List.of("R"))));
+        var lines = java.util.List.of(Map.of("cardId", "11111111-1111-1111-1111-111111111111", "finish", "normal", "condition", "NM", "quantity", 2),
+                Map.of("cardId", "33333333-3333-3333-3333-333333333333", "finish", "normal", "condition", "NM", "quantity", 1));
+        assertEquals(200, call("POST", "/api/app/trades", owner, Map.of("lines", lines, "payment", "credit", "locationId", main)).status());
+        assertEquals(3, call("GET", "/api/app/inventory?storage=none", owner, null).body().path("cards").asInt(), "off: cards wait");
+
+        assertEquals(200, call("PUT", "/api/app/storage/settings", owner, Map.of("fileOnArrival", true)).status());
+        assertEquals(200, call("POST", "/api/app/trades", owner, Map.of("lines", lines, "payment", "credit", "locationId", main)).status());
+        // The red Bolts (both trades' worth) go to the shelf; colorless Sol Ring has no rule and waits.
+        assertEquals(4, call("GET", "/api/app/inventory?storage=" + shelf, owner, null).body().path("cards").asInt());
+        assertEquals(2, call("GET", "/api/app/inventory?storage=none", owner, null).body().path("cards").asInt());
+    }
+
+    @Test
     void storesCanHaveSeveralOwners() throws Exception {
         String firstEmail = "f-" + UUID.randomUUID() + "@example.com";
         String first = signup("Partners", firstEmail);

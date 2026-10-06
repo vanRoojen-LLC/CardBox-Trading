@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { api, CONDITIONS, FINISHES, money, type Card, type Money, type StoreLocation } from '../api'
 import { flatTree, pathOf, pathText, type PathPart, type Spot } from '../storage'
 import SearchIcon from '../SearchIcon'
-import { FACETS, TREATMENTS, titleCase, valueLabel, type Facets } from '../cardDetails'
+import { FACETS, TREATMENTS, ruleText, titleCase, valueLabel, type Conditions, type Facets } from '../cardDetails'
 import { ColorPips, FacetMenu, PriceMenu } from '../cardFilters'
 import ClubCollections from './ClubCollections'
 
@@ -27,11 +27,15 @@ type Filters = Record<string, string[]>
 const PAGE = 100
 
 
-/** Saved starting points. "To put away" is where synced and traded cards wait. */
-const VIEWS: { key: string; label: string; storage: string | null }[] = [
+/**
+ * Saved starting points. "To put away" is where synced and traded cards wait; "Not where rules say" is put-away stock
+ * outside the spot the store's rules would pick, shown only when there is some.
+ */
+const VIEWS: { key: string; label: string; storage: string | null; rules?: string }[] = [
   { key: 'none', label: 'To put away', storage: 'none' },
   { key: 'any', label: 'Put away', storage: 'any' },
   { key: 'all', label: 'Everything', storage: null },
+  { key: 'misplaced', label: 'Not where rules say', storage: null, rules: 'misplaced' },
 ]
 
 const COLUMNS: { key: string; label: string; right?: boolean; sort?: string }[] = [
@@ -76,6 +80,7 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
   const [picking, setPicking] = useState(false)
   const [adding, setAdding] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [misplaced, setMisplaced] = useState<{ lines: number; cards: number } | null>(null)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const lastClicked = useRef<number | null>(null)
@@ -86,8 +91,10 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
 
   // Everything the server filters on: the view's storage, the search and the picked filters.
   const active = useMemo<Filters>(() => {
-    const storage = filters.storage?.length ? filters.storage : VIEWS.find(v => v.key === view)?.storage ? [VIEWS.find(v => v.key === view)!.storage!] : []
-    return { ...filters, storage, q: q.trim() ? [q.trim()] : [] }
+    const current = VIEWS.find(v => v.key === view)
+    const storage = filters.storage?.length ? filters.storage : current?.storage ? [current.storage] : []
+    const rules = !filters.storage?.length && current?.rules ? [current.rules] : []
+    return { ...filters, storage, rules, q: q.trim() ? [q.trim()] : [] }
   }, [filters, view, q])
   const key = query(active)
 
@@ -103,7 +110,11 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
   useEffect(() => { const t = setTimeout(() => load(0), 200); return () => clearTimeout(t) }, [load])
   useEffect(() => { const t = setTimeout(loadFacets, 250); return () => clearTimeout(t) }, [loadFacets])
 
-  const refresh = useCallback(() => Promise.all([load(0), loadFacets(), api<Spot[]>('/api/app/storage').then(setSpots)]), [load, loadFacets])
+  const loadMisplaced = useCallback(() => api<Page>('/api/app/inventory?rules=misplaced&limit=1')
+    .then(p => setMisplaced({ lines: p.lines, cards: p.cards })).catch(() => setMisplaced(null)), [])
+  useEffect(() => { loadMisplaced() }, [loadMisplaced])
+  const refresh = useCallback(() => Promise.all([load(0), loadFacets(), loadMisplaced(), api<Spot[]>('/api/app/storage').then(setSpots)]),
+    [load, loadFacets, loadMisplaced])
   async function change(request: Promise<unknown>) {
     try { await request; await refresh() } catch (e) { setError((e as Error).message) }
   }
@@ -204,9 +215,10 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
       {adding && <AddCards locations={open} spots={spots} defaultLocation={filterLocation || open[0]?.id || ''} onAdded={refresh} />}
 
       <div className="inv-views" role="tablist" aria-label="Views">
-        {VIEWS.map(v => (
+        {VIEWS.filter(v => !v.rules || view === v.key || (misplaced?.lines ?? 0) > 0).map(v => (
           <button key={v.key} role="tab" aria-selected={view === v.key && !filters.storage?.length} className="inv-view"
-            onClick={() => { setView(v.key); setFilter('storage', []) }}>{v.label}</button>
+            onClick={() => { setView(v.key); setFilter('storage', []) }}>
+            {v.label}{v.rules && misplaced?.cards ? <span className="count"> {misplaced.cards.toLocaleString()}</span> : null}</button>
         ))}
       </div>
       <div className="inv-filters">
@@ -246,6 +258,16 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
 
       {notice && <p className="notice" role="status">{notice} <button className="link" onClick={() => setNotice('')}>Dismiss</button></p>}
       {error && <p className="error" role="alert">{error}</p>}
+
+      {active.rules.length > 0 && page && page.lines > 0 && (
+        <div className="panel misplaced">
+          <p><strong>{page.cards.toLocaleString()} card{page.cards === 1 ? '' : 's'}</strong> {page.cards === 1 ? 'is' : 'are'} put away somewhere
+            your storage rules wouldn't put {page.cards === 1 ? 'it' : 'them'}. Each line shows where its rule sends it.
+            Leave any that are there on purpose, or move them all.</p>
+          <button className="small" onClick={() => putAway({ filter: active }, 'Moved {cards} to where the rules say, into {spots}.')}>
+            Move {page.lines === 1 ? 'it' : `all ${page.lines.toLocaleString()} lines`} where the rules say</button>
+        </div>
+      )}
 
       {(filters.storage?.[0] ?? VIEWS.find(v => v.key === view)?.storage) === 'none' && (
         <PutAwayList filter={{ ...active, storage: [] }} version={page} onPutAway={(storageId, label) =>
@@ -430,6 +452,8 @@ function InventoryRow({ item, several, locations, spots, selected, onSelect, mov
   const [target, setTarget] = useState({ locationId: item.locationId, storageId: '', quantity: item.quantity })
   const [scans, setScans] = useState<{ itemId: string; quantity: number; image: string | null; details: string | null }[] | null>(null)
   const toggleScans = () => scans ? setScans(null) : api<typeof scans>(`/api/app/club-links/scans/${item.id}`).then(setScans).catch(() => setScans([]))
+  const [why, setWhy] = useState<Why | null>(null)
+  const toggleWhy = () => why ? setWhy(null) : api<Why>(`/api/app/inventory/${item.id}/why`).then(setWhy).catch(() => setWhy({ steps: [], destination: [] }))
   const synced = !!item.clubLinkId
   const treatments = (item.treatments ?? '').split(',').filter(Boolean).map(t => TREATMENTS[t] ?? titleCase(t))
   const span = COLUMNS.length + 2
@@ -448,7 +472,8 @@ function InventoryRow({ item, several, locations, spots, selected, onSelect, mov
         <td>{item.condition}</td>
         <td>{several && <div className="muted small">{item.location}</div>}
           {item.path.length ? pathText(item.path) : <span className="unshelved">Not put away</span>}
-          {item.destination?.length > 0 && <div className="headed" title="Where your storage rules send it">→ {pathText(item.destination)}</div>}</td>
+          {item.destination?.length > 0 && <button type="button" className="headed link" aria-expanded={!!why}
+            title="Where your storage rules send it. Click to see why." onClick={toggleWhy}>→ {pathText(item.destination)}</button>}</td>
         <td className="r">{money(item.market)}</td>
         <td className="r">
           {synced ? item.quantity : (
@@ -464,6 +489,9 @@ function InventoryRow({ item, several, locations, spots, selected, onSelect, mov
           {synced && <button className="link" onClick={toggleScans}>{scans ? 'Hide scans' : 'Scans'}</button>}
         </td>
       </tr>
+      {why && (
+        <tr className="move-row"><td colSpan={span}><WhyHere why={why} /></td></tr>
+      )}
       {scans && (
         <tr className="move-row"><td colSpan={span}>
           <ul className="plain scans">
@@ -506,6 +534,29 @@ function InventoryRow({ item, several, locations, spots, selected, onSelect, mov
         </td></tr>
       )}
     </>
+  )
+}
+
+interface WhyStep { spotId: string; path: PathPart[]; level: number; outcome: 'fits' | 'no' | 'through' | 'empty' | 'later'; conditions: Conditions | null }
+interface Why { steps: WhyStep[]; destination: PathPart[] }
+
+const OUTCOMES: Record<WhyStep['outcome'], string> = {
+  fits: 'takes it', no: "doesn't fit", through: 'no rule of its own, passes it inside', empty: 'no rule', later: 'not checked: an earlier spot took it',
+}
+
+/** How the rules walked a card down the storage tree: each spot they looked at, in order, and what its rule said. */
+function WhyHere({ why }: { why: Why }) {
+  if (why.steps.length === 0) return <p className="muted small">No storage rules apply to this line.</p>
+  return (
+    <ol className="plain why-here" aria-label="Why the rules send it here">
+      {why.steps.map(step => (
+        <li key={step.spotId} className={`why ${step.outcome}`} style={{ paddingLeft: step.level * 18 }}>
+          <span className="spot">{step.path[step.path.length - 1] ? `${step.path[step.path.length - 1].label} ${step.path[step.path.length - 1].name}` : ''}</span>
+          {step.conditions && <span className="muted"> · holds {ruleText(step.conditions).replace(/^Everything else$/, 'everything else')}</span>}
+          <span className="outcome"> → {OUTCOMES[step.outcome]}</span>
+        </li>
+      ))}
+    </ol>
   )
 }
 

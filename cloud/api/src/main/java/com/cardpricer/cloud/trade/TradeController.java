@@ -2,6 +2,7 @@ package com.cardpricer.cloud.trade;
 
 import com.cardpricer.cloud.auth.CurrentUser;
 import com.cardpricer.cloud.catalog.CatalogRepository;
+import com.cardpricer.cloud.inventory.PutAway;
 import com.cardpricer.cloud.web.ApiException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.Size;
@@ -31,9 +32,11 @@ public class TradeController {
     private final TradeService trades;
     private final CatalogRepository catalog;
     private final JdbcTemplate jdbc;
+    private final PutAway putAway;
 
-    public TradeController(TradeService trades, CatalogRepository catalog, JdbcTemplate jdbc) {
+    public TradeController(TradeService trades, CatalogRepository catalog, JdbcTemplate jdbc, PutAway putAway) {
         this.trades = trades;
+        this.putAway = putAway;
         this.catalog = catalog;
         this.jdbc = jdbc;
     }
@@ -72,6 +75,7 @@ public class TradeController {
         var quote = trades.quote(user.tenantId(), body.lines(), body.payment(), body.credit(), body.check());
         UUID location = trades.location(user.tenantId(), body.locationId());
         UUID id = trades.save(user.tenantId(), user.userId(), location, quote, body.customerPhone(), body.customerName(), body.checkNumber());
+        putAway.arrived(() -> putAway.tradeArrived(user.tenantId(), location, quote.lines().stream().map(TradeService.PricedLine::cardId).distinct().toList()));
         return trade(id, request);
     }
 

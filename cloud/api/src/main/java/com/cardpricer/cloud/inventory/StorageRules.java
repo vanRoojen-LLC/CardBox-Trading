@@ -78,22 +78,8 @@ public class StorageRules {
         }
         if (rules.isEmpty()) return Map.of();
         var spots = inventory.spots(tenant);
-        // Which lines each rule fits, within its own location.
-        Map<UUID, Set<UUID>> fits = new HashMap<>();
-        Map<UUID, InventoryRepository.Spot> byId = new HashMap<>();
-        for (var spot : spots) byId.put(spot.id(), spot);
-        for (var rule : rules.entrySet()) {
-            var spot = byId.get(rule.getKey());
-            if (spot == null) continue;
-            var where = new InventoryQuery(tenant, rule.getValue()).where();
-            List<Object> args = new ArrayList<>(where.args());
-            args.add(spot.locationId());
-            args.addAll(restrict.args());
-            fits.put(spot.id(), new HashSet<>(jdbc.queryForList("SELECT i.id " + InventoryQuery.FROM + " WHERE " + where.sql()
-                    + " AND i.location_id = ? AND (" + restrict.sql() + ")", UUID.class, args.toArray())));
-        }
-        Map<UUID, List<InventoryRepository.Spot>> children = new HashMap<>();
-        for (var spot : spots) children.computeIfAbsent(spot.parentId(), k -> new ArrayList<>()).add(spot);
+        var fits = fits(tenant, rules, spots, restrict);
+        var children = children(spots);
         Set<UUID> lines = new HashSet<>();
         fits.values().forEach(lines::addAll);
         Map<UUID, UUID> out = new HashMap<>();
@@ -110,6 +96,94 @@ public class StorageRules {
             }
             if (at != null) out.put(line, at);
         }
+        return out;
+    }
+
+    /** Which lines each rule fits, within its own location. */
+    private Map<UUID, Set<UUID>> fits(UUID tenant, Map<UUID, Map<String, List<String>>> rules, List<InventoryRepository.Spot> spots,
+                                      InventoryQuery.Where restrict) {
+        Map<UUID, Set<UUID>> fits = new HashMap<>();
+        Map<UUID, InventoryRepository.Spot> byId = new HashMap<>();
+        for (var spot : spots) byId.put(spot.id(), spot);
+        for (var rule : rules.entrySet()) {
+            var spot = byId.get(rule.getKey());
+            if (spot == null) continue;
+            var where = new InventoryQuery(tenant, rule.getValue()).where();
+            List<Object> args = new ArrayList<>(where.args());
+            args.add(spot.locationId());
+            args.addAll(restrict.args());
+            fits.put(spot.id(), new HashSet<>(jdbc.queryForList("SELECT i.id " + InventoryQuery.FROM + " WHERE " + where.sql()
+                    + " AND i.location_id = ? AND (" + restrict.sql() + ")", UUID.class, args.toArray())));
+        }
+        return fits;
+    }
+
+    private static Map<UUID, List<InventoryRepository.Spot>> children(List<InventoryRepository.Spot> spots) {
+        Map<UUID, List<InventoryRepository.Spot>> children = new HashMap<>();
+        for (var spot : spots) children.computeIfAbsent(spot.parentId(), k -> new ArrayList<>()).add(spot);
+        return children;
+    }
+
+    /**
+     * One spot the rules looked at for a line. {@code outcome} is {@code fits} (its rule takes the card), {@code no}
+     * (its rule doesn't), {@code through} (no rule of its own, but a spot inside it takes the card), {@code empty} (no
+     * rule, and nothing inside takes it) or {@code later} (not tried: an earlier spot at this level already won).
+     */
+    public record Step(UUID spotId, int level, String outcome, Map<String, List<String>> conditions) {}
+
+    /** Why the rules send a line where they do: every spot looked at, level by level down the tree, in order. */
+    public List<Step> explain(UUID tenant, UUID line, UUID locationId) {
+        var rules = rules(tenant);
+        var spots = inventory.spots(tenant).stream().filter(s -> s.locationId().equals(locationId)).toList();
+        var fits = fits(tenant, rules, spots, new InventoryQuery.Where("i.id = ?", List.of(line)));
+        var children = children(spots);
+        List<Step> out = new ArrayList<>();
+        int depth = 0;
+        for (List<InventoryRepository.Spot> level = children.getOrDefault(null, List.of()); !level.isEmpty(); depth++) {
+            UUID next = null;
+            for (var spot : level) {
+                String outcome = next != null ? "later"
+                        : fits.containsKey(spot.id()) ? (fits.get(spot.id()).contains(line) ? "fits" : "no")
+                        : takes(spot.id(), line, fits, children) ? "through" : "empty";
+                if (next == null && (outcome.equals("fits") || outcome.equals("through"))) next = spot.id();
+                out.add(new Step(spot.id(), depth, outcome, rules.get(spot.id())));
+            }
+            if (next == null) break;
+            level = children.getOrDefault(next, List.of());
+        }
+        return out;
+    }
+
+    /**
+     * Put-away lines that sit outside the spot the rules would send them to (and everything inside it). Lines no rule
+     * fits are left out: the rules have no opinion on them.
+     */
+    public List<UUID> misplaced(UUID tenant) {
+        var destinations = destinations(tenant, new InventoryQuery.Where("i.storage_id IS NOT NULL", List.of()), null, null);
+        if (destinations.isEmpty()) return List.of();
+        Map<UUID, UUID> parents = new HashMap<>();
+        for (var spot : inventory.spots(tenant)) parents.put(spot.id(), spot.parentId());
+        List<UUID> out = new ArrayList<>();
+        jdbc.query("SELECT id, storage_id FROM inventory_items WHERE tenant_id = ? AND storage_id IS NOT NULL", rs -> {
+            UUID line = rs.getObject(1, UUID.class);
+            UUID to = destinations.get(line);
+            if (to == null) return;
+            for (UUID at = rs.getObject(2, UUID.class); at != null; at = parents.get(at)) if (at.equals(to)) return;
+            out.add(line);
+        }, tenant);
+        return out;
+    }
+
+    /**
+     * Turns the {@code rules=misplaced} filter, which SQL alone can't answer, into the lines it picks, so lists,
+     * filter counts and bulk actions all see the same lines.
+     */
+    public Map<String, List<String>> resolve(UUID tenant, Map<String, List<String>> filters) {
+        if (filters == null || !List.of("misplaced").equals(filters.get("rules"))) return filters;
+        Map<String, List<String>> out = new LinkedHashMap<>(filters);
+        out.remove("rules");
+        var ids = misplaced(tenant).stream().map(UUID::toString).toList();
+        out.put("ids", ids.isEmpty() ? List.of(new UUID(0, 0).toString()) : ids);
         return out;
     }
 

@@ -498,6 +498,15 @@ dialog.modal .hint { display: block; margin-top: .3rem; font-weight: 400; }
   .team-grid th:nth-child(4), .team-grid td:nth-child(4), .team-grid th:nth-child(5), .team-grid td:nth-child(5) { display: none; }
 }
 .headed { color: var(--accent-soft-text); font-size: 13px; white-space: nowrap; }
+button.headed { display: block; padding: 0; text-align: left; text-decoration: underline dotted; text-underline-offset: 3px; }
+.inv-view .count { color: var(--muted); font-variant-numeric: tabular-nums; }
+.panel.misplaced { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.panel.misplaced p { margin: 0; flex: 1 1 320px; }
+.why-here { margin: 0; font-size: 13px; }
+.why-here .why { padding: 2px 0; }
+.why-here .why.fits .spot, .why-here .why.through .spot { font-weight: 600; }
+.why-here .why.fits .outcome { color: var(--accent-soft-text); }
+.why-here .why.no, .why-here .why.empty, .why-here .why.later { color: var(--muted); }
 .panel.put-away { margin-bottom: 12px; padding: 14px 16px; }
 .panel.put-away > p { margin: .25rem 0 .5rem; }
 .put-away-groups { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line-soft); }
@@ -505,3 +514,8 @@ dialog.modal .hint { display: block; margin-top: .3rem; font-weight: 400; }
   min-height: 52px; border-bottom: 1px solid var(--line-soft); }
 .put-away-groups .dest { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 @media (max-width: 600px) { .put-away-groups li { grid-template-columns: minmax(0, 1fr) auto; padding: 8px 0; } .put-away-groups li .muted { display: none; } }
+
+.arrival-setting { margin: 8px 0 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.arrival-setting .check-row { display: flex; gap: 10px; align-items: flex-start; }
+.arrival-setting .check-row input { margin-top: 3px; width: 18px; height: 18px; flex: none; }
+.arrival-setting .check-row > span { flex: 1; }
