@@ -1,5 +1,9 @@
 /** A storage spot inside a location: a tier label the store chose ("Shelf") and a name ("A"). */
-export interface Spot { id: string; locationId: string; parentId: string | null; label: string; name: string; cards: number }
+export interface Spot {
+  id: string; locationId: string; parentId: string | null; label: string; name: string; cards: number
+  /** Most cards it holds, counting spots inside it; null or missing for no limit. */
+  capacity?: number | null
+}
 
 export interface PathPart { label: string; name: string }
 

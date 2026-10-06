@@ -79,6 +79,9 @@ public class InventoryController {
         Map<UUID, Long> counts = new HashMap<>();
         jdbc.query("SELECT storage_id, sum(quantity) FROM inventory_items WHERE tenant_id = ? AND storage_id IS NOT NULL GROUP BY storage_id",
                 rs -> { counts.put(rs.getObject(1, UUID.class), rs.getLong(2)); }, tenant);
+        Map<UUID, Integer> capacities = new HashMap<>();
+        jdbc.query("SELECT id, capacity FROM storage_spots WHERE tenant_id = ? AND capacity IS NOT NULL",
+                rs -> { capacities.put(rs.getObject(1, UUID.class), rs.getInt(2)); }, tenant);
         return inventory.spots(tenant).stream().map(s -> {
             Map<String, Object> view = new HashMap<>();
             view.put("id", s.id());
@@ -87,6 +90,7 @@ public class InventoryController {
             view.put("label", s.label());
             view.put("name", s.name());
             view.put("cards", counts.getOrDefault(s.id(), 0L));
+            view.put("capacity", capacities.get(s.id()));
             return view;
         }).toList();
     }
