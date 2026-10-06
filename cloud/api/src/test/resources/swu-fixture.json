@@ -1,0 +1,148 @@
+{
+ "sets": [
+  {
+   "numberCards": 40,
+   "maxElement": "20",
+   "fullName": "Homeworlds - OP Promo",
+   "setId": "HMWP",
+   "parentSetId": "HMW"
+  },
+  {
+   "numberCards": 252,
+   "isBaseSet": true,
+   "maxElement": "252",
+   "fullName": "Spark of Rebellion",
+   "releaseDate": "3/8/24",
+   "setId": "SOR"
+  }
+ ],
+ "cards": {
+  "SOR": {
+   "total_cards": 7,
+   "data": [
+    {
+     "Set": "SOR",
+     "Number": "010",
+     "Name": "Darth Vader",
+     "Subtitle": "Dark Lord of the Sith",
+     "Type": "Leader",
+     "Rarity": "Special",
+     "VariantType": "Normal",
+     "MarketPrice": "4.45",
+     "LowPrice": "3.81",
+     "FoilPrice": "",
+     "tcgplayerId": "540385",
+     "cid": "6088773439",
+     "FrontArt": "https://cdn.swu-db.com/images/cards/SOR/010.png"
+    },
+    {
+     "Set": "SOR",
+     "Number": "087",
+     "Name": "Darth Vader",
+     "Subtitle": "Commanding the First Legion",
+     "Type": "Unit",
+     "Rarity": "Legendary",
+     "VariantType": "Normal",
+     "MarketPrice": "6.50",
+     "LowPrice": "5.15",
+     "FoilPrice": "17.03",
+     "tcgplayerId": "540208",
+     "cid": "8506660490",
+     "FrontArt": "https://cdn.swu-db.com/images/cards/SOR/087.png"
+    },
+    {
+     "Set": "SOR",
+     "Number": "087F",
+     "Name": "Darth Vader",
+     "Subtitle": "Commanding the First Legion",
+     "Type": "Unit",
+     "Rarity": "Legendary",
+     "VariantType": "Foil",
+     "MarketPrice": "13.75",
+     "LowPrice": "5.15",
+     "FoilPrice": "17.03",
+     "tcgplayerId": "540208",
+     "cid": "9924144842",
+     "FrontArt": "https://cdn.swu-db.com/images/cards/SOR/087F.png"
+    },
+    {
+     "Set": "SOR",
+     "Number": "351",
+     "Name": "Darth Vader",
+     "Subtitle": "Commanding the First Legion",
+     "Type": "Unit",
+     "Rarity": "Legendary",
+     "VariantType": "Hyperspace",
+     "MarketPrice": "14.88",
+     "LowPrice": "11.94",
+     "FoilPrice": "53.69",
+     "tcgplayerId": "540473",
+     "cid": "1966094284",
+     "FrontArt": "https://cdn.swu-db.com/images/cards/SOR/351.png"
+    },
+    {
+     "Set": "SOR",
+     "Number": "351F",
+     "Name": "Darth Vader",
+     "Subtitle": "Commanding the First Legion",
+     "Type": "Unit",
+     "Rarity": "Legendary",
+     "VariantType": "Hyperspace Foil",
+     "MarketPrice": "59.15",
+     "LowPrice": "11.94",
+     "FoilPrice": "53.69",
+     "tcgplayerId": "540473",
+     "cid": "0508588469",
+     "FrontArt": "https://cdn.swu-db.com/images/cards/SOR/351F.png"
+    },
+    {
+     "Set": "SOR",
+     "Number": "029",
+     "Name": "Administrator's Tower",
+     "Subtitle": "Cloud City",
+     "Type": "Base",
+     "Rarity": "Common",
+     "VariantType": "Normal",
+     "MarketPrice": "0.10",
+     "LowPrice": "0.01",
+     "FoilPrice": "",
+     "tcgplayerId": "540150",
+     "cid": "8129465864",
+     "FrontArt": "https://cdn.swu-db.com/images/cards/SOR/029.png"
+    },
+    {
+     "Set": "SOR",
+     "Number": "265",
+     "Name": "Boba Fett",
+     "Subtitle": "Collecting the Bounty",
+     "Type": "Leader",
+     "Rarity": "Common",
+     "VariantType": "Showcase",
+     "MarketPrice": "296.09",
+     "LowPrice": "289.52",
+     "FoilPrice": "",
+     "tcgplayerId": "540684",
+     "cid": "8764450237",
+     "FrontArt": "https://cdn.swu-db.com/images/cards/SOR/265.png"
+    }
+   ]
+  },
+  "HMWP": {
+   "total_cards": 1,
+   "data": [
+    {
+     "Set": "HMWP",
+     "Number": "14",
+     "Name": "Adamant Ewoks",
+     "Type": "Unit",
+     "Rarity": "Common",
+     "VariantType": "OP Promo",
+     "MarketPrice": "0.00",
+     "FoilPrice": "",
+     "cid": "2026635811",
+     "FrontArt": "https://cdn.swu-db.com/images/cards/HMWP/14.png"
+    }
+   ]
+  }
+ }
+}

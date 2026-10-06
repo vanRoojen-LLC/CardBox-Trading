@@ -1,6 +1,7 @@
 package com.cardpricer.cloud;
 
 import com.cardpricer.cloud.catalog.CatalogImporter;
+import com.cardpricer.cloud.catalog.SwuCatalogImporter;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -16,14 +17,23 @@ public class OccPricerApplication {
             app.setWebApplicationType(WebApplicationType.NONE);
             var context = app.run(args);
             int status = 0;
+            String file = context.getEnvironment().getProperty("app.catalog.file", "");
             try {
-                String file = context.getEnvironment().getProperty("app.catalog.file", "");
                 var importer = context.getBean(CatalogImporter.class);
                 if (file.isBlank()) importer.importFromScryfall();
                 else importer.importFile(java.nio.file.Path.of(file));
             } catch (Exception e) {
                 e.printStackTrace();
                 status = 1;
+            }
+            // Star Wars: Unlimited runs even when Magic failed; either failure fails the job so it is noticed.
+            if (file.isBlank()) {
+                try {
+                    context.getBean(SwuCatalogImporter.class).importFromSwuDb();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    status = 1;
+                }
             }
             System.exit(SpringApplication.exit(context, () -> 0) + status);
         }

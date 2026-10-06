@@ -1,6 +1,7 @@
 package com.cardpricer.cloud;
 
 import com.cardpricer.cloud.catalog.CatalogImporter;
+import com.cardpricer.cloud.catalog.SwuCatalogImporter;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nimbusds.jose.JWSAlgorithm;
@@ -124,6 +125,7 @@ class CloudApiIntegrationTest {
 
     @LocalServerPort int port;
     @Autowired CatalogImporter importer;
+    @Autowired SwuCatalogImporter swuImporter;
     final ObjectMapper json = new ObjectMapper();
     final HttpClient http = HttpClient.newBuilder().proxy(HttpClient.Builder.NO_PROXY).build();
 
@@ -133,6 +135,17 @@ class CloudApiIntegrationTest {
     void loadCatalog() throws Exception {
         try (var in = getClass().getResourceAsStream("/cards-fixture.json")) {
             assertEquals(5, importer.importStream(in, "fixture"), "digital-only printing is skipped; Gleemax's 1,000,000 mana value fits");
+        }
+        importSwuFixture();
+    }
+
+    /** Real swu-db records: Darth Vader's SOR printings, a showcase, a common Base, and an unpriced HMW promo. */
+    int importSwuFixture() throws Exception {
+        try (var in = getClass().getResourceAsStream("/swu-fixture.json")) {
+            JsonNode fixture = json.readTree(in);
+            Map<String, JsonNode> cards = new java.util.LinkedHashMap<>();
+            fixture.path("cards").fields().forEachRemaining(e -> cards.put(e.getKey(), e.getValue()));
+            return swuImporter.importSets(fixture.path("sets"), cards, "swu-fixture", List.of());
         }
     }
 
@@ -211,6 +224,73 @@ class CloudApiIntegrationTest {
         assertEquals("2X2", cards.get(0).path("set").asText(), "newest printing first");
         assertEquals("1.37", cards.get(0).path("usd").asText());
         assertFalse(cards.get(0).has("credit"), "no store offers on the free page");
+    }
+
+    private JsonNode searchSwu(String q) throws Exception {
+        var r = call("GET", "/api/public/cards?game=swu&q=" + java.net.URLEncoder.encode(q, java.nio.charset.StandardCharsets.UTF_8), null, null);
+        assertEquals(200, r.status(), r.raw());
+        return r.body().path("cards");
+    }
+
+    @Test
+    void swuPriceCheckFindsEveryVariantWithItsOwnPrice() throws Exception {
+        var r = call("GET", "/api/public/cards?game=swu&q=vader", null, null);
+        assertEquals("TCGplayer via swu-db", r.body().path("source").asText());
+        assertFalse(r.body().path("pricesUpdatedAt").isNull());
+        var cards = r.body().path("cards");
+        assertEquals(5, cards.size(), "leader, normal, foil, hyperspace and hyperspace foil");
+        var byId = new java.util.HashMap<String, JsonNode>();
+        cards.forEach(c -> byId.put(c.path("id").asText(), c));
+        assertEquals("4.45", byId.get("SOR-010").path("usd").asText());
+        assertEquals("Darth Vader, Dark Lord of the Sith", byId.get("SOR-010").path("name").asText());
+        var foil = byId.get("SOR-087F");
+        assertEquals("087", foil.path("number").asText(), "swu-db's F suffix is not printed on the card");
+        assertTrue(foil.path("usd").isNull());
+        assertEquals("13.75", foil.path("usdFoil").asText(), "the foil row's own market price, not the Normal row's FoilPrice");
+        assertTrue(foil.path("variant").isNull(), "the Foil column already says foil");
+        var hyperspaceFoil = byId.get("SOR-351F");
+        assertEquals("Hyperspace Foil", hyperspaceFoil.path("variant").asText());
+        assertEquals("59.15", hyperspaceFoil.path("usdFoil").asText());
+        assertEquals("https://www.tcgplayer.com/product/540473", hyperspaceFoil.path("url").asText());
+        assertEquals(0, call("GET", "/api/public/cards?q=vader", null, null).body().path("cards").size(), "Magic search is unchanged");
+        assertEquals(400, call("GET", "/api/public/cards?game=pkmn&q=vader", null, null).status());
+    }
+
+    @Test
+    void swuSearchTakesSetNumberSubtitleAndVariant() throws Exception {
+        for (String q : new String[]{"SOR 10", "sor 010", "sor #010", "dark lord", "darth vader dark lord"}) {
+            var cards = searchSwu(q);
+            assertEquals(1, cards.size(), q);
+            assertEquals("SOR-010", cards.get(0).path("id").asText(), q);
+        }
+        assertEquals(2, searchSwu("vader 351").size(), "hyperspace and hyperspace foil share the printed number");
+        assertEquals(2, searchSwu("hyperspace vader").size());
+        assertEquals("Showcase", searchSwu("boba showcase").get(0).path("variant").asText());
+        assertFalse(searchSwu("darht vader").isEmpty(), "typos fall back to a fuzzy name match");
+    }
+
+    @Test
+    void swuNeverShowsAPriceItCannotStandBehind() throws Exception {
+        var base = searchSwu("Administrator's Tower").get(0);
+        assertTrue(base.path("usd").isNull(), "a common Base's TCGplayer price is one Base-and-Token pairing, not the Base");
+        assertTrue(base.path("url").isNull());
+        var promo = searchSwu("Adamant Ewoks").get(0);
+        assertTrue(promo.path("usd").isNull(), "swu-db's 0.00 means no price");
+        assertEquals("OP Promo", promo.path("variant").asText());
+    }
+
+    @Test
+    void swuReimportKeepsTheLastPriceWhenTheSourceDropsIt() throws Exception {
+        assertEquals(8, importSwuFixture(), "re-import upserts the same rows");
+        var emptied = json.createObjectNode();
+        var record = (com.fasterxml.jackson.databind.node.ObjectNode) json.readTree(
+                "{\"Set\":\"SOR\",\"Number\":\"010\",\"Name\":\"Darth Vader\",\"Subtitle\":\"Dark Lord of the Sith\","
+                        + "\"Type\":\"Leader\",\"Rarity\":\"Special\",\"VariantType\":\"Normal\",\"MarketPrice\":\"\",\"tcgplayerId\":\"540385\"}");
+        emptied.putArray("data").add(record);
+        swuImporter.importSets(json.readTree("[{\"setId\":\"SOR\",\"fullName\":\"Spark of Rebellion\"}]"),
+                Map.of("SOR", emptied), "swu-partial", List.of());
+        assertEquals("4.45", searchSwu("SOR 10").get(0).path("usd").asText());
+        assertFalse(searchSwu("SOR 10").get(0).path("priceObservedAt").isNull());
     }
 
     @Test
