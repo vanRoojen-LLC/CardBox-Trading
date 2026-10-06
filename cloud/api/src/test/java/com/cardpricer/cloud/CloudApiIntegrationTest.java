@@ -132,7 +132,7 @@ class CloudApiIntegrationTest {
     @BeforeAll
     void loadCatalog() throws Exception {
         try (var in = getClass().getResourceAsStream("/cards-fixture.json")) {
-            assertEquals(4, importer.importStream(in, "fixture"), "digital-only printing is skipped");
+            assertEquals(5, importer.importStream(in, "fixture"), "digital-only printing is skipped; Gleemax's 1,000,000 mana value fits");
         }
     }
 
@@ -198,7 +198,7 @@ class CloudApiIntegrationTest {
         try (var gzip = new java.util.zip.GZIPOutputStream(bytes)) {
             for (JsonNode card : cards) gzip.write((json.writeValueAsString(card) + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
-        assertEquals(4, importer.importStream(new java.io.ByteArrayInputStream(bytes.toByteArray()), "fixture.jsonl.gz"));
+        assertEquals(5, importer.importStream(new java.io.ByteArrayInputStream(bytes.toByteArray()), "fixture.jsonl.gz"));
     }
 
     @Test
