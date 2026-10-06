@@ -525,3 +525,8 @@ button.headed { display: block; padding: 0; text-align: left; text-decoration: u
 .fill .bar { display: inline-block; vertical-align: middle; width: 48px; height: 5px; margin-left: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
 .fill .bar > span { display: block; height: 100%; background: var(--accent-soft-text); }
 .fill.over .bar > span { background: var(--error); }
+
+.inv-saved { display: inline-flex; align-items: center; }
+.inv-save { margin-left: auto; font-size: 13px; }
+.inv-save-form { display: inline-flex; gap: 6px; align-items: center; margin-left: auto; }
+.inv-save-form input { width: 220px; }

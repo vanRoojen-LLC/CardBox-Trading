@@ -743,6 +743,31 @@ class CloudApiIntegrationTest {
     }
 
     @Test
+    void storesKeepNamedInventoryViews() throws Exception {
+        String owner = signup("Views Shop", "views-" + UUID.randomUUID() + "@example.com");
+        var saved = call("POST", "/api/app/inventory/views", owner, Map.of("name", "Red rares",
+                "filters", Map.of("color", java.util.List.of("R"), "rarity", java.util.List.of("rare"), "ids", java.util.List.of("x")), "sort", "market", "dir", "desc"));
+        assertEquals(200, saved.status(), saved.raw());
+        var view = saved.body().get(0);
+        assertEquals("Red rares", view.path("name").asText());
+        assertEquals("R", view.path("filters").path("color").get(0).asText());
+        assertTrue(view.path("filters").path("ids").isMissingNode(), "line picks aren't part of a view");
+        assertEquals("desc", view.path("dir").asText());
+        assertTrue(view.path("canRemove").asBoolean());
+
+        // Saving under the same name replaces it; a bad filter is refused.
+        call("POST", "/api/app/inventory/views", owner, Map.of("name", "Red rares", "filters", Map.of("color", java.util.List.of("R"))));
+        var views = call("GET", "/api/app/inventory/views", owner, null).body();
+        assertEquals(1, views.size());
+        assertTrue(views.get(0).path("filters").path("rarity").isMissingNode());
+        assertEquals(400, call("POST", "/api/app/inventory/views", owner, Map.of("name", "Bad", "filters", Map.of("type", java.util.List.of("Spaceship")))).status());
+        assertEquals(200, call("POST", "/api/app/inventory/views", owner, Map.of("name", "Misfiled", "filters", Map.of("rules", java.util.List.of("misplaced")))).status());
+
+        assertEquals(200, call("DELETE", "/api/app/inventory/views/" + views.get(0).path("id").asText(), owner, Map.of()).status());
+        assertEquals(1, call("GET", "/api/app/inventory/views", owner, null).body().size());
+    }
+
+    @Test
     void storesCanHaveSeveralOwners() throws Exception {
         String firstEmail = "f-" + UUID.randomUUID() + "@example.com";
         String first = signup("Partners", firstEmail);
