@@ -16,6 +16,16 @@ INFRA="$ROOT/cloud/infra/main.bicep"
 if [ -n "${AZURE_CLIENT_ID:-}" ] && [ -n "${AZURE_CLIENT_SECRET:-}" ] && ! az account show >/dev/null 2>&1; then
   az login --service-principal -u "$AZURE_CLIENT_ID" -p "$AZURE_CLIENT_SECRET" --tenant "$TENANT" -o none
 fi
+# Azure calls sometimes drop the connection ("Connection reset by peer"). Deployments are idempotent, so retry them.
+retry() {
+  local attempt
+  for attempt in 1 2 3; do
+    "$@" && return
+    [ "$attempt" = 3 ] && return 1
+    echo "Retrying in $((attempt * 15))s: $1 $2 $3" >&2
+    sleep $((attempt * 15))
+  done
+}
 az account set --subscription "$SUBSCRIPTION"
 [ "$(az account show --query tenantId -o tsv)" = "$TENANT" ] || { echo "Signed in to the wrong tenant" >&2; exit 1; }
 for ns in Microsoft.App Microsoft.ContainerRegistry Microsoft.DBforPostgreSQL Microsoft.KeyVault Microsoft.OperationalInsights Microsoft.ManagedIdentity; do
@@ -32,7 +42,7 @@ else
 fi
 
 echo "== Stage 1: registry, vault, container environment"
-out=$(az deployment group create -g "$GROUP" -n "${PREFIX}-base" -f "$INFRA" \
+out=$(retry az deployment group create -g "$GROUP" -n "${PREFIX}-base" -f "$INFRA" \
   -p prefix="$PREFIX" deployerObjectId="$DEPLOYER" deployApps=false --query properties.outputs -o json)
 REGISTRY=$(jq -r .registryName.value <<<"$out")
 SERVER=$(jq -r .registryServer.value <<<"$out")
@@ -72,7 +82,7 @@ echo "== Building image $SERVER/occ-pricer:$TAG in Azure"
 az acr build -r "$REGISTRY" -t "occ-pricer:$TAG" -f "$ROOT/cloud/Dockerfile" "$ROOT"
 
 echo "== Stage 2: database, app and nightly import job"
-out=$(az deployment group create -g "$GROUP" -n "${PREFIX}-apps" -f "$INFRA" \
+out=$(retry az deployment group create -g "$GROUP" -n "${PREFIX}-apps" -f "$INFRA" \
   -p prefix="$PREFIX" deployerObjectId="$DEPLOYER" deployApps=true image="$SERVER/occ-pricer:$TAG" cardboxEnabled="${CARDBOX_ENABLED:-false}" \
      clubSyncEnabled="${CLUB_SYNC_ENABLED:-false}" clubSyncClientIds="${CLUB_SYNC_CLIENT_IDS:-WB4mbh9ky62gjPZHFOHBQCXhYytIie7K}" \
      githubIssues="$GITHUB_ISSUES" githubIssuesRepo="${GITHUB_ISSUES_REPO:-vanRoojen-LLC/CardBox}" \
@@ -82,7 +92,7 @@ JOB=$(jq -r .importJobName.value <<<"$out")
 
 if [ "${SKIP_IMPORT:-0}" != 1 ]; then
   echo "== Loading the card catalog now (the job also runs nightly)"
-  az containerapp job start -g "$GROUP" -n "$JOB" -o none
+  retry az containerapp job start -g "$GROUP" -n "$JOB" -o none
 fi
 
 echo "Deployed: $URL"
