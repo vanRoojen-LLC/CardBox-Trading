@@ -48,7 +48,7 @@ h2 { font-size: 1.05rem; font-weight: 650; margin: 0; }
 .small { font-size: .85rem; }
 .error { color: var(--error); }
 .notice { background: var(--ok-bg); color: var(--ok-text); padding: .7rem .9rem; border-radius: var(--radius); }
-.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 :focus-visible { outline: none; box-shadow: var(--focus); }
 
 /* Top bar: always ink, like CardBox. */
@@ -66,14 +66,48 @@ h2 { font-size: 1.05rem; font-weight: 650; margin: 0; }
 .topbar .who strong { color: var(--chrome-text); font-weight: 500; }
 .topbar .ghost { background: transparent; color: var(--chrome-text); border: 1px solid #384553; }
 .topbar .ghost:hover { border-color: #56718d; background: #17222c; }
+.topbar-store, .more-tab, .tabs .short, .app-menu, .menu-scrim { display: none; }
+/*
+ * Phones: one slim row with the brand and the open store, then the four counter pages as even tabs with More beside
+ * them. More opens a sheet with Buy rates, Team, Store, Admin, the store and register pickers, help and sign out.
+ */
 @media (max-width: 760px) {
-  .topbar { gap: 0 16px; padding: 8px 16px 0; }
-  .topbar .brand { min-height: 48px; }
-  .topbar .who { margin-left: auto; padding-bottom: 8px; flex-wrap: wrap; justify-content: flex-end; gap: 8px 14px; }
-  /* Every tab stays in sight (a sideways-scrolling bar hid Team, Store and Admin off the edge on phones). */
-  .tabs { order: 3; width: 100%; flex-wrap: wrap; overflow-x: visible; }
-  .tabs a { min-height: 44px; padding: 0 10px; font-size: 14px; }
-  .topbar .who-name { display: none; }
+  .topbar { gap: 0 12px; padding: 0 12px; min-height: 0; }
+  .topbar .brand { min-height: 52px; }
+  .topbar .wordmark { font-size: 18px; }
+  .topbar.app { position: relative; z-index: 76; }
+  .topbar.app .who { display: none; }
+  .topbar-store { display: block; margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 14px; font-weight: 600; color: var(--chrome-text); }
+  .topbar-store .muted { color: var(--chrome-muted); font-weight: 500; }
+  .tabs { order: 3; width: calc(100% + 24px); margin: 0 -12px; border-top: 1px solid var(--chrome-line); overflow: visible; }
+  .tabs a, .tabs .more-tab { flex: 1 1 0; justify-content: center; min-width: 0; min-height: 48px; padding: 0 4px; font-size: 14px; }
+  .tabs .wide-only { display: none; }
+  .tabs .long { display: none; }
+  .tabs .short { display: inline; }
+  .tabs .more-tab { display: flex; align-items: center; gap: 5px; border-radius: 0; background: transparent; color: var(--chrome-muted);
+    border: 0; border-bottom: 3px solid transparent; font-weight: 500; }
+  .tabs .more-tab:hover { background: transparent; color: var(--chrome-text); }
+  .tabs .more-tab.active { color: var(--chrome-text); border-bottom-color: #4f86ff; }
+  .menu-scrim { display: block; position: fixed; inset: 0; z-index: 70; background: rgb(10 17 23 / 50%); }
+  .app-menu { display: flex; flex-direction: column; gap: 14px; position: absolute; z-index: 75; left: 0; right: 0;
+    padding: 8px 16px 18px; background: var(--chrome); color: var(--chrome-text); border-bottom: 1px solid var(--chrome-line);
+    box-shadow: 0 18px 40px rgb(10 17 23 / 35%); }
+  .app-menu-links { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .app-menu-links a { display: flex; align-items: center; min-height: 48px; padding: 0 14px; border: 1px solid #2a3540; border-radius: var(--radius);
+    color: var(--chrome-text); text-decoration: none; font-weight: 600; }
+  .app-menu-links a.active { border-color: #4f86ff; background: #142036; }
+  .app-menu-account { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding-top: 14px; border-top: 1px solid #2a3540; }
+  .app-menu-account > .muted { flex-basis: 100%; color: var(--chrome-muted); }
+  .app-menu-account select.register { flex: 1 1 140px; min-height: 44px; }
+  .app-menu-account .who-name { display: none; }
+  .app-menu-account button { flex: 1 1 140px; background: transparent; color: var(--chrome-text); border: 1px solid #384553; }
+  /* Signed-out pages: the brand and the two buttons share one row. */
+  .topbar:not(.app) .who { gap: 8px; }
+  .topbar:not(.app) .who .button { padding: 0 12px; font-size: 14px; }
+}
+@media (max-width: 400px) {
+  .topbar:not(.app) .wordmark { display: none; }
 }
 
 .banner { background: var(--banner); color: var(--banner-text); padding: .55rem 16px; text-align: center; font-size: .9rem; }
@@ -238,8 +272,48 @@ button.thumb { min-height: 0; padding: 0; background: none; border: 0; border-ra
 .save .kbd { background: transparent; color: #fff; border-color: rgb(255 255 255 / 45%); }
 .empty { padding: 32px 16px; text-align: center; color: var(--muted); }
 
+/*
+ * Phones: tighter gutters and type. A screen-reader label inside a sideways-scrolling table used to sit past the
+ * table's right edge and widen the whole page (Inventory rendered 1517px wide); .table-wrap now contains it.
+ */
+@media (max-width: 760px) {
+  .page, .page.wide { padding: 16px 12px 40px; }
+  .footer { padding: 0 12px 24px; }
+  h1 { font-size: 1.45rem; }
+  .lede { font-size: .95rem; }
+  .panel { padding: 14px; }
+  .search { height: 54px; padding: 0 12px; }
+  .search:focus-within { padding: 0 11px; }
+  .search input { height: 48px; font-size: 1.1rem; }
+  .page-head { flex-wrap: wrap; }
+  .page-head h1 { margin: 0; }
+  .toolbar input { min-width: 0; flex: 1 1 100%; min-height: 48px; font-size: 1rem; }
+  .stats { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+  .stat { padding: 10px 12px; }
+  .stat strong { font-size: 1.5rem; }
+  .totals { max-width: none; }
+  .actions > button, .actions > .button { flex: 1 1 auto; }
+  /* Tables that stay tables scroll sideways inside their frame instead of crushing every column. */
+  .table-wrap.scroll > .grid, .support-reports .grid, .admin-store .grid { min-width: 640px; }
+  .grid td, .grid th { padding-left: 10px; padding-right: 10px; }
+  .grid input { width: 5rem; }
+  .rates .grid td { white-space: nowrap; padding: 8px 6px; }
+  .rates .grid input { width: 4rem; padding: 0 .5rem; }
+  .rates .grid th { padding: 8px 6px; }
+  .rates .grid th { white-space: normal; }
+  .spot-row { flex-wrap: wrap; gap: 4px 12px; padding: 6px 0; }
+  .spot-row .row-actions { flex: 1 1 auto; min-width: 0; flex-wrap: wrap; gap: 4px 14px; }
+  .location-list li { flex-wrap: wrap; }
+  .club-links .panel-head { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .panel-head { flex-wrap: wrap; }
+  .modal-backdrop { padding: 12px; align-items: flex-end; }
+  .modal { max-height: 88vh; }
+  .trade-sticky { margin: 12px -12px -40px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
+  .trade-sticky button { min-width: 0; flex: 0 1 180px; }
+}
+
 /* Tables: history, rates, staff */
-.table-wrap { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel); overflow-x: auto; margin: .75rem 0 1rem; }
+.table-wrap { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel); overflow-x: auto; margin: .75rem 0 1rem; }
 .grid { width: 100%; border-collapse: collapse; }
 .grid th { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; font-size: 12px; font-weight: 600;
   letter-spacing: .06em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
@@ -317,6 +391,7 @@ button.thumb { min-height: 0; padding: 0; background: none; border: 0; border-ra
 
 /* Inventory */
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.page-head .row-actions { align-items: center; }
 .toolbar select { min-height: 52px; }
 .grid.inventory .stepper { justify-content: flex-end; }
 .move-row td { background: var(--surface-2); }
@@ -569,3 +644,86 @@ button.headed { display: block; padding: 0; text-align: left; text-decoration: u
 .grid th button.col-filter.on svg { fill: currentColor; }
 .facet.in-header .facet-menu { max-width: none; text-align: left; }
 @media (pointer: coarse) { .grid th button.col-filter { opacity: 1; min-width: 36px; min-height: 36px; } }
+
+/* Trade history on phones: each trade is a card, the number and customer on top, the money on the right. */
+.grid.trades .t-unit { display: none; }
+@media (max-width: 640px) {
+  .grid.trades thead { display: none; }
+  .grid.trades, .grid.trades tbody { display: block; }
+  .grid.trades tr { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas:
+    "num cust credit" ". when check" ". by cards" ". loc csv"; gap: 2px 10px; padding: 12px; border-bottom: 1px solid var(--line-soft); }
+  .grid.trades tr:last-child { border-bottom: 0; }
+  .grid.trades td { display: block; padding: 0; border: 0; font-size: 14px; }
+  .grid.trades .t-number { grid-area: num; font-size: 1rem; }
+  .grid.trades .t-number strong::before { content: "#"; }
+  .grid.trades .t-customer { grid-area: cust; font-weight: 600; font-size: 1rem; }
+  .grid.trades .t-customer .muted { display: inline-block; font-weight: 400; margin-left: 6px; white-space: nowrap; }
+  .grid.trades .t-credit { grid-area: credit; font-size: 1rem; }
+  .grid.trades .t-check { grid-area: check; }
+  .grid.trades .t-cards { grid-area: cards; color: var(--muted); }
+  .grid.trades .t-when { grid-area: when; color: var(--muted); }
+  .grid.trades .t-by { grid-area: by; color: var(--muted); }
+  .grid.trades .t-by::before { content: "by "; }
+  .grid.trades .t-location { grid-area: loc; color: var(--muted); }
+  .grid.trades .t-csv { grid-area: csv; text-align: right; }
+  .grid.trades .t-unit { display: inline; font-weight: 400; color: var(--muted); }
+  .grid.trades .t-none { display: none; }
+}
+
+/*
+ * Inventory on phones: filters sit in one row that scrolls sideways and open as sheets from the bottom of the screen,
+ * and each stock line is a card (name and price, then its details, then where it is, its count and actions).
+ */
+.inv-mobile-tools { display: none; }
+@media (max-width: 760px) {
+  .inv-filters > select, .loc-picker { flex: 1 1 150px; min-width: 0; }
+  .loc-picker select { flex: 1 1 0; min-width: 0; }
+  .inv-search { flex-basis: 100%; }
+  .inv-chips, .inv-active { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -12px; padding: 2px 12px; }
+  .inv-chips::-webkit-scrollbar, .inv-active::-webkit-scrollbar, .inv-views::-webkit-scrollbar { display: none; }
+  .inv-chips > *, .inv-active > * { flex: none; }
+  .inv-views { scrollbar-width: none; margin-left: -12px; margin-right: -12px; padding: 0 12px; }
+  .facet:not(.in-header) .facet-menu { position: fixed; z-index: 80; top: auto; left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom));
+    min-width: 0; max-width: none; max-height: 70vh; overflow-y: auto; box-shadow: 0 -12px 40px rgb(10 17 23 / 35%); }
+  .facet:not(.in-header) .facet-menu ul { max-height: 52vh; }
+  .facet-option { min-height: 44px; }
+  .inv-save-form { flex: none; }
+  .inv-save-form input { width: 160px; }
+  .bulk-bar { padding: 10px 12px; }
+  .bulk-actions { margin-left: 0; flex-basis: 100%; }
+  .bulk-actions button { flex: 1 1 0; padding: 0 8px; }
+}
+@media (max-width: 640px) {
+  .inv-mobile-tools { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
+  .inv-mobile-tools .check-all { display: flex; align-items: center; gap: 8px; margin: 0 auto 0 0; font-weight: 500; font-size: 14px; color: var(--text-2); }
+  .inv-mobile-tools .check-all input { width: 22px; height: 22px; min-height: 0; margin: 0; }
+  .inv-mobile-tools select { min-height: 40px; max-width: 52%; font-size: 14px; }
+  .inv-mobile-tools button { min-height: 40px; min-width: 40px; padding: 0; }
+  .hints, .kbd { display: none; }
+  .grid.inventory thead { display: none; }
+  .grid.inventory, .grid.inventory tbody { display: block; }
+  .grid.inventory tbody tr { display: block; }
+  .grid.inventory tbody td { display: block; padding: 0; border: 0; }
+  .grid.inventory tbody tr.loc-head td { padding: 8px 12px 6px; border-bottom: 1px solid var(--line-soft); }
+  .grid.inventory tbody tr.move-row td { padding: 10px 12px; border-bottom: 1px solid var(--line-soft); }
+  .grid.inventory tbody tr:not(.loc-head):not(.move-row) { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;
+    padding: 12px 12px 12px 48px; border-bottom: 1px solid var(--line-soft); }
+  .grid.inventory tbody tr.selected { background: var(--row-hl); }
+  .grid.inventory td.check { position: absolute; left: 12px; top: 12px; width: auto; }
+  .grid.inventory td.check input { width: 24px; height: 24px; }
+  .grid.inventory .card-cell { order: 1; flex: 1 1 calc(100% - 96px); min-width: 0; font-size: 15px; }
+  .grid.inventory .c-market { order: 2; margin-left: auto; font-size: 15px; font-weight: 650; }
+  .grid.inventory .set-cell, .grid.inventory .c-rarity, .grid.inventory .c-finish, .grid.inventory .c-cond, .grid.inventory .c-color {
+    order: 3; flex: none; font-size: 13px; color: var(--text-2); }
+  .grid.inventory .c-finish .muted { display: inline; margin-left: 4px; }
+  .grid.inventory .c-year, .grid.inventory .c-collection, .grid.inventory .c-batch { display: none; }
+  .grid.inventory .c-where { order: 4; flex-basis: 100%; font-size: 13px; }
+  .grid.inventory .c-where .headed { display: inline; margin-left: 8px; }
+  .grid.inventory .c-qty { order: 5; text-align: left; }
+  .grid.inventory .c-qty .stepper button { min-height: 40px; min-width: 40px; }
+  .grid.inventory .row-links { order: 6; display: flex; gap: 18px; margin-left: auto; }
+  .grid.inventory .row-links .link { min-height: 40px; }
+  .grid .row-links .link + .link { margin-left: 0; }
+  .inv-more { flex-wrap: wrap; }
+  .put-away-groups li button { grid-column: 2; justify-self: end; }
+}

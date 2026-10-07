@@ -65,7 +65,7 @@ export function Counts({ locations }: { locations: StoreLocation[] }) {
         </label>
         <button type="submit">Start count</button>
       </form>
-      <div className="table-wrap">
+      <div className="table-wrap scroll">
         <table className="grid">
           <thead><tr><th>Counting</th><th>Started</th><th>Status</th><th className="r">Counted</th></tr></thead>
           <tbody>
@@ -123,7 +123,7 @@ export function CountDetail({ me }: { me: Me }) {
         <p className="muted">{report.missing} missing · {report.extra} extra · value change {report.valueChange < 0 ? `−${money(-report.valueChange)}` : `+${money(report.valueChange)}`}</p>
         <button className="link" onClick={() => setOnlyChanges(!onlyChanges)}>{onlyChanges ? 'Show every card' : 'Show only differences'}</button>
       </div>
-      <div className="table-wrap">
+      <div className="table-wrap scroll">
         <table className="grid">
           <thead><tr><th>Card</th><th>Where</th><th>Finish</th><th>Cond.</th><th className="r">Expected</th><th className="r">Counted</th><th className="r">Difference</th><th>Status</th></tr></thead>
           <tbody>

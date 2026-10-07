@@ -52,7 +52,7 @@ export function CardBoxStores() {
     <>
       {message && <p className="notice">{message}</p>}
       {error && <p className="error">{error}</p>}
-      <div className="table-wrap"><table className="grid">
+      <div className="table-wrap scroll"><table className="grid">
         <thead><tr><th>Store</th><th>Plan</th><th>Trial ends</th><th className="r">Trades</th><th className="r">Cards</th></tr></thead>
         <tbody>{stores.map(s => <CardBoxStoreRow key={`${s.id}:${s.name}`} store={s} trading={byCardBox.get(s.id)} run={run} busy={busy} />)}</tbody>
       </table></div>

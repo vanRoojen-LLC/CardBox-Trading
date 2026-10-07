@@ -86,7 +86,7 @@ function LocalAdmin({ onChange }: { onChange: () => Promise<void> }) {
       </div>
       {message && <p className="notice">{message}</p>}
       {error && <p className="error">{error}</p>}
-      <div className="table-wrap">
+      <div className="table-wrap scroll">
         <table className="grid">
           <thead><tr><th>Store</th><th>Owners</th><th>Plan</th><th>Trial ends</th><th className="r">People</th><th className="r">Locations</th><th className="r">Trades</th><th className="r">Cards</th><th>Created</th><th /></tr></thead>
           <tbody>

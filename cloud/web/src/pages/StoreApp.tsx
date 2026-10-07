@@ -49,39 +49,78 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
       setSwitching(false)
     }
   }
+  // The phone menu holds the less-used pages and the account controls; it closes whenever the page changes.
+  const [menuAt, setMenuAt] = useState<string | null>(null)
+  const menuOpen = menuAt === pathname
+  const setMenuOpen = (on: boolean) => setMenuAt(on ? pathname : null)
+  useEffect(() => {
+    if (!menuOpen) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuAt(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [menuOpen])
+  const secondary = ['/app/rates', '/app/staff', '/app/store', '/app/admin'].some(p => pathname.startsWith(p))
+  const account = (
+    <>
+      {me.stores.length > 1 ? (
+        <select className="register" aria-label="Switch store" disabled={switching} value={me.stores.find(s => s.current)?.tenantId}
+          onChange={e => switchStore(e.target.value)}>
+          {me.stores.map(s => <option key={s.tenantId} value={s.tenantId}>{s.name}</option>)}
+        </select>
+      ) : <strong>{me.store}</strong>}
+      {open.length > 1 && locationId && (
+        <select className="register" aria-label="This register's location" title="Trades taken on this device go to this location"
+          value={locationId} onChange={e => pickLocation(e.target.value)}>
+          {open.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+        </select>
+      )}
+      <span className="who-name">{me.name}</span>
+      <HelpFeedback />
+      <button className="small ghost" onClick={signOut}>Sign out</button>
+    </>
+  )
   const trialDays = Math.max(0, Math.ceil((new Date(me.trialEndsAt).getTime() - Date.now()) / 86_400_000))
   return (
     <>
-      <header className="topbar">
+      <header className="topbar app">
         <NavLink to="/app/trade" className="brand"><Mark /><Wordmark /></NavLink>
+        <span className="topbar-store">{me.stores.find(s => s.current)?.name ?? me.store}
+          {open.length > 1 && locationId && <span className="muted"> · {open.find(l => l.id === locationId)?.name}</span>}</span>
+        {/* On phones the four counter pages stay as tabs and everything else lives under More. */}
         <nav className="tabs" aria-label="Main">
-          <NavLink to="/app/trade">New trade</NavLink>
-          <NavLink to="/app/price">Price check</NavLink>
+          <NavLink to="/app/trade"><span className="long">New trade</span><span className="short">Trade</span></NavLink>
+          <NavLink to="/app/price"><span className="long">Price check</span><span className="short">Prices</span></NavLink>
           <NavLink to="/app/history">History</NavLink>
           <NavLink to="/app/inventory">Inventory</NavLink>
-          <NavLink to="/app/rates">Buy rates</NavLink>
-          <NavLink to="/app/staff">Team</NavLink>
-          <NavLink to="/app/store">Store</NavLink>
-          {me.admin && <NavLink to="/app/admin">Admin</NavLink>}
+          <NavLink to="/app/rates" className="wide-only">Buy rates</NavLink>
+          <NavLink to="/app/staff" className="wide-only">Team</NavLink>
+          <NavLink to="/app/store" className="wide-only">Store</NavLink>
+          {me.admin && <NavLink to="/app/admin" className="wide-only">Admin</NavLink>}
+          <button type="button" className={`more-tab${secondary || menuOpen ? ' active' : ''}`} aria-expanded={menuOpen} aria-controls="app-menu"
+            onClick={() => setMenuOpen(!menuOpen)}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              {menuOpen ? <path d="M6 6l12 12M18 6L6 18" /> : <path d="M4 7h16M4 12h16M4 17h16" />}
+            </svg>More</button>
         </nav>
-        <div className="who">
-          {me.stores.length > 1 ? (
-            <select className="register" aria-label="Switch store" disabled={switching} value={me.stores.find(s => s.current)?.tenantId}
-              onChange={e => switchStore(e.target.value)}>
-              {me.stores.map(s => <option key={s.tenantId} value={s.tenantId}>{s.name}</option>)}
-            </select>
-          ) : <strong>{me.store}</strong>}
-          {open.length > 1 && locationId && (
-            <select className="register" aria-label="This register's location" title="Trades taken on this device go to this location"
-              value={locationId} onChange={e => pickLocation(e.target.value)}>
-              {open.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-            </select>
-          )}
-          <span className="who-name">{me.name}</span>
-          <HelpFeedback />
-          <button className="small ghost" onClick={signOut}>Sign out</button>
-        </div>
+        <div className="who">{account}</div>
       </header>
+      {menuOpen && (
+        <>
+          <div className="menu-scrim" onClick={() => setMenuOpen(false)} />
+          <div className="app-menu" id="app-menu" role="dialog" aria-label="More">
+            <nav className="app-menu-links" aria-label="More pages">
+              <NavLink to="/app/rates">Buy rates</NavLink>
+              <NavLink to="/app/staff">Team</NavLink>
+              <NavLink to="/app/store">Store</NavLink>
+              {me.admin && <NavLink to="/app/admin">Admin</NavLink>}
+            </nav>
+            <div className="app-menu-account">
+              <span className="muted small">Signed in as {me.name}</span>
+              {account}
+            </div>
+          </div>
+        </>
+      )}
       {switchError && <div className="banner error" role="alert">{switchError}</div>}
       {me.planStatus === 'trial' && me.entitled && <div className="banner">Free trial: {trialDays} days left.</div>}
       <main className={pathname.startsWith('/app/trade') || pathname.startsWith('/app/history') || pathname.startsWith('/app/inventory') || pathname.startsWith('/app/admin') ? 'page wide' : 'page'}>

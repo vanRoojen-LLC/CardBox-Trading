@@ -59,7 +59,7 @@ export default function Rates({ me }: { me: Me }) {
   }
 
   return (
-    <section>
+    <section className="rates">
       <h1>Buy rates</h1>
       <p className="lede">A card's offer uses the row with the highest threshold below its value. Keep a $0 row for everything else.</p>
       {rules === null ? <p className="muted">Loading…</p> : (
