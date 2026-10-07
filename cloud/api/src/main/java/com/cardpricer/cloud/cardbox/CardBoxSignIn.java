@@ -25,8 +25,12 @@ public class CardBoxSignIn {
     /** One store role from CardBox. */
     public record StoreRole(String storeId, String storeName, String role) {}
 
-    /** What CardBox said about the person. {@code known} is false when CardBox has no account for them (403). */
-    public record Roles(boolean known, boolean platformOwner, List<StoreRole> stores) {}
+    /**
+     * What CardBox said about the person. {@code known} is false when CardBox has no account for them (403).
+     * {@code preview}: they are on CardBox's Preview list (a platform owner, or given preview_access), which decides
+     * preview games here exactly as it decides Preview segments on CardBox.
+     */
+    public record Roles(boolean known, boolean platformOwner, boolean preview, List<StoreRole> stores) {}
 
     /** Sign-in can't go on; the message is shown on the sign-in page. */
     public static class Refused extends Exception {
@@ -66,7 +70,7 @@ public class CardBoxSignIn {
         Roles roles;
         if (result.status() == 403) {
             // No CardBox account and CardBox's signup rule doesn't allow one: a plain user with no store.
-            roles = new Roles(false, false, List.of());
+            roles = new Roles(false, false, false, List.of());
         } else if (result.ok()) {
             roles = parse(result.body());
         } else {
@@ -75,19 +79,23 @@ public class CardBoxSignIn {
         }
         Instant expires = identity.accessTokenExpiresAt() != null ? identity.accessTokenExpiresAt()
                 : Instant.now().plus(Duration.ofHours(1));
-        tokens.save(identity.sub(), identity.accessToken(), expires, roles.platformOwner());
+        tokens.save(identity.sub(), identity.accessToken(), expires, roles.platformOwner(), roles.preview());
         String name = identity.name() == null || identity.name().equalsIgnoreCase(email) ? email.split("@")[0] : identity.name();
         return transaction.execute(status -> copyRoles(identity.sub(), email, name.trim(), roles));
     }
 
     /**
      * Reads CardBox's roles answer (partner sign-in and account/roles):
-     * {@code {"roles": ["user", "platform_owner", ...], "stores": [{"id", "name", "slug", "role"}]}},
+     * {@code {"roles": ["user", "platform_owner", "preview_access", ...], "stores": [{"id", "name", "slug", "role"}]}},
      * with one {@code stores} entry per store role.
      */
     static Roles parse(JsonNode body) {
         boolean platformOwner = false;
-        for (JsonNode role : body.path("roles")) platformOwner |= "platform_owner".equals(role.asText());
+        boolean previewAccess = false;
+        for (JsonNode role : body.path("roles")) {
+            platformOwner |= "platform_owner".equals(role.asText());
+            previewAccess |= "preview_access".equals(role.asText());
+        }
         // A person who is both manager and employee of a store counts as its manager.
         Map<String, StoreRole> byStore = new LinkedHashMap<>();
         for (JsonNode store : body.path("stores")) {
@@ -101,7 +109,7 @@ public class CardBoxSignIn {
             StoreRole previous = byStore.get(id);
             if (previous == null || "owner".equals(local)) byStore.put(id, new StoreRole(id, store.path("name").asText(""), local));
         }
-        return new Roles(true, platformOwner, List.copyOf(byStore.values()));
+        return new Roles(true, platformOwner, platformOwner || previewAccess, List.copyOf(byStore.values()));
     }
 
     private Optional<UUID> copyRoles(String sub, String email, String name, Roles roles) {

@@ -61,8 +61,9 @@ public class TradeController {
                                            HttpServletRequest request) {
         if (q.trim().length() < 2) throw ApiException.badRequest("Type at least 2 characters");
         if (q.length() > 100) throw ApiException.badRequest("Search is too long");
-        // A platform owner can also trade and stock the preview games, to try them before stores see them.
-        boolean previews = CurrentUser.of(request).admin();
+        // People on the Preview list (shared with CardBox Club) can also trade and stock the preview games, to try them
+        // before every store sees them.
+        boolean previews = CurrentUser.of(request).preview();
         if (games.find(game, previews).isEmpty()) throw ApiException.badRequest("Unknown game");
         // A Star Wars: Unlimited printing in the same shape, under the id trades and stock know it by.
         if (game.equals("swu")) return swu.search(q, set.trim().toUpperCase(Locale.ROOT), 40).stream().map(card -> {

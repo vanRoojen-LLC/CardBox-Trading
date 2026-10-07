@@ -56,7 +56,7 @@ public class CardBoxController {
         CardBoxClient.Result result = relay.call(user, method, "/api/" + path + query, body);
         if ("account/roles".equals(path)) {
             // Keep the Admin tab in step with CardBox between sign-ins.
-            tokens.setPlatformOwner(user.auth0Sub(), CardBoxSignIn.parse(result.body()).platformOwner());
+            tokens.setRoles(user.auth0Sub(), CardBoxSignIn.parse(result.body()));
         }
         // A store renamed on CardBox shows its new name here straight away, not only after its people sign in again.
         if ("account/roles".equals(path) || path.equals("stores") || path.startsWith("stores/")) storeNames.adoptFrom(result.body());

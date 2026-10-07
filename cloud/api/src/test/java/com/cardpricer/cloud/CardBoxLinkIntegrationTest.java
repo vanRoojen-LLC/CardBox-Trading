@@ -393,6 +393,41 @@ class CardBoxLinkIntegrationTest {
     }
 
     @Test
+    void cardBoxsPreviewListOpensThePreviewGames() throws Exception {
+        // Owner, 2026-10-07: one Preview list for Club and Trading, kept on CardBox as the preview_access role.
+        jdbc.update("INSERT INTO tcg_games (category_id, segment, name) VALUES (9901, 'preview-list-game', 'Preview List Game')");
+        jdbc.update("""
+                INSERT INTO tcg_products (category_id, product_id, sub_type, set_id, set_code, set_name, name)
+                VALUES (9901, 1, 'Normal', 1, 'PL1', 'Preview Set', 'Preview Card')""");
+        try {
+            String store = "cb-" + UUID.randomUUID();
+            var plain = signIn("auth0|" + UUID.randomUUID(), "p-" + UUID.randomUUID() + "@example.com",
+                    roles(storeRole("store_manager", store, "Plain Shop " + store))).cookie();
+            assertFalse(gameKeys(plain).contains("preview-list-game"), "a store off the list sees no previews");
+
+            var listed = signIn("auth0|" + UUID.randomUUID(), "l-" + UUID.randomUUID() + "@example.com",
+                    roles(Map.of("role", "preview_access"), storeRole("store_employee", store, "Plain Shop " + store)));
+            String token = lastAccessToken;
+            assertTrue(gameKeys(listed.cookie()).contains("preview-list-game"), "the Preview list sees preview games");
+            assertFalse(call("GET", "/api/auth/me", listed.cookie(), null).body().path("admin").asBoolean(),
+                    "Preview access is not the Admin tab");
+
+            // Taken off the list on CardBox: the next roles read here closes the previews again.
+            ROLES.put(token, roles(storeRole("store_employee", store, "Plain Shop " + store)));
+            assertEquals(200, call("GET", "/api/cardbox/account/roles", listed.cookie(), null).status());
+            assertFalse(gameKeys(listed.cookie()).contains("preview-list-game"));
+        } finally {
+            jdbc.update("DELETE FROM tcg_games WHERE category_id = 9901");
+        }
+    }
+
+    private List<String> gameKeys(String cookie) throws Exception {
+        var keys = new ArrayList<String>();
+        call("GET", "/api/app/games", cookie, null).body().path("games").forEach(g -> keys.add(g.path("key").asText()));
+        return keys;
+    }
+
+    @Test
     void cardBoxPlatformOwnersGetTheAdminTab() throws Exception {
         String store = "cb-" + UUID.randomUUID();
         var cookie = signIn("auth0|" + UUID.randomUUID(), "o-" + UUID.randomUUID() + "@example.com",

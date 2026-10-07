@@ -66,18 +66,21 @@ public class AuthFilter extends OncePerRequestFilter {
         var rows = jdbc.query("""
                 SELECT u.id, u.tenant_id, u.role, u.name, u.email, u.auth0_sub IS NOT NULL,
                        t.plan_status = 'active' OR (t.plan_status = 'trial' AND t.trial_ends_at > now()) AS entitled,
-                       coalesce(c.platform_owner, false), u.auth0_sub
+                       coalesce(c.platform_owner, false), u.auth0_sub, coalesce(c.preview, false)
                 FROM users u JOIN tenants t ON t.id = u.tenant_id LEFT JOIN cardbox_tokens c ON c.auth0_sub = u.auth0_sub
                 WHERE u.id = ? AND u.removed_at IS NULL
                 AND (NOT ? OR t.cardbox_store_id IS NOT NULL OR coalesce(c.platform_owner, false))""",
-                (rs, i) -> new Object[]{
-                        new CurrentUser(rs.getObject(1, UUID.class), rs.getObject(2, UUID.class), rs.getString(3),
-                                rs.getString(4), rs.getString(5),
-                                rs.getBoolean(6) && !ownerEmail.isEmpty() && ownerEmail.equalsIgnoreCase(rs.getString(5))
-                                        // With the link on, CardBox's platform_owner role (as of the last sign-in) counts too.
-                                        || cardbox && rs.getBoolean(8),
-                                rs.getString(9)),
-                        rs.getBoolean(7)},
+                (rs, i) -> {
+                    boolean admin = rs.getBoolean(6) && !ownerEmail.isEmpty() && ownerEmail.equalsIgnoreCase(rs.getString(5))
+                            // With the link on, CardBox's platform_owner role (as of the last sign-in) counts too.
+                            || cardbox && rs.getBoolean(8);
+                    // Preview follows CardBox's Preview list, the same list CardBox Club uses; owners are always on it.
+                    boolean preview = admin || cardbox && rs.getBoolean(10);
+                    return new Object[]{
+                            new CurrentUser(rs.getObject(1, UUID.class), rs.getObject(2, UUID.class), rs.getString(3),
+                                    rs.getString(4), rs.getString(5), admin, rs.getString(9), preview),
+                            rs.getBoolean(7)};
+                },
                 userId.get(), cardbox);
         if (rows.isEmpty()) {
             reject(response, 401, "Please sign in");

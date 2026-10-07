@@ -13,7 +13,8 @@ import java.util.Map;
 
 /**
  * The games a card search can look in. The free price check lists only games out of preview; a signed-in store sees
- * the same, and a platform owner also sees the preview games (every TCGTracking game, until the owner promotes it).
+ * the same, and people on CardBox's Preview list (platform owners, and everyone CardBox gave preview_access) also see
+ * the preview games (every TCGTracking game, until the owner promotes it).
  */
 @RestController
 public class GamesController {
@@ -31,7 +32,7 @@ public class GamesController {
 
     @GetMapping("/api/app/games")
     public Map<String, Object> appGames(HttpServletRequest request) {
-        return Map.of("games", view(games.list(CurrentUser.of(request).admin())));
+        return Map.of("games", view(games.list(CurrentUser.of(request).preview())));
     }
 
     private static List<Map<String, Object>> view(List<TcgGames.Game> list) {
