@@ -53,7 +53,7 @@ Everything lives in one resource group. The Azure resources, the jar (`occ-price
 
 | Resource | SKU | Purpose |
 |---|---|---|
-| Container App `occpricer-app` | Consumption, 0.5 vCPU / 1 GiB, scales to zero | Web client + API |
+| Container App `occpricer-app` | Consumption, 0.5 vCPU / 1 GiB, one replica always on | Web client + API |
 | Container Apps Job `occpricer-catalog-import` | Consumption, daily 10:30 UTC | Scryfall price import |
 | PostgreSQL Flexible Server | Burstable B1ms, 32 GB | Data |
 | Container Registry | Basic | Images, built with `az acr build` |
@@ -237,7 +237,7 @@ az containerapp hostname bind -g occ-pricer -n occpricer-app --hostname cardbox.
 
 The certificate names must stay `<hostname with dots as dashes>`, which is what the Bicep expects.
 
-Because the app scales to zero, the first request after an idle period waits for the JVM to start (roughly 10 to 20 seconds).
+The app keeps one replica running at all times. It used to scale to zero, and the first request after five idle minutes then waited about 30 seconds (scheduling, image pull, JVM start), which visitors saw as a hang and the CardBox status monitor reported as outages. An idle always-on replica is billed at the Container Apps idle rate.
 
 ## Not in the MVP yet
 

@@ -261,8 +261,10 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
           ]
         }
       ]
-      // Scales to zero when idle. One replica keeps the in-memory rate limiter meaningful; raise later.
-      scale: { minReplicas: 0, maxReplicas: 1, rules: [{ name: 'http', http: { metadata: { concurrentRequests: '50' } } }] }
+      // Always one replica. At zero, the first request after five idle minutes waited about 30 s (schedule, image
+      // pull, JVM start), so visitors saw a hang and the CardBox status probe (6 s) filed outages #892-#894 on
+      // 2026-10-07. One replica also keeps the in-memory rate limiter meaningful; raise maxReplicas later.
+      scale: { minReplicas: 1, maxReplicas: 1, rules: [{ name: 'http', http: { metadata: { concurrentRequests: '50' } } }] }
     }
   }
   dependsOn: [appPull, appSecrets, database, certificates]
