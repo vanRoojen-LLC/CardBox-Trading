@@ -26,8 +26,10 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * TCGplayer prices for SWU from TCGCSV, matched to {@code swu_cards} by the TCGplayer product id swu-db gives each
- * printing, and by finish: TCGplayer lists a foil either as the "Foil" price of its non-foil product (SOR through SEC)
+ * TCGplayer prices for SWU, read from TCGTracking's Open TCG API (openapi.tcgtracking.com) and, when that fails, from
+ * TCGCSV (tcgcsv.com); both re-host TCGplayer's own prices by product id and subtype, so either fills the same
+ * columns. The run's {@code catalog_imports.source} says which one served. Prices are matched to {@code swu_cards} by
+ * the TCGplayer product id swu-db gives each printing, and by finish: TCGplayer lists a foil either as the "Foil" price of its non-foil product (SOR through SEC)
  * or as its own product with only a "Foil" price (LAW on), so a foil printing reads "Foil" and every other printing
  * reads "Normal", never the other finish.
  */
@@ -49,6 +51,7 @@ public class SwuTcgplayerPrices {
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
     private final String base;
+    private final String trackingBase;
     private final String userAgent;
     private final long pauseMs;
     private final HttpClient http = HttpClient.newBuilder().proxy(ProxySelector.getDefault())
@@ -56,24 +59,70 @@ public class SwuTcgplayerPrices {
 
     public SwuTcgplayerPrices(JdbcTemplate jdbc, ObjectMapper mapper,
                               @Value("${app.swu.tcgcsv-base:https://tcgcsv.com}") String base,
+                              @Value("${app.tcgtracking.base:https://openapi.tcgtracking.com/v1}") String trackingBase,
                               @Value("${app.catalog.user-agent:OCCPricerCloud/0.1}") String userAgent,
                               @Value("${app.swu.pause-ms:250}") long pauseMs) {
         this.jdbc = jdbc;
         this.mapper = mapper;
         this.base = base.replaceAll("/+$", "");
+        this.trackingBase = trackingBase.replaceAll("/+$", "");
         this.userAgent = userAgent;
         this.pauseMs = pauseMs;
     }
 
     /**
-     * Every SWU group's prices, logged in {@code catalog_imports}. A group that fails is skipped (its cards keep their
-     * last price) and fails the run.
+     * Tonight's SWU prices: TCGTracking first, TCGCSV if TCGTracking fails. Each attempt is its own run in
+     * {@code catalog_imports}, its source the base URL that was read, so a fallback night shows as a failed TCGTracking
+     * run followed by a good TCGCSV one.
+     */
+    public int importPrices() throws IOException, InterruptedException {
+        try {
+            return importFromTcgTracking();
+        } catch (IOException | RuntimeException e) {
+            log.warn("TCGTracking SWU prices failed, falling back to TCGCSV: {}", e.toString());
+            return importFromTcgcsv();
+        }
+    }
+
+    /**
+     * Every SWU set's /pricing from TCGTracking (about 35 small static files, {@code pauseMs} apart). A set that fails
+     * fails the attempt, so the fallback reads a complete night from TCGCSV instead of mixing the two.
+     */
+    public int importFromTcgTracking() throws IOException, InterruptedException {
+        return logged(trackingBase, () -> {
+            Map<String, Map<String, Price>> prices = new HashMap<>();
+            Instant observed = null;
+            JsonNode sets = mapper.readTree(get(trackingBase, "/" + CATEGORY + "/sets")).path("sets");
+            if (sets.isEmpty()) throw new IOException("TCGTracking listed no SWU sets");
+            for (JsonNode set : sets) {
+                if (set.path("product_count").asInt(1) == 0) continue;
+                Thread.sleep(pauseMs);
+                JsonNode payload = mapper.readTree(get(trackingBase, "/" + CATEGORY + "/sets/" + set.path("id").asText() + "/pricing"));
+                prices.putAll(TcgTrackingCatalog.parsePricing(payload));
+                Instant updated = TcgTrackingCatalog.updated(payload).orElse(null);
+                if (updated != null && (observed == null || updated.isAfter(observed))) observed = updated;
+            }
+            return apply(prices, observed == null ? Instant.now() : observed);
+        });
+    }
+
+    /**
+     * Every SWU group's prices from TCGCSV, logged in {@code catalog_imports}. A group that fails is skipped (its cards
+     * keep their last price) and fails the run.
      */
     public int importFromTcgcsv() throws IOException, InterruptedException {
+        return logged(base, this::download);
+    }
+
+    private interface Download {
+        int run() throws IOException, InterruptedException;
+    }
+
+    private int logged(String source, Download download) throws IOException, InterruptedException {
         Long run = jdbc.queryForObject("INSERT INTO catalog_imports (source, game) VALUES (?, ?) RETURNING id",
-                Long.class, base, SwuCatalogImporter.GAME);
+                Long.class, source, SwuCatalogImporter.GAME);
         try {
-            int updated = download();
+            int updated = download.run();
             jdbc.update("UPDATE catalog_imports SET finished_at = now(), cards = ? WHERE id = ?", updated, run);
             return updated;
         } catch (IOException | RuntimeException e) {
@@ -154,6 +203,10 @@ public class SwuTcgplayerPrices {
     }
 
     private String get(String path) throws IOException, InterruptedException {
+        return get(base, path);
+    }
+
+    private String get(String base, String path) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder(URI.create(base + path)).timeout(Duration.ofMinutes(2))
                 .header("User-Agent", userAgent).GET().build();
         HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());

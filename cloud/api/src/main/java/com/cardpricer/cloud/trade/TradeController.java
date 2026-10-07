@@ -4,6 +4,8 @@ import com.cardpricer.cloud.auth.CurrentUser;
 import com.cardpricer.cloud.catalog.CatalogRepository;
 import com.cardpricer.cloud.catalog.PublicCardController;
 import com.cardpricer.cloud.catalog.SwuCatalogRepository;
+import com.cardpricer.cloud.catalog.TcgGames;
+import com.cardpricer.cloud.catalog.TcgProductRepository;
 import com.cardpricer.cloud.inventory.PutAway;
 import com.cardpricer.cloud.web.ApiException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -34,12 +36,16 @@ public class TradeController {
     private final TradeService trades;
     private final CatalogRepository catalog;
     private final SwuCatalogRepository swu;
+    private final TcgGames games;
+    private final TcgProductRepository tcg;
     private final JdbcTemplate jdbc;
     private final PutAway putAway;
 
-    public TradeController(TradeService trades, CatalogRepository catalog, SwuCatalogRepository swu, JdbcTemplate jdbc,
-                           PutAway putAway) {
+    public TradeController(TradeService trades, CatalogRepository catalog, SwuCatalogRepository swu, TcgGames games,
+                           TcgProductRepository tcg, JdbcTemplate jdbc, PutAway putAway) {
         this.trades = trades;
+        this.games = games;
+        this.tcg = tcg;
         this.putAway = putAway;
         this.catalog = catalog;
         this.swu = swu;
@@ -48,16 +54,22 @@ public class TradeController {
 
     @GetMapping("/cards")
     public List<Map<String, Object>> cards(@RequestParam("q") String q, @RequestParam(value = "set", defaultValue = "") String set,
-                                           @RequestParam(value = "game", defaultValue = "mtg") String game) {
+                                           @RequestParam(value = "game", defaultValue = "mtg") String game,
+                                           HttpServletRequest request) {
         if (q.trim().length() < 2) throw ApiException.badRequest("Type at least 2 characters");
         if (q.length() > 100) throw ApiException.badRequest("Search is too long");
+        // A platform owner can also trade and stock the preview games, to try them before stores see them.
+        boolean previews = CurrentUser.of(request).admin();
+        if (games.find(game, previews).isEmpty()) throw ApiException.badRequest("Unknown game");
         // A Star Wars: Unlimited printing in the same shape, under the id trades and stock know it by.
         if (game.equals("swu")) return swu.search(q, set.trim().toUpperCase(Locale.ROOT), 40).stream().map(card -> {
             Map<String, Object> view = PublicCardController.view(card);
             view.put("id", card.tradingId());
             return view;
         }).toList();
-        if (!game.equals("mtg")) throw ApiException.badRequest("Unknown game");
+        // Any other game is TCGTracking's; its rows already carry the card id trades and stock use.
+        if (!game.equals("mtg")) return tcg.search(games.categories(game, previews), q, set.trim().toUpperCase(Locale.ROOT), 40)
+                .stream().map(PublicCardController::view).toList();
         return catalog.search(q, set.trim().toUpperCase(Locale.ROOT), 40).stream().map(card -> {
             Map<String, Object> view = new HashMap<>();
             view.put("id", card.id());

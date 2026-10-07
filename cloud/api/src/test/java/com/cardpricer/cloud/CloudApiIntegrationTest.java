@@ -48,10 +48,35 @@ class CloudApiIntegrationTest {
     /** Authorization code -> the PKCE code_challenge it was issued for. */
     static final Map<String, String> CHALLENGES = new ConcurrentHashMap<>();
 
+    /**
+     * A stand-in for TCGTracking (under /v1) and TCGCSV (under /tcgplayer): serves {@link #FILES} with their ETags,
+     * answers 304 to a matching If-None-Match, 500 for {@link #FAILING} paths, and logs every request it gets as
+     * "path status".
+     */
+    static final HttpServer PRICES;
+    /** path -> {body, etag} */
+    static final Map<String, String[]> FILES = new ConcurrentHashMap<>();
+    static final java.util.Set<String> FAILING = ConcurrentHashMap.newKeySet();
+    static final List<String> REQUESTS = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+
     static {
         // Started before the Spring context; Testcontainers' Ryuk removes it when the JVM exits.
         POSTGRES.start();
         try {
+            PRICES = HttpServer.create(new java.net.InetSocketAddress("localhost", 0), 0);
+            PRICES.createContext("/", exchange -> {
+                String path = exchange.getRequestURI().getPath();
+                String[] file = FILES.get(path);
+                int status = FAILING.contains(path) ? 500 : file == null ? 404
+                        : file[1].equals(exchange.getRequestHeaders().getFirst("If-None-Match")) ? 304 : 200;
+                REQUESTS.add(path + " " + status);
+                byte[] body = status == 200 ? file[0].getBytes(java.nio.charset.StandardCharsets.UTF_8) : new byte[0];
+                if (file != null && status != 500) exchange.getResponseHeaders().add("ETag", file[1]);
+                exchange.sendResponseHeaders(status, status == 304 ? -1 : body.length);
+                if (body.length > 0) exchange.getResponseBody().write(body);
+                exchange.close();
+            });
+            PRICES.start();
             KEY = new RSAKeyGenerator(2048).keyID("test-key").generate();
             AUTH0 = HttpServer.create(new java.net.InetSocketAddress("localhost", 0), 0);
             AUTH0.createContext("/.well-known/jwks.json", exchange -> {
@@ -121,12 +146,26 @@ class CloudApiIntegrationTest {
         registry.add("app.auth0.client-id", () -> CLIENT_ID);
         registry.add("app.auth0.client-secret", () -> "test-secret");
         registry.add("app.owner-email", () -> OWNER_EMAIL);
+        registry.add("app.tcgtracking.base", () -> prices() + "/v1");
+        registry.add("app.tcgtracking.pause-ms", () -> "0");
+        registry.add("app.swu.tcgcsv-base", CloudApiIntegrationTest::prices);
+        registry.add("app.swu.pause-ms", () -> "0");
+    }
+
+    static String prices() {
+        return "http://localhost:" + PRICES.getAddress().getPort();
+    }
+
+    /** Serves {@code body} at {@code path}, its ETag a hash of the body so a changed file gets a new one. */
+    static void serve(String path, String body) {
+        FILES.put(path, new String[]{body, "\"" + Integer.toHexString(body.hashCode()) + "\""});
     }
 
     @LocalServerPort int port;
     @Autowired CatalogImporter importer;
     @Autowired SwuCatalogImporter swuImporter;
     @Autowired com.cardpricer.cloud.catalog.SwuTcgplayerPrices tcgplayerPrices;
+    @Autowired com.cardpricer.cloud.catalog.TcgTrackingCatalog tcgTracking;
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
     final ObjectMapper json = new ObjectMapper();
     final HttpClient http = HttpClient.newBuilder().proxy(HttpClient.Builder.NO_PROXY).build();
@@ -1143,5 +1182,256 @@ class CloudApiIntegrationTest {
         assertEquals("no-cache", cacheControl("/"));
         assertEquals("no-cache", cacheControl("/app/trades"));
         assertTrue(cacheControl("/assets/index-test.js").contains("immutable"));
+    }
+
+    // --- TCGTracking -------------------------------------------------------------------------------------------------
+
+    /** TCGTracking's SWU listing and one set's prices: Darth Vader's SOR product 540208 in both finishes. */
+    void serveSwuFromTcgTracking() {
+        serve("/v1/79/sets", """
+                {"category_id":79,"sets":[{"id":23405,"name":"Spark of Rebellion","abbreviation":"SOR","product_count":2},
+                                          {"id":23406,"name":"Empty","abbreviation":"EMP","product_count":0}]}""");
+        serve("/v1/79/sets/23405/pricing", """
+                {"set_id":23405,"updated":"2026-10-07T09:01:17-04:00","prices":{
+                 "540208":{"tcg":{"Normal":{"low":5,"market":6.45},"Foil":{"low":12,"market":14.15}}},
+                 "999999":{"tcg":{"Normal":{"low":1,"market":1.00}}}}}""");
+    }
+
+    String lastSwuPriceSource() {
+        return jdbc.queryForObject("SELECT source FROM catalog_imports WHERE game = 'star-wars-unlimited' AND error IS NULL"
+                + " ORDER BY id DESC LIMIT 1", String.class);
+    }
+
+    @Test
+    void swuPricesComeFromTcgTracking() throws Exception {
+        serveSwuFromTcgTracking();
+        FAILING.clear();
+        REQUESTS.clear();
+        try {
+            assertEquals(2, tcgplayerPrices.importPrices(), "Normal onto SOR-087, Foil onto SOR-087F");
+            assertEquals(prices() + "/v1", lastSwuPriceSource());
+            assertFalse(REQUESTS.contains("/v1/79/sets/23406/pricing 200"), "a set with no products is not asked");
+            assertTrue(REQUESTS.stream().noneMatch(r -> r.startsWith("/tcgplayer")), "TCGCSV is not needed");
+            var byId = new java.util.HashMap<String, JsonNode>();
+            searchSwu("vader").forEach(c -> byId.put(c.path("id").asText(), c));
+            assertEquals("6.45", byId.get("SOR-087").path("usd").asText());
+            assertEquals("14.15", byId.get("SOR-087F").path("usdFoil").asText());
+            assertEquals(java.time.OffsetDateTime.parse("2026-10-07T09:01:17-04:00").toInstant(),
+                    jdbc.queryForObject("SELECT tcgplayer_observed_at FROM swu_cards WHERE source_number = '087'", java.sql.Timestamp.class).toInstant(),
+                    "observed when TCGTracking last refreshed, not when we read it");
+        } finally {
+            jdbc.update("UPDATE swu_cards SET tcgplayer_market = NULL, tcgplayer_low = NULL, tcgplayer_observed_at = NULL, price_disagrees = false");
+        }
+    }
+
+    @Test
+    void swuPricesFallBackToTcgcsvWhenTcgTrackingFails() throws Exception {
+        serveSwuFromTcgTracking();
+        FAILING.clear();
+        FAILING.add("/v1/79/sets/23405/pricing");
+        serve("/last-updated.txt", "2026-10-07T20:05:41+0000");
+        serve("/tcgplayer/79/groups", "{\"results\":[{\"groupId\":23405,\"abbreviation\":\"SOR\"}]}");
+        serve("/tcgplayer/79/23405/prices", """
+                {"results":[{"productId":540208,"lowPrice":5.00,"marketPrice":7.00,"subTypeName":"Normal"}]}""");
+        try {
+            assertEquals(1, tcgplayerPrices.importPrices());
+            assertEquals(prices(), lastSwuPriceSource(), "TCGCSV served");
+            assertTrue(jdbc.queryForObject("SELECT error FROM catalog_imports WHERE game = 'star-wars-unlimited' AND source = ?"
+                    + " ORDER BY id DESC LIMIT 1", String.class, prices() + "/v1").contains("HTTP 500"), "the failed attempt is logged");
+            assertEquals(0, new java.math.BigDecimal("7").compareTo(searchSwu("SOR 87").get(0).path("usd").decimalValue()));
+        } finally {
+            FAILING.clear();
+            jdbc.update("UPDATE swu_cards SET tcgplayer_market = NULL, tcgplayer_low = NULL, tcgplayer_observed_at = NULL, price_disagrees = false");
+        }
+    }
+
+    /** Whether the fake TCGTracking catalog has been synced (shared by the tests below, which need its games). */
+    private boolean tcgSynced;
+
+    /**
+     * A small TCGTracking: Pokemon and Pokemon Japan (one segment, two languages), a game named only by its slug, and
+     * categories that must be skipped (Magic and SWU are native, sleeves are no game, Architect has no products).
+     * The first run has no time to read sets; the second reads what it can, the third set failing.
+     */
+    synchronized void syncTcg() throws Exception {
+        if (tcgSynced) return;
+        FAILING.clear();
+        serve("/v1/categories", """
+                {"categories":[{"id":1,"name":"Magic: The Gathering","product_count":100},
+                 {"id":3,"name":"Pokemon","display_name":"Pokemon","product_count":2},
+                 {"id":85,"name":"Pokemon Japan","product_count":1},
+                 {"id":31,"name":"Card Sleeves","product_count":10},
+                 {"id":55,"name":"Architect TCG","product_count":0},
+                 {"id":79,"name":"Star Wars: Unlimited","product_count":9},
+                 {"id":99,"name":"Test Game: Deluxe!","product_count":1}]}""");
+        serve("/v1/3/sets", """
+                {"category_id":3,"sets":[
+                 {"id":100,"name":"Base Set","abbreviation":"bs","published_on":"1999-01-09","product_count":2,
+                  "products_modified":"2026-10-01T08:00:00-04:00","pricing_modified":"2026-10-06T12:00:00-04:00"},
+                 {"id":101,"name":"Announced","abbreviation":"AN","product_count":0,"products_modified":null,"pricing_modified":null}]}""");
+        serve("/v1/85/sets", """
+                {"category_id":85,"sets":[{"id":200,"name":"Japanese Base","abbreviation":"JBS","product_count":1,
+                  "products_modified":"2026-10-01T08:00:00-04:00","pricing_modified":"2026-10-06T12:00:00-04:00"}]}""");
+        serve("/v1/99/sets", """
+                {"category_id":99,"sets":[{"id":300,"name":"First","abbreviation":"T1","product_count":1,
+                  "products_modified":"2026-10-01T08:00:00-04:00","pricing_modified":"2026-10-06T12:00:00-04:00"}]}""");
+        serve("/v1/3/sets/100/cards", """
+                {"set_id":100,"set_name":"Base Set","set_abbr":"BS","products":[
+                 {"id":1001,"name":"Pikachu","number":"058/102","rarity":"Common","image_url":"https://cdn.tcgtracking.com/product/1001_200w.jpg",
+                  "cardmarket_id":11,"cardtrader_id":null},
+                 {"id":1002,"name":"Charizard","number":"4/102","rarity":"Holo Rare","image_url":"https://cdn.tcgtracking.com/product/1002_200w.jpg"}]}""");
+        serve("/v1/3/sets/100/pricing", """
+                {"set_id":100,"updated":"2026-10-07T09:01:17-04:00","prices":{
+                 "1001":{"tcg":{"Normal":{"low":1,"market":1.50},"Reverse Holofoil":{"low":3,"market":4.25}}},
+                 "1002":{"tcg":{"Holofoil":{"low":300,"market":350.00}}}}}""");
+        serve("/v1/85/sets/200/cards", """
+                {"set_id":200,"set_name":"Japanese Base","set_abbr":"JBS","products":[{"id":2001,"name":"Pikachu","number":"001","rarity":"None"}]}""");
+        serve("/v1/85/sets/200/pricing", """
+                {"set_id":200,"updated":"2026-10-07T09:01:17-04:00","prices":{"2001":{"tcg":{"Normal":{"market":2.00}}}}}""");
+        FAILING.add("/v1/99/sets/300/cards");
+
+        REQUESTS.clear();
+        var first = tcgTracking.sync(java.time.Duration.ZERO);
+        assertEquals(0, first.setsRead(), "no time for sets");
+        assertEquals(3, first.left(), "the empty set is never due");
+        assertEquals(List.of("/v1/3/sets 200", "/v1/85/sets 200", "/v1/99/sets 200", "/v1/categories 200"), REQUESTS.stream().sorted().toList());
+        assertEquals(List.of(3, 85, 99), jdbc.queryForList("SELECT category_id FROM tcg_games ORDER BY 1", Integer.class),
+                "native games, accessories and empty categories are skipped");
+        assertEquals(List.of("pokemon", "pokemon", "test-game-deluxe"),
+                jdbc.queryForList("SELECT segment FROM tcg_games ORDER BY category_id", String.class));
+        assertEquals("ja", jdbc.queryForObject("SELECT language FROM tcg_games WHERE category_id = 85", String.class));
+        assertNull(jdbc.queryForObject("SELECT error FROM catalog_imports WHERE game = 'tcgtracking' ORDER BY id DESC LIMIT 1", String.class),
+                "running out of time is not an error");
+
+        REQUESTS.clear();
+        var second = tcgTracking.sync(java.time.Duration.ofMinutes(5));
+        assertEquals(2, second.setsRead());
+        assertEquals(1, second.setsFailed());
+        assertTrue(REQUESTS.containsAll(List.of("/v1/3/sets 304", "/v1/85/sets 304", "/v1/99/sets 304")), "listings are conditional: " + REQUESTS);
+        assertNotNull(jdbc.queryForObject("SELECT last_error FROM tcg_sets WHERE set_id = 300", String.class));
+        assertTrue(jdbc.queryForObject("SELECT error FROM catalog_imports WHERE game = 'tcgtracking' ORDER BY id DESC LIMIT 1", String.class)
+                .contains("99/300"));
+        tcgSynced = true;
+    }
+
+    @Test
+    void tcgTrackingImportsProductsBySubtypeIncrementallyAndGently() throws Exception {
+        syncTcg();
+        var rows = jdbc.queryForList("SELECT product_id, sub_type, set_code, market, image_url FROM tcg_products WHERE category_id = 3"
+                + " ORDER BY product_id, sub_type");
+        assertEquals(3, rows.size(), rows.toString());
+        assertEquals(List.of("Normal", "Reverse Holofoil"), List.of(rows.get(0).get("sub_type"), rows.get(1).get("sub_type")));
+        assertEquals("BS", rows.get(0).get("set_code"));
+        assertEquals("https://cdn.tcgtracking.com/product/1001_1000w.jpg", rows.get(0).get("image_url"), "the 1000px image is kept");
+        assertEquals("Holofoil", rows.get(2).get("sub_type"), "Charizard's unpriced Normal placeholder is gone; it only sells as Holofoil");
+        assertEquals(0, new java.math.BigDecimal("350.00").compareTo((java.math.BigDecimal) rows.get(2).get("market")));
+        var charizard = jdbc.queryForMap("SELECT usd, usd_foil, game, lang, released_at, treatments::text FROM inventory_cards WHERE name = 'Charizard'");
+        assertNull(charizard.get("usd"));
+        assertEquals(0, new java.math.BigDecimal("350.00").compareTo((java.math.BigDecimal) charizard.get("usd_foil")), "Holofoil is foil");
+        assertEquals("pokemon", charizard.get("game"));
+        assertEquals("{holofoil}", charizard.get("treatments"));
+        assertEquals("ja", jdbc.queryForObject("SELECT lang FROM inventory_cards WHERE set_code = 'JBS'", String.class));
+
+        // The failed set is retried; nothing else changed, so nothing else is read.
+        FAILING.clear();
+        serve("/v1/99/sets/300/cards", """
+                {"set_id":300,"set_name":"First","set_abbr":"T1","products":[{"id":3001,"name":"Deluxe Hero","number":"1"}]}""");
+        serve("/v1/99/sets/300/pricing", "{\"set_id\":300,\"updated\":\"2026-10-07T09:01:17-04:00\",\"prices\":{}}");
+        REQUESTS.clear();
+        var third = tcgTracking.sync(java.time.Duration.ofMinutes(5));
+        assertEquals(new com.cardpricer.cloud.catalog.TcgTrackingCatalog.Result(1, 1, 0, 0, 6), third);
+        assertEquals(List.of("/v1/3/sets 304", "/v1/85/sets 304", "/v1/99/sets 304", "/v1/99/sets/300/cards 200",
+                "/v1/99/sets/300/pricing 200", "/v1/categories 200"), REQUESTS.stream().sorted().toList());
+        assertNull(jdbc.queryForObject("SELECT last_error FROM tcg_sets WHERE set_id = 300", String.class));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM tcg_products WHERE category_id = 99 AND sub_type = 'Normal' AND market IS NULL", Integer.class),
+                "a product with no price yet still has its Normal row");
+
+        // The listing says Base Set's prices moved, but the file is the same: it is asked for conditionally, and a 304 is
+        // read as unchanged, so the next run does not ask again.
+        serve("/v1/3/sets", FILES.get("/v1/3/sets")[0].replace("2026-10-06T12:00:00-04:00", "2026-10-07T09:30:00-04:00"));
+        REQUESTS.clear();
+        tcgTracking.sync(java.time.Duration.ofMinutes(5));
+        assertTrue(REQUESTS.contains("/v1/3/sets/100/pricing 304"), REQUESTS.toString());
+        assertFalse(REQUESTS.stream().anyMatch(r -> r.contains("/cards")), REQUESTS.toString());
+        REQUESTS.clear();
+        tcgTracking.sync(java.time.Duration.ofMinutes(5));
+        assertEquals(4, REQUESTS.size(), "only the categories and the three listings: " + REQUESTS);
+        assertEquals(0, new java.math.BigDecimal("4.25").compareTo(jdbc.queryForObject(
+                "SELECT market FROM tcg_products WHERE product_id = 1001 AND sub_type = 'Reverse Holofoil'", java.math.BigDecimal.class)));
+    }
+
+    @Test
+    void previewGamesStayOffThePublicPriceCheck() throws Exception {
+        syncTcg();
+        var games = call("GET", "/api/public/games", null, null);
+        assertEquals(200, games.status(), games.raw());
+        var keys = new java.util.ArrayList<String>();
+        games.body().path("games").forEach(g -> keys.add(g.path("key").asText()));
+        assertEquals(List.of("mtg", "swu"), keys, "TCGTracking games start as previews");
+        assertEquals(400, call("GET", "/api/public/cards?game=pokemon&q=pikachu", null, null).status());
+        assertEquals(400, call("GET", "/api/public/cards/elsewhere?game=pokemon&q=pikachu", null, null).status());
+        String store = signup("Preview Store", "preview-" + UUID.randomUUID() + "@example.com");
+        assertEquals(2, call("GET", "/api/app/games", store, null).body().path("games").size(), "a store sees no previews either");
+        assertEquals(400, call("GET", "/api/app/cards?game=pokemon&q=pikachu", store, null).status());
+
+        // Out of preview, Pokemon (English) is public; Pokemon Japan, still a preview, stays out of its search.
+        jdbc.update("UPDATE tcg_games SET preview = false WHERE category_id = 3");
+        try {
+            var publicGames = call("GET", "/api/public/games", null, null).body().path("games");
+            assertEquals(3, publicGames.size());
+            assertEquals("pokemon", publicGames.get(2).path("key").asText());
+            assertFalse(publicGames.get(2).path("preview").asBoolean());
+            var r = call("GET", "/api/public/cards?game=pokemon&q=pikachu", null, null);
+            assertEquals(200, r.status(), r.raw());
+            assertEquals("TCGplayer via TCGTracking", r.body().path("source").asText());
+            var cards = r.body().path("cards");
+            assertEquals(2, cards.size(), "Normal and Reverse Holofoil, not the Japanese printing");
+            assertEquals(0, new java.math.BigDecimal("1.50").compareTo(cards.get(0).path("usd").decimalValue()));
+            assertEquals("058/102", cards.get(0).path("number").asText());
+            assertEquals("Reverse Holofoil", cards.get(1).path("variant").asText());
+            assertEquals(0, new java.math.BigDecimal("4.25").compareTo(cards.get(1).path("usdFoil").decimalValue()));
+            assertEquals("https://www.tcgplayer.com/product/1001", cards.get(1).path("url").asText());
+            assertEquals(2, call("GET", "/api/public/cards?game=pokemon&q=bs%2058", null, null).body().path("cards").size(),
+                    "set code and number without its zero padding or total");
+            var elsewhere = call("GET", "/api/public/cards/elsewhere?game=mtg&q=charizard", null, null).body().path("games");
+            assertEquals("pokemon", elsewhere.get(0).path("game").asText(), "a public game is suggested");
+        } finally {
+            jdbc.update("UPDATE tcg_games SET preview = true");
+        }
+    }
+
+    @Test
+    void platformOwnerSeesPreviewGamesAndTradesThem() throws Exception {
+        syncTcg();
+        String admin = platformOwner();
+        var games = call("GET", "/api/app/games", admin, null);
+        assertEquals(200, games.status(), games.raw());
+        var list = games.body().path("games");
+        assertEquals("mtg", list.get(0).path("key").asText());
+        assertEquals("swu", list.get(1).path("key").asText());
+        // Pokemon is one game across both languages, named after its first category. (The test game shows up only
+        // once a set of it has been read, which depends on the order the tests run in.)
+        assertEquals("pokemon", list.get(2).path("key").asText());
+        assertEquals("Pokemon", list.get(2).path("name").asText());
+        assertTrue(list.get(2).path("preview").asBoolean());
+        int pokemon = 0;
+        for (var g : list) if (g.path("key").asText().equals("pokemon")) pokemon++;
+        assertEquals(1, pokemon);
+
+        var found = call("GET", "/api/app/cards?game=pokemon&q=pikachu", admin, null);
+        assertEquals(200, found.status(), found.raw());
+        assertEquals(3, found.body().size(), "both Pokemon categories: " + found.raw());
+        var charizard = call("GET", "/api/app/cards?game=pokemon&q=charizard", admin, null).body().get(0);
+        assertEquals("Holofoil", charizard.path("variant").asText());
+        String id = charizard.path("id").asText();
+        var quote = call("POST", "/api/app/trades/quote", admin, Map.of("payment", "credit",
+                "lines", List.of(Map.of("cardId", id, "finish", "foil", "condition", "NM", "quantity", 1))));
+        assertEquals(200, quote.status(), quote.raw());
+        assertEquals(0, new java.math.BigDecimal("350.00").compareTo(quote.body().path("lines").get(0).path("marketUnit").decimalValue()));
+        String main = call("GET", "/api/app/store", admin, null).body().path("locations").get(0).path("id").asText();
+        assertEquals(200, call("POST", "/api/app/inventory", admin, Map.of("cardId", id, "finish", "foil", "condition", "NM",
+                "quantity", 1, "locationId", main)).status());
+        var stock = call("GET", "/api/app/inventory?q=charizard", admin, null).body().path("items").get(0);
+        assertEquals("pokemon", stock.path("game").asText());
     }
 }
