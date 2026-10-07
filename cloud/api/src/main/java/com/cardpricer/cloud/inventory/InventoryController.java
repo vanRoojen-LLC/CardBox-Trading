@@ -223,9 +223,12 @@ public class InventoryController {
             for (UUID at = (UUID) row.get("storageId"); to != null && at != null; at = parents.get(at))
                 if (at.equals(to)) { destinations.remove((UUID) row.get("id")); break; }
         }
+        // Synced lines carry their CardBox photos, so the page shows them in the row without another request.
+        var scans = clubSync.scanPhotos(tenant, shown.stream().filter(r -> r.get("clubLinkId") != null).map(r -> (UUID) r.get("id")).toList());
         List<Map<String, Object>> items = new ArrayList<>();
         for (var row : shown) {
             Map<String, Object> item = new HashMap<>(row);
+            item.put("scans", scans.getOrDefault((UUID) row.get("id"), List.of()));
             item.put("path", row.get("storageId") == null ? List.of() : paths.getOrDefault((UUID) row.get("storageId"), List.of()));
             UUID to = destinations.get((UUID) row.get("id"));
             item.put("destinationId", to);

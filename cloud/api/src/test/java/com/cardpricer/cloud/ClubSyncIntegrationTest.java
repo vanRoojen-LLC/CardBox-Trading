@@ -506,6 +506,15 @@ class ClubSyncIntegrationTest {
         assertEquals(1, scans.size());
         assertEquals("https://images.cardbox.club/scan/s1.jpg", scans.get(0).path("image").asText());
         assertTrue(scans.get(0).path("details").asText().contains("12/50"));
+        // The inventory list carries the same photos in each row, and leaves out scans without one.
+        for (var row : call("GET", "/api/app/inventory", null, owner, null).body().path("items")) {
+            var photos = row.path("scans");
+            if (row.path("id").asText().equals(inBox)) {
+                assertEquals(1, photos.size());
+                assertEquals("https://images.cardbox.club/scan/s1.jpg", photos.get(0).path("image").asText());
+                assertTrue(photos.get(0).path("details").asText().contains("12/50"));
+            } else assertEquals(0, photos.size(), row.toString());
+        }
         String atTarget = jdbc.queryForObject("SELECT id::text FROM inventory_items WHERE club_link_id IS NOT NULL AND storage_id IS NULL AND tenant_id = ?",
                 String.class, tenant);
         assertTrue(call("GET", "/api/app/club-links/scans/" + atTarget, null, owner, null).body().get(0).path("image").isNull(),

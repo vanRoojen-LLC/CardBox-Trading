@@ -6,6 +6,7 @@ import SearchIcon from '../SearchIcon'
 import { FACETS, TREATMENTS, ruleText, titleCase, valueLabel, type Conditions, type Facets } from '../cardDetails'
 import { ColorPips, FacetMenu, PriceMenu } from '../cardFilters'
 import ClubCollections from './ClubCollections'
+import CardLightbox, { type Slide } from '../CardLightbox'
 
 interface Item {
   id: string; locationId: string; location: string; storageId: string | null; cardId: string
@@ -20,7 +21,10 @@ interface Item {
   clubLinkId: string | null; clubCollection: string | null
   /** The import batch the cards came in with (a CardBox upload or scan session), when there is one. */
   batchId: string | null; batchName: string | null
+  /** CardBox photos of the cards on a synced line, first shown in the row. */
+  scans: Scan[]
 }
+interface Scan { image: string; quantity: number; details: string | null }
 interface Page { items: Item[]; more: boolean; offset: number; cards: number; lines: number; value: Money }
 /** A search the store saved by name; everyone on the store sees it. */
 interface SavedView { id: string; name: string; filters: Filters; sort: string; dir: string; by: string | null; canRemove: boolean }
@@ -429,7 +433,7 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
                   <InventoryRow item={item} several={several} locations={open} spots={spots}
                     selected={allMatching || selected.has(item.id)} onSelect={shift => toggle(index, shift)}
                     moving={moving === item.id} onMove={() => setMoving(moving === item.id ? null : item.id)}
-                    onQuantity={n => setQuantity(item, n)} onError={setError}
+                    onQuantity={n => setQuantity(item, n)}
                     onMoved={body => { setMoving(null); change(api(`/api/app/inventory/${item.id}/move`, { method: 'POST', body })) }} />
                 </Fragment>
               )
@@ -601,6 +605,33 @@ function scanDetails(details: string | null): string {
   } catch { return '' }
 }
 
+/** What the lightbox steps through for a line: each CardBox scan, then the catalog picture of the printing. */
+function slidesOf(item: Item): Slide[] {
+  const card = `${item.name} · ${item.set.toUpperCase()} #${item.number}`
+  const slides: Slide[] = (item.scans ?? []).map((s, i, all) => ({
+    image: s.image,
+    caption: [card, all.length > 1 ? `scan ${i + 1}` : 'scan', s.quantity > 1 ? `×${s.quantity}` : '', scanDetails(s.details)]
+      .filter(Boolean).join(' · '),
+  }))
+  if (item.image) slides.push({ image: item.image, caption: `${card} · catalog image` })
+  return slides
+}
+
+/** The line's first scan (or the catalog picture when it has none) in the row; a click opens the lightbox. */
+function RowThumb({ item, onOpen }: { item: Item; onOpen: () => void }) {
+  const scans = item.scans ?? []
+  const first = scans[0]?.image ?? item.image
+  if (!first) return <span className="row-thumb noimg" aria-hidden="true" />
+  return (
+    <button type="button" className={`row-thumb${scans.length ? ' scanned' : ''}`} onClick={onOpen}
+            aria-label={`Enlarge ${scans.length ? 'the scans' : 'the picture'} of ${item.name}`}
+            title={scans.length > 1 ? `${scans.length} scans. Click to inspect.` : 'Click to inspect'}>
+      <img src={first} alt="" loading="lazy" />
+      {scans.length > 1 && <span className="row-thumb-count">{scans.length}</span>}
+    </button>
+  )
+}
+
 /**
  * The +/- buttons count up locally and send one total once the clicks stop: saving replaces the line, so each click
  * sending its own count from the row as last loaded used to lose quick clicks.
@@ -635,15 +666,13 @@ function QuantityStepper({ item, onQuantity }: { item: Item; onQuantity: (n: num
   )
 }
 
-function InventoryRow({ item, several, locations, spots, selected, onSelect, moving, onMove, onQuantity, onError, onMoved }: {
+function InventoryRow({ item, several, locations, spots, selected, onSelect, moving, onMove, onQuantity, onMoved }: {
   item: Item; several: boolean; locations: StoreLocation[]; spots: Spot[]; selected: boolean; onSelect: (shift: boolean) => void
-  moving: boolean; onMove: () => void; onQuantity: (n: number) => Promise<void>; onError: (message: string) => void
+  moving: boolean; onMove: () => void; onQuantity: (n: number) => Promise<void>
   onMoved: (body: { locationId: string; storageId: string | null; quantity: number }) => void
 }) {
   const [target, setTarget] = useState({ locationId: item.locationId, storageId: '', quantity: item.quantity })
-  const [scans, setScans] = useState<{ itemId: string; quantity: number; image: string | null; details: string | null }[] | null>(null)
-  const toggleScans = () => scans ? setScans(null) : api<typeof scans>(`/api/app/club-links/scans/${item.id}`).then(setScans)
-    .catch(e => { onError(`Couldn’t load the scans for ${item.name}: ${(e as Error).message}`); setScans(null) })
+  const [viewing, setViewing] = useState(false)
   const [why, setWhy] = useState<Why | null>(null)
   const toggleWhy = () => why ? setWhy(null) : api<Why>(`/api/app/inventory/${item.id}/why`).then(setWhy).catch(() => setWhy({ steps: [], destination: [] }))
   const synced = !!item.clubLinkId
@@ -654,8 +683,11 @@ function InventoryRow({ item, several, locations, spots, selected, onSelect, mov
       <tr className={selected ? 'selected' : ''}>
         <td className="check"><input type="checkbox" aria-label={`Select ${item.name}`} checked={selected}
           onClick={e => onSelect(e.shiftKey)} onChange={() => { /* the click handler knows about Shift */ }} /></td>
-        <td className="card-cell"><strong>{item.name}</strong>
-          {item.typeLine && <div className="muted small">{item.typeLine}</div>}</td>
+        <td className="card-cell"><div className="card-id">
+          <RowThumb item={item} onOpen={() => setViewing(true)} />
+          <div><strong>{item.name}</strong>
+            {item.typeLine && <div className="muted small">{item.typeLine}</div>}</div>
+        </div></td>
         <td className="set-cell" title={item.setName ?? undefined}><span className="set-code">{item.set.toUpperCase()}</span> <span className="muted">#{item.number}</span></td>
         <td className="num c-year">{item.year ?? <span className="muted">—</span>}</td>
         <td className="c-color"><ColorPips colors={item.colors} /></td>
@@ -674,27 +706,12 @@ function InventoryRow({ item, several, locations, spots, selected, onSelect, mov
         </td>
         <td className="r row-links">
           <button className="link" onClick={onMove}>{moving ? 'Cancel' : 'Move'}</button>
-          {synced && <button className="link" onClick={toggleScans}>{scans ? 'Hide scans' : 'Scans'}</button>}
         </td>
       </tr>
       {why && (
         <tr className="move-row"><td colSpan={span}><WhyHere why={why} /></td></tr>
       )}
-      {scans && (
-        <tr className="move-row"><td colSpan={span}>
-          <ul className="plain scans">
-            {scans.map(s => (
-              <li key={s.itemId}>
-                {s.image ? <a href={s.image} target="_blank" rel="noreferrer"><img src={s.image} alt={`Scan of ${item.name}`} className="scan-thumb" loading="lazy" /></a>
-                  : <span className="muted small">No photo</span>}
-                {s.quantity > 1 && <span className="small"> ×{s.quantity}</span>}
-                {scanDetails(s.details) && <span className="muted small"> · {scanDetails(s.details)}</span>}
-              </li>
-            ))}
-          </ul>
-          {scans.length === 0 && <p className="muted small">No scans for this line.</p>}
-        </td></tr>
-      )}
+      {viewing && <CardLightbox slides={slidesOf(item)} onClose={() => setViewing(false)} />}
       {moving && (
         <tr className="move-row"><td colSpan={span}>
           <form className="move-form" onSubmit={e => { e.preventDefault(); onMoved({ ...target, storageId: target.storageId || null }) }}>
