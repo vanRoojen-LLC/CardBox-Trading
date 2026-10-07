@@ -157,8 +157,15 @@ class CloudApiIntegrationTest {
         return "http://localhost:" + PRICES.getAddress().getPort();
     }
 
-    /** Serves {@code body} at {@code path}, its ETag a hash of the body so a changed file gets a new one. */
+    /** An hour ago, for fixtures' "updated" times: price history only records prices refreshed in the last two days. */
+    static final String RECENT = java.time.OffsetDateTime.now(java.time.ZoneOffset.ofHours(-4)).minusHours(1).withNano(0).toString();
+
+    /**
+     * Serves {@code body} at {@code path} ("@RECENT@" read as {@link #RECENT}), its ETag a hash of the body so a changed
+     * file gets a new one.
+     */
     static void serve(String path, String body) {
+        body = body.replace("@RECENT@", RECENT);
         FILES.put(path, new String[]{body, "\"" + Integer.toHexString(body.hashCode()) + "\""});
     }
 
@@ -1261,7 +1268,7 @@ class CloudApiIntegrationTest {
                 {"category_id":79,"sets":[{"id":23405,"name":"Spark of Rebellion","abbreviation":"SOR","product_count":2},
                                           {"id":23406,"name":"Empty","abbreviation":"EMP","product_count":0}]}""");
         serve("/v1/79/sets/23405/pricing", """
-                {"set_id":23405,"updated":"2026-10-07T09:01:17-04:00","prices":{
+                {"set_id":23405,"updated":"@RECENT@","prices":{
                  "540208":{"tcg":{"Normal":{"low":5,"market":6.45},"Foil":{"low":12,"market":14.15}}},
                  "999999":{"tcg":{"Normal":{"low":1,"market":1.00}}}}}""");
     }
@@ -1285,11 +1292,21 @@ class CloudApiIntegrationTest {
             searchSwu("vader").forEach(c -> byId.put(c.path("id").asText(), c));
             assertEquals("6.45", byId.get("SOR-087").path("usd").asText());
             assertEquals("14.15", byId.get("SOR-087F").path("usdFoil").asText());
-            assertEquals(java.time.OffsetDateTime.parse("2026-10-07T09:01:17-04:00").toInstant(),
+            assertEquals(java.time.OffsetDateTime.parse(RECENT).toInstant(),
                     jdbc.queryForObject("SELECT tcgplayer_observed_at FROM swu_cards WHERE source_number = '087'", java.sql.Timestamp.class).toInstant(),
                     "observed when TCGTracking last refreshed, not when we read it");
+            priceHistory.record();
+            assertEquals(List.of("tcgplayer via tcgtracking"), jdbc.queryForList("SELECT DISTINCT h.source FROM price_history h"
+                    + " JOIN swu_cards s ON s.id = h.card_id WHERE s.source_number = '087' AND h.source LIKE 'tcgplayer%'", String.class),
+                    "TCGplayer's price, recorded as served by TCGTracking");
+            var evidence = call("GET", "/api/public/cards/" + byId.get("SOR-087").path("cardId").asText() + "/evidence?finish=normal", null, null);
+            assertEquals(200, evidence.status(), evidence.raw());
+            assertEquals("TCGTracking", evidence.body().path("points").get(0).path("source").asText());
+            assertEquals(1, evidence.body().path("history").size());
         } finally {
-            jdbc.update("UPDATE swu_cards SET tcgplayer_market = NULL, tcgplayer_low = NULL, tcgplayer_observed_at = NULL, price_disagrees = false");
+            jdbc.update("DELETE FROM price_history");
+            jdbc.update("UPDATE swu_cards SET tcgplayer_market = NULL, tcgplayer_low = NULL, tcgplayer_observed_at = NULL,"
+                    + " tcgplayer_source = NULL, price_disagrees = false");
         }
     }
 
@@ -1308,6 +1325,7 @@ class CloudApiIntegrationTest {
             assertTrue(jdbc.queryForObject("SELECT error FROM catalog_imports WHERE game = 'star-wars-unlimited' AND source = ?"
                     + " ORDER BY id DESC LIMIT 1", String.class, prices() + "/v1").contains("HTTP 500"), "the failed attempt is logged");
             assertEquals(0, new java.math.BigDecimal("7").compareTo(searchSwu("SOR 87").get(0).path("usd").decimalValue()));
+            assertEquals("tcgcsv", jdbc.queryForObject("SELECT tcgplayer_source FROM swu_cards WHERE source_number = '087'", String.class));
         } finally {
             FAILING.clear();
             jdbc.update("UPDATE swu_cards SET tcgplayer_market = NULL, tcgplayer_low = NULL, tcgplayer_observed_at = NULL, price_disagrees = false");
@@ -1350,13 +1368,13 @@ class CloudApiIntegrationTest {
                   "cardmarket_id":11,"cardtrader_id":null},
                  {"id":1002,"name":"Charizard","number":"4/102","rarity":"Holo Rare","image_url":"https://cdn.tcgtracking.com/product/1002_200w.jpg"}]}""");
         serve("/v1/3/sets/100/pricing", """
-                {"set_id":100,"updated":"2026-10-07T09:01:17-04:00","prices":{
+                {"set_id":100,"updated":"@RECENT@","prices":{
                  "1001":{"tcg":{"Normal":{"low":1,"market":1.50},"Reverse Holofoil":{"low":3,"market":4.25}}},
                  "1002":{"tcg":{"Holofoil":{"low":300,"market":350.00}}}}}""");
         serve("/v1/85/sets/200/cards", """
                 {"set_id":200,"set_name":"Japanese Base","set_abbr":"JBS","products":[{"id":2001,"name":"Pikachu","number":"001","rarity":"None"}]}""");
         serve("/v1/85/sets/200/pricing", """
-                {"set_id":200,"updated":"2026-10-07T09:01:17-04:00","prices":{"2001":{"tcg":{"Normal":{"market":2.00}}}}}""");
+                {"set_id":200,"updated":"@RECENT@","prices":{"2001":{"tcg":{"Normal":{"market":2.00}}}}}""");
         FAILING.add("/v1/99/sets/300/cards");
 
         REQUESTS.clear();
@@ -1405,7 +1423,7 @@ class CloudApiIntegrationTest {
         FAILING.clear();
         serve("/v1/99/sets/300/cards", """
                 {"set_id":300,"set_name":"First","set_abbr":"T1","products":[{"id":3001,"name":"Deluxe Hero","number":"1"}]}""");
-        serve("/v1/99/sets/300/pricing", "{\"set_id\":300,\"updated\":\"2026-10-07T09:01:17-04:00\",\"prices\":{}}");
+        serve("/v1/99/sets/300/pricing", "{\"set_id\":300,\"updated\":\"@RECENT@\",\"prices\":{}}");
         REQUESTS.clear();
         var third = tcgTracking.sync(java.time.Duration.ofMinutes(5));
         assertEquals(new com.cardpricer.cloud.catalog.TcgTrackingCatalog.Result(1, 1, 0, 0, 6), third);
@@ -1502,5 +1520,24 @@ class CloudApiIntegrationTest {
                 "quantity", 1, "locationId", main)).status());
         var stock = call("GET", "/api/app/inventory?q=charizard", admin, null).body().path("items").get(0);
         assertEquals("pokemon", stock.path("game").asText());
+
+        // Its price has evidence like any other, and once stocked it is recorded in the price history.
+        assertEquals(404, call("GET", "/api/public/cards/" + id + "/evidence?finish=foil", null, null).status(),
+                "a preview game's prices are not on the free page");
+        var evidence = call("GET", "/api/app/cards/" + id + "/evidence?finish=foil", admin, null);
+        assertEquals(200, evidence.status(), evidence.raw());
+        assertEquals("pokemon", evidence.body().path("game").asText());
+        assertEquals("TCGTracking", evidence.body().path("points").get(0).path("source").asText());
+        assertEquals("https://www.tcgplayer.com/product/1002", evidence.body().path("url").asText());
+        try {
+            priceHistory.record();
+            var recorded = jdbc.queryForMap("SELECT finish, source, market FROM price_history WHERE card_id = ?::uuid", id);
+            assertEquals("foil", recorded.get("finish"), "Holofoil is foil");
+            assertEquals("tcgplayer via tcgtracking", recorded.get("source"));
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM price_history h JOIN tcg_products p ON p.id = h.card_id"
+                    + " WHERE p.name = 'Pikachu'", Integer.class), "products no store holds are not recorded");
+        } finally {
+            jdbc.update("DELETE FROM price_history");
+        }
     }
 }

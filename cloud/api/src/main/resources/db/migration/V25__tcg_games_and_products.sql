@@ -76,6 +76,10 @@ CREATE INDEX tcg_products_name_trgm ON tcg_products USING gin (lower(name) gin_t
 CREATE INDEX tcg_products_set ON tcg_products (category_id, set_code);
 CREATE INDEX tcg_products_set_id ON tcg_products (set_id);
 
+-- Which mirror of TCGplayer's prices served each SWU printing's tcgplayer_market: 'tcgtracking' (first choice) or
+-- 'tcgcsv' (the fallback). Price history records them under different sources.
+ALTER TABLE swu_cards ADD COLUMN tcgplayer_source text;
+
 -- Every card inventory can hold: Trading's Magic catalog, its SWU catalog (priced, by finish), Club's, and now every
 -- TCGTracking game. The first three branches are V23's, unchanged. A TCGTracking subtype whose name says foil
 -- (Foil, Holofoil, Reverse Holofoil, Cold Foil, 1st Edition Holofoil, ...) is priced in the foil column, every other

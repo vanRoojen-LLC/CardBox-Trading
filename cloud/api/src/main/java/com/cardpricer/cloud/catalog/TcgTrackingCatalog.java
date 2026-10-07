@@ -39,8 +39,9 @@ import java.util.Set;
  *     an unchanged file costs a 304 and no body.</li>
  * <li>/categories and each enabled game's /sets once per run. A set's /cards is read again only when the listing's
  *     products_modified moved past the value we last read it at, its /pricing when pricing_modified did, or when our
- *     copy of its prices is older than {@code app.tcgtracking.pricing-max-age-hours}: the /sets listing is itself
- *     edge-cached for days, so its pricing_modified can lag the daily price refresh (~9:35 AM ET).</li>
+ *     copy of its prices is older than {@code app.tcgtracking.pricing-max-age-hours} (20 hours for a set holding a card
+ *     a store stocks or traded): the /sets listing is itself edge-cached for days, so its pricing_modified can lag the
+ *     daily price refresh (~9:35 AM ET).</li>
  * <li>Time-boxed by {@code app.tcgtracking.budget-minutes} (20), most-stale sets first, stopping cleanly when the time
  *     is spent: the first sync of ~3,400 sets spreads over several nights and later nights only fetch what changed.</li>
  * <li>A set that fails keeps its last data, records last_error and is retried next run; the run fails only when every
@@ -77,17 +78,25 @@ public class TcgTrackingCatalog {
             ON CONFLICT (set_id) DO UPDATE SET category_id = EXCLUDED.category_id, name = EXCLUDED.name,
                 abbreviation = EXCLUDED.abbreviation, released = EXCLUDED.released, product_count = EXCLUDED.product_count,
                 products_modified = EXCLUDED.products_modified, pricing_modified = EXCLUDED.pricing_modified""";
-    /** Sets with work to do, most stale first; among sets never read, the newest first. */
+    /**
+     * Sets with work to do. Sets holding a card some store stocks or has traded come first and have their prices read
+     * daily (price evidence calls a price over three days old untrustworthy); then the rest, most stale first and,
+     * among sets never read, the newest first.
+     */
     private static final String DUE = """
             SELECT s.set_id, s.category_id, s.name, s.abbreviation, s.products_modified, s.pricing_modified, s.cards_etag,
                    s.pricing_etag,
                    s.cards_version IS NULL OR s.cards_fetched_at IS NULL OR s.products_modified > s.cards_version AS cards_due
             FROM tcg_sets s JOIN tcg_games g ON g.category_id = s.category_id
+            CROSS JOIN LATERAL (SELECT coalesce(s.pricing_fetched_at < now() - interval '20 hours', false) AND EXISTS (
+                    SELECT 1 FROM tcg_products p WHERE p.set_id = s.set_id
+                    AND p.id IN (SELECT card_id FROM inventory_items UNION SELECT card_id FROM trade_lines)) AS held_due) h
             WHERE g.enabled AND coalesce(s.product_count, 1) > 0
               AND (s.cards_version IS NULL OR s.cards_fetched_at IS NULL OR s.products_modified > s.cards_version
                    OR s.pricing_fetched_at IS NULL OR s.pricing_modified > coalesce(s.pricing_version, '-infinity')
-                   OR s.pricing_fetched_at < now() - make_interval(hours => ?))
-            ORDER BY CASE WHEN s.cards_fetched_at IS NULL OR s.pricing_fetched_at IS NULL THEN NULL
+                   OR s.pricing_fetched_at < now() - make_interval(hours => ?) OR h.held_due)
+            ORDER BY h.held_due DESC,
+                     CASE WHEN s.cards_fetched_at IS NULL OR s.pricing_fetched_at IS NULL THEN NULL
                           ELSE least(s.cards_fetched_at, s.pricing_fetched_at) END ASC NULLS FIRST,
                      s.released DESC NULLS LAST, s.set_id""";
     /** Identity onto every subtype row a product already has. */

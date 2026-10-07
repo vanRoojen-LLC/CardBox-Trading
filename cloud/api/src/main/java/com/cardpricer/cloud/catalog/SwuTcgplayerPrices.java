@@ -37,10 +37,12 @@ import java.util.Map;
 public class SwuTcgplayerPrices {
     static final int CATEGORY = 79;
     private static final Logger log = LoggerFactory.getLogger(SwuTcgplayerPrices.class);
-    /** Leaves a price TCGCSV no longer has in place; its observed time says how old it is. */
+    /** Which mirror of TCGplayer's prices served a printing's price ({@code swu_cards.tcgplayer_source}). */
+    public static final String TCGTRACKING = "tcgtracking", TCGCSV = "tcgcsv";
+    /** Leaves a price the source no longer has in place; its observed time says how old it is. */
     private static final String APPLY = """
             UPDATE swu_cards SET tcgplayer_market = ?, tcgplayer_low = COALESCE(?, tcgplayer_low), tcgplayer_mid = ?,
-                tcgplayer_high = ?, tcgplayer_direct_low = ?, tcgplayer_observed_at = ?
+                tcgplayer_high = ?, tcgplayer_direct_low = ?, tcgplayer_observed_at = ?, tcgplayer_source = ?
             WHERE tcgplayer_id = ? AND (treatment LIKE '%foil%') = ?""";
     private static final String DISAGREE = """
             UPDATE swu_cards SET price_disagrees = market IS NOT NULL AND tcgplayer_market IS NOT NULL
@@ -110,7 +112,7 @@ public class SwuTcgplayerPrices {
                 Instant updated = TcgTrackingCatalog.updated(payload).orElse(null);
                 if (updated != null && (observed == null || updated.isAfter(observed))) observed = updated;
             }
-            return apply(prices, observed == null ? Instant.now() : observed);
+            return apply(prices, observed == null ? Instant.now() : observed, TCGTRACKING);
         });
     }
 
@@ -169,26 +171,34 @@ public class SwuTcgplayerPrices {
         return out;
     }
 
-    /** Writes the matching finish's price onto every printing of each product, then re-marks disagreements. */
+    /** TCGCSV's prices; see {@link #apply(Map, Instant, String)}. */
     public int apply(Map<String, Map<String, Price>> prices, Instant observed) {
+        return apply(prices, observed, TCGCSV);
+    }
+
+    /**
+     * Writes the matching finish's price onto every printing of each product, noting which mirror it came from (price
+     * history and the evidence panel name it), then re-marks disagreements.
+     */
+    public int apply(Map<String, Map<String, Price>> prices, Instant observed, String source) {
         List<Object[]> batch = new ArrayList<>();
         Timestamp at = Timestamp.from(observed);
         prices.forEach((product, finishes) -> {
             Price normal = finishes.get("Normal"), foil = finishes.get("Foil");
-            if (normal != null && normal.market() != null) batch.add(row(normal, at, product, false));
-            if (foil != null && foil.market() != null) batch.add(row(foil, at, product, true));
+            if (normal != null && normal.market() != null) batch.add(row(normal, at, source, product, false));
+            if (foil != null && foil.market() != null) batch.add(row(foil, at, source, product, true));
         });
         int updated = 0;
         for (int n : jdbc.batchUpdate(APPLY, batch)) updated += Math.max(n, 0);
         jdbc.update(DISAGREE);
         int disagreeing = jdbc.queryForObject("SELECT count(*) FROM swu_cards WHERE price_disagrees", Integer.class);
-        if (disagreeing > 0) log.warn("{} SWU printings have TCGCSV and swu-db prices that disagree", disagreeing);
-        log.info("Applied TCGplayer prices to {} SWU printings", updated);
+        if (disagreeing > 0) log.warn("{} SWU printings have {} and swu-db prices that disagree", disagreeing, source);
+        log.info("Applied TCGplayer prices from {} to {} SWU printings", source, updated);
         return updated;
     }
 
-    private static Object[] row(Price p, Timestamp at, String product, boolean foil) {
-        return new Object[]{p.market(), p.low(), p.mid(), p.high(), p.directLow(), at, product, foil};
+    private static Object[] row(Price p, Timestamp at, String source, String product, boolean foil) {
+        return new Object[]{p.market(), p.low(), p.mid(), p.high(), p.directLow(), at, source, product, foil};
     }
 
     /** When TCGCSV last refreshed from TCGplayer; now if it does not say. */

@@ -99,6 +99,9 @@ public class PublicCardController {
         if (!List.of("normal", "foil", "etched").contains(finish)) throw ApiException.badRequest("Unknown finish");
         var found = evidence.evidence(id, finish, java.time.Instant.now());
         if (found == null) throw ApiException.notFound("No prices for that card");
+        // A TCGTracking game still in preview is not on the free page, its prices included.
+        if (!found.game().equals(TcgGames.MAGIC.segment()) && !found.game().equals(TcgGames.SWU.segment())
+                && games.categories(found.game(), false).isEmpty()) throw ApiException.notFound("No prices for that card");
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(Duration.ofHours(1)).cachePublic()).body(found);
     }
 

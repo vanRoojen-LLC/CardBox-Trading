@@ -69,6 +69,10 @@ full sync (~3,400 sets) takes several nights and later nights fetch only what ch
 night. TCGTracking refreshes prices around 9:35 AM ET, after the job's 10:30 UTC start, so its prices are usually a day
 old when read.
 
+Each night's prices also go into `price_history` (source `tcgplayer via tcgtracking` for TCGplayer's price served by
+TCGTracking, `tcgplayer` when TCGCSV or Scryfall served it): every SWU printing, and the Magic and TCGTracking cards a
+store holds or has traded. Sets holding such a card have their TCGTracking prices read daily.
+
 New games arrive as **previews**: only a platform owner sees them (`GET /api/app/games`, and trade and stock search).
 Setting `tcg_games.preview = false` puts a game on the free price check (`GET /api/public/games`) and in every store's
 search; `enabled = false` stops syncing and searching it.
