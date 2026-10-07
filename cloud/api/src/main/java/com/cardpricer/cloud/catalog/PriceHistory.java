@@ -10,7 +10,9 @@ import org.springframework.stereotype.Service;
  * are written, so a source that stopped updating never looks like a steady price. Every SWU printing is recorded; for
  * Magic and the TCGTracking games, the cards some store holds or has traded (TCGTracking's ~600,000 product prices a
  * night would be hundreds of millions of rows a year). TCGplayer's price served by TCGTracking is source
- * 'tcgplayer via tcgtracking'; served by TCGCSV or Scryfall it is 'tcgplayer'.
+ * 'tcgplayer via tcgtracking'; served by TCGCSV or Scryfall it is 'tcgplayer'. Mana Pool's near-mint English price from
+ * TCGTracking's SKU files ({@link TcgSkuPrices}, held and traded cards only) is 'manapool via tcgtracking', an
+ * independent market the blend weighs beside TCGplayer's.
  */
 @Service
 public class PriceHistory {
@@ -37,6 +39,10 @@ public class PriceHistory {
                                        ('foil', 'cardmarket', c.eur_foil)) AS p(finish, source, market)
             WHERE p.market IS NOT NULL AND c.updated_at > now() - interval '2 days'
               AND c.id IN (SELECT card_id FROM inventory_items UNION SELECT card_id FROM trade_lines)
+            UNION ALL
+            SELECT DISTINCT ON (card_id, finish) card_id, finish, 'manapool via tcgtracking', current_date, manapool, NULL
+            FROM tcg_sku_cards WHERE manapool IS NOT NULL AND condition = 'NM' AND language = 'EN'
+              AND observed_at > now() - interval '2 days'
             ON CONFLICT (card_id, finish, source, day) DO UPDATE SET market = EXCLUDED.market, low = EXCLUDED.low""";
 
     private final JdbcTemplate jdbc;

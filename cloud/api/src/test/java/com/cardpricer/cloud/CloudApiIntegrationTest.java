@@ -175,6 +175,7 @@ class CloudApiIntegrationTest {
     @Autowired com.cardpricer.cloud.catalog.SwuTcgplayerPrices tcgplayerPrices;
     @Autowired com.cardpricer.cloud.catalog.TcgTrackingCatalog tcgTracking;
     @Autowired com.cardpricer.cloud.catalog.PriceHistory priceHistory;
+    @Autowired com.cardpricer.cloud.catalog.TcgSkuPrices skuPrices;
     @Autowired com.cardpricer.cloud.catalog.ClubMarketSummaries clubMarket;
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
     final ObjectMapper json = new ObjectMapper();
@@ -1607,9 +1608,34 @@ class CloudApiIntegrationTest {
         assertEquals("pokemon", evidence.body().path("game").asText());
         assertEquals("TCGTracking", evidence.body().path("points").get(0).path("source").asText());
         assertEquals("https://www.tcgplayer.com/product/1002", evidence.body().path("url").asText());
+        // Stocked, its set's SKU file is read: TCGplayer's price per condition with its listing count, and Mana Pool's.
+        serve("/v1/3/sets/100/skus", """
+                {"set_id":100,"updated":"@RECENT@","products":{
+                 "1002":{"9001":{"cnd":"NM","var":"Holofoil","lng":"EN","mkt":352.5,"low":300,"hi":420,"cnt":2,"mp":340},
+                         "9002":{"cnd":"LP","var":"Holofoil","lng":"EN","mkt":280,"low":250,"hi":300,"cnt":6},
+                         "9003":{"cnd":"NM","var":"Holofoil","lng":"JP","mkt":500,"cnt":1}},
+                 "1001":{"9010":{"cnd":"NM","var":"Normal","lng":"EN","mkt":1.5,"cnt":25}}}}""");
+        REQUESTS.clear();
+        var skus = skuPrices.sync();
+        assertTrue(skus.rows() >= 3, skus.toString());
+        assertEquals(3, jdbc.queryForObject("SELECT count(*) FROM tcg_sku_prices WHERE product_id = 1002", Integer.class));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM tcg_sku_prices WHERE product_id = 1001", Integer.class),
+                "Pikachu is not held, so its SKUs are not kept");
+        assertTrue(REQUESTS.contains("/v1/3/sets/100/skus 200"), REQUESTS.toString());
+        var priced = call("GET", "/api/app/cards/" + id + "/evidence?finish=foil", admin, null).body();
+        var labels = new java.util.ArrayList<String>();
+        priced.path("points").forEach(point -> labels.add(point.path("label").asText() + "/" + point.path("observations").asText()));
+        assertTrue(labels.contains("TCGplayer market, Near Mint (2 listings)/2") && labels.contains("TCGplayer market, Lightly Played (6 listings)/6"),
+                labels.toString());
+        assertTrue(labels.indexOf("TCGplayer market, Near Mint (2 listings)/2") < labels.indexOf("TCGplayer market, Lightly Played (6 listings)/6"));
+        assertTrue(priced.path("reasons").toString().contains("Thin market: 2 near-mint listings"), priced.path("reasons").toString());
         try {
             priceHistory.record();
-            var recorded = jdbc.queryForMap("SELECT finish, source, market FROM price_history WHERE card_id = ?::uuid", id);
+            assertEquals(0, new java.math.BigDecimal("340.00").compareTo(jdbc.queryForObject(
+                    "SELECT market FROM price_history WHERE card_id = ?::uuid AND source = 'manapool via tcgtracking'",
+                    java.math.BigDecimal.class, id)), "Mana Pool's near-mint English price is recorded");
+            var recorded = jdbc.queryForMap("SELECT finish, source, market FROM price_history WHERE card_id = ?::uuid"
+                    + " AND source LIKE 'tcgplayer%'", id);
             assertEquals("foil", recorded.get("finish"), "Holofoil is foil");
             assertEquals("tcgplayer via tcgtracking", recorded.get("source"));
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM price_history h JOIN tcg_products p ON p.id = h.card_id"
