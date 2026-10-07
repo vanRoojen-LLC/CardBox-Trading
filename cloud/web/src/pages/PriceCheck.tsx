@@ -7,6 +7,8 @@ import CardLightbox from '../CardLightbox'
 type PriceCard = Card & { variant?: string | null; url?: string | null }
 interface SearchResult { cards: PriceCard[]; pricesUpdatedAt: string | null }
 type Game = 'mtg' | 'swu'
+/** Another game that has matches for a search that found nothing in this one. */
+interface Elsewhere { game: Game; count: number; more: boolean; names: string[] }
 
 const GAMES: Record<Game, { label: string; title: string; example: string }> = {
   mtg: { label: 'Magic', title: 'Magic card price check', example: 'e.g. Lightning Bolt or DMU 391' },
@@ -28,15 +30,28 @@ export default function PriceCheck() {
   const [result, setResult] = useState<SearchResult | null>(null)
   const [error, setError] = useState('')
   const [enlarged, setEnlarged] = useState<PriceCard | null>(null)
+  const [elsewhere, setElsewhere] = useState<Elsewhere[]>([])
 
   useEffect(() => {
+    setElsewhere([])
     if (query.trim().length < 2) { setResult(null); setError(''); return }
+    let current = true
+    const q = encodeURIComponent(query.trim())
     const timer = setTimeout(() => {
-      api<SearchResult>(`/api/public/cards?game=${game}&q=${encodeURIComponent(query.trim())}&v=${__BUILD_ID__}`)
-        .then(r => { setResult(r); setError('') })
-        .catch(e => setError(e.message))
+      api<SearchResult>(`/api/public/cards?game=${game}&q=${q}&v=${__BUILD_ID__}`)
+        .then(r => {
+          if (!current) return
+          setResult(r); setError('')
+          // Only after this game found nothing: ask, as a separate request, whether another game has the card.
+          if (r.cards.length === 0) {
+            api<{ games: Elsewhere[] }>(`/api/public/cards/elsewhere?game=${game}&q=${q}&v=${__BUILD_ID__}`)
+              .then(e => { if (current) setElsewhere(e.games) })
+              .catch(() => {})
+          }
+        })
+        .catch(e => { if (current) setError(e.message) })
     }, 300)
-    return () => clearTimeout(timer)
+    return () => { current = false; clearTimeout(timer) }
   }, [query, game])
 
   function choose(next: Game) {
@@ -66,7 +81,18 @@ export default function PriceCheck() {
       {error && <p className="error">{error}</p>}
       {result && (
         <>
-          {result.cards.length === 0 ? <p className="muted">No cards found.</p> : (
+          {result.cards.length === 0 ? <>
+            <p className="muted">No cards found.</p>
+            {elsewhere.map(e => (
+              <p key={e.game} className="elsewhere">
+                Did you mean to search {GAMES[e.game].label}?{' '}
+                <button type="button" className="link" onClick={() => choose(e.game)}>
+                  {e.count}{e.more ? '+' : ''} {e.count === 1 && !e.more ? 'match' : 'matches'} in {GAMES[e.game].label}
+                </button>
+                <span className="muted small"> {e.names.join(' · ')}</span>
+              </p>
+            ))}
+          </> : (
             <div className="rows">
               <div className="rows-head"><span style={{ flex: 1 }}>Card</span><span className="price-col">Normal</span><span className="price-col">Foil</span></div>
               {result.cards.map(card => (

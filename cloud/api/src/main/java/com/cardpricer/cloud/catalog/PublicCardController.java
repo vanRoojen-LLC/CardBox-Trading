@@ -9,10 +9,12 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * The free price check. No account, no payment: Scryfall's terms require its price data to stay free.
@@ -43,6 +45,36 @@ public class PublicCardController {
         // browser or CDN serves from its cache never reach us and are not counted.
         priceChecks.count();
         return response;
+    }
+
+    /**
+     * "Did you mean another game?": the page asks this only after a search in its own game came back empty, so the
+     * search itself is never slowed. Answers which other games hold matches, with a few names, and is not counted
+     * as a price check.
+     */
+    @GetMapping("/cards/elsewhere")
+    public ResponseEntity<Map<String, Object>> elsewhere(@RequestParam("q") String q,
+                                                         @RequestParam(value = "game", defaultValue = "mtg") String game) {
+        if (q.trim().length() < 2) throw ApiException.badRequest("Type at least 2 characters");
+        if (q.length() > 100) throw ApiException.badRequest("Search is too long");
+        if (!game.equals("mtg") && !game.equals("swu")) throw ApiException.badRequest("Unknown game");
+        List<Map<String, Object>> games = new ArrayList<>();
+        if (!game.equals("mtg")) suggestion("mtg", catalog.search(q, "", ELSEWHERE_LIMIT).stream().map(CardRow::name).toList())
+                .ifPresent(games::add);
+        if (!game.equals("swu")) suggestion("swu", swu.search(q, "", ELSEWHERE_LIMIT).stream()
+                .map(c -> c.subtitle() == null ? c.name() : c.name() + ", " + c.subtitle()).toList())
+                .ifPresent(games::add);
+        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(Duration.ofHours(1)).cachePublic())
+                .body(Map.of("games", games));
+    }
+
+    /** Matches counted up to this many; more reads as "40+". */
+    static final int ELSEWHERE_LIMIT = 40;
+
+    private static Optional<Map<String, Object>> suggestion(String game, List<String> names) {
+        if (names.isEmpty()) return Optional.empty();
+        return Optional.of(Map.of("game", game, "count", names.size(), "more", names.size() >= ELSEWHERE_LIMIT,
+                "names", names.stream().distinct().limit(3).toList()));
     }
 
     private ResponseEntity<Map<String, Object>> mtg(String q, String set) {

@@ -259,6 +259,22 @@ class CloudApiIntegrationTest {
     }
 
     @Test
+    void emptySearchOffersTheOtherGame() throws Exception {
+        var r = call("GET", "/api/public/cards/elsewhere?game=mtg&q=darth%20vader", null, null);
+        assertEquals(200, r.status(), r.raw());
+        var games = r.body().path("games");
+        assertEquals(1, games.size());
+        assertEquals("swu", games.get(0).path("game").asText());
+        assertEquals(5, games.get(0).path("count").asInt());
+        assertFalse(games.get(0).path("more").asBoolean());
+        assertEquals("Darth Vader, Dark Lord of the Sith", games.get(0).path("names").get(0).asText());
+        var bolt = call("GET", "/api/public/cards/elsewhere?game=swu&q=bolt", null, null).body().path("games");
+        assertEquals("mtg", bolt.get(0).path("game").asText(), "and Magic from the Star Wars: Unlimited page");
+        assertEquals(0, call("GET", "/api/public/cards/elsewhere?game=mtg&q=zzzz", null, null).body().path("games").size());
+        assertEquals(400, call("GET", "/api/public/cards/elsewhere?game=pkmn&q=vader", null, null).status());
+    }
+
+    @Test
     void swuSearchTakesSetNumberSubtitleAndVariant() throws Exception {
         for (String q : new String[]{"SOR 10", "sor 010", "sor #010", "dark lord", "darth vader dark lord"}) {
             var cards = searchSwu(q);
