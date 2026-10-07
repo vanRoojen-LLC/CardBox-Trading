@@ -5,6 +5,7 @@ on:
   push:
     branches: [master, main]
     paths: ['cloud/**', 'src/**', '.github/workflows/cloud.yml']
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -38,3 +39,40 @@ jobs:
       - uses: useblacksmith/checkout@v1
       - name: Build container image
         run: docker build -f cloud/Dockerfile -t cardbox-trading:ci .
+
+  # Ships master to cardbox.trading once every check above is green, as the cardbox-trading-deployer service principal
+  # (Contributor and RBAC Administrator on the occ-pricer resource group only). Pull requests never reach this job, so
+  # forks never see the secrets. Run it by hand from the Actions tab to redeploy the current master.
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    needs: [api, web, image]
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      DEPLOYER_OBJECT_ID: ${{ secrets.DEPLOYER_OBJECT_ID }}
+      CARDBOX_ENABLED: 'true'
+      CLUB_SYNC_ENABLED: 'true'
+      SKIP_IMPORT: '1'
+    steps:
+      - uses: useblacksmith/checkout@v1
+      - name: Check the deployer secrets are set
+        run: |
+          for name in AZURE_CLIENT_ID AZURE_CLIENT_SECRET DEPLOYER_OBJECT_ID; do
+            [ -n "${!name}" ] || { echo "::error::Add the $name secret to the production environment (Settings > Environments)"; exit 1; }
+          done
+      - name: Install the Azure CLI if the runner lacks it
+        run: command -v az >/dev/null || curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+      - name: Deploy
+        run: bash cloud/deploy.sh
+      - name: Check cardbox.trading answers
+        run: |
+          for i in 1 2 3 4 5 6; do
+            curl -fsS -o /dev/null https://cardbox.trading/ && exit 0
+            sleep 20
+          done
+          echo "::error::cardbox.trading did not answer after the deploy"; exit 1
