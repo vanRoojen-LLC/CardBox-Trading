@@ -43,7 +43,8 @@ public class TradeService {
                              String rarity, String lang, String finish, String condition, int quantity,
                              BigDecimal marketUnit, BigDecimal valuationUnit, BigDecimal creditRate, BigDecimal checkRate,
                              BigDecimal creditUnit, BigDecimal checkUnit, Confidence.Level confidence,
-                             BigDecimal confidenceAdjust, boolean review, List<Confidence.Reason> reasons) {
+                             BigDecimal confidenceAdjust, boolean review, List<Confidence.Reason> reasons,
+                             BigDecimal tcgplayerUnit, String game) {
         SettlementEngine.Line settlementLine(int index) {
             BigDecimal qty = BigDecimal.valueOf(quantity);
             return new SettlementEngine.Line(String.valueOf(index), quantity, valuationUnit.multiply(qty),
@@ -81,11 +82,15 @@ public class TradeService {
     public Quote quote(UUID tenant, List<LineInput> inputs, String payment, BigDecimal credit, BigDecimal check) {
         if (inputs == null || inputs.isEmpty()) throw ApiException.badRequest("Add at least one card");
         if (inputs.size() > 500) throw ApiException.badRequest("A trade can have at most 500 lines");
-        List<BuyRateRule> rules = rates.rules(tenant);
-        List<ConfidenceRules.Rule> trust = confidenceRules.rules(tenant);
+        // Each game's buy rates and confidence rules, read once per trade.
+        Map<String, List<BuyRateRule>> rules = new java.util.HashMap<>();
+        Map<String, List<ConfidenceRules.Rule>> trust = new java.util.HashMap<>();
+        java.util.function.Function<String, List<BuyRateRule>> ratesFor = g -> rules.computeIfAbsent(g, x -> rates.rules(tenant, x));
+        java.util.function.Function<String, List<ConfidenceRules.Rule>> trustFor =
+                g -> trust.computeIfAbsent(g, x -> confidenceRules.rules(tenant, x));
         var evidenceByLine = evidence.evidence(inputs.stream().filter(i -> i.cardId() != null)
                 .map(i -> new PriceEvidence.Key(i.cardId(), i.finish() == null ? "normal" : i.finish())).toList(), Instant.now());
-        List<PricedLine> lines = inputs.stream().map(input -> price(input, rules, trust, evidenceByLine)).toList();
+        List<PricedLine> lines = inputs.stream().map(input -> price(input, ratesFor, trustFor, evidenceByLine)).toList();
         List<SettlementEngine.Line> settlementLines = new ArrayList<>();
         for (int i = 0; i < lines.size(); i++) settlementLines.add(lines.get(i).settlementLine(i));
         var creditOnly = engine.settle(settlementLines, "credit", BigDecimal.ZERO, BigDecimal.ZERO);
@@ -105,7 +110,8 @@ public class TradeService {
                 lines.stream().anyMatch(PricedLine::review));
     }
 
-    private PricedLine price(LineInput input, List<BuyRateRule> rules, List<ConfidenceRules.Rule> trust,
+    private PricedLine price(LineInput input, java.util.function.Function<String, List<BuyRateRule>> rules,
+                             java.util.function.Function<String, List<ConfidenceRules.Rule>> trust,
                              Map<PriceEvidence.Key, PriceEvidence.Evidence> evidenceByLine) {
         if (input.cardId() == null) throw ApiException.badRequest("Each line needs a card");
         if (input.quantity() < 1 || input.quantity() > 999) throw ApiException.badRequest("Quantity must be between 1 and 999");
@@ -114,23 +120,25 @@ public class TradeService {
             throw ApiException.badRequest("Condition must be one of " + String.join(", ", CardConstants.CONDITIONS));
         String finish = input.finish() == null ? "normal" : input.finish();
         CardRow card = catalog.find(input.cardId()).orElseThrow(() -> ApiException.badRequest("Unknown card"));
-        BigDecimal market = card.marketFor(finish);
-        if (market == null) throw ApiException.badRequest(card.name() + " has no " + finish + " price");
+        BigDecimal tcgplayer = card.marketFor(finish);
+        if (tcgplayer == null) throw ApiException.badRequest(card.name() + " has no " + finish + " price");
+        // How far the price can be trusted, and the blended value of every source Trading holds for it.
+        var found = evidenceByLine.get(new PriceEvidence.Key(card.id(), finish));
+        BigDecimal market = found != null && found.market() != null ? found.market() : tcgplayer;
+        String game = found == null ? RateRepository.DEFAULT : found.game();
         BigDecimal base = pricing.applyPricingRules(market, card.rarity());
         BigDecimal valuation = pricing.applyConditionMultiplier(base, condition).setScale(2, RoundingMode.HALF_UP);
-        BuyRateRule rule = RateRepository.match(rules, valuation);
-        // How far the price can be trusted, and what the store's rule for that says to do with the offer.
-        var found = evidenceByLine.get(new PriceEvidence.Key(card.id(), finish));
+        BuyRateRule rule = RateRepository.match(rules.apply(game), valuation);
         Confidence.Level level = found == null ? Confidence.Level.medium : found.confidence();
         List<Confidence.Reason> reasons = found == null ? List.of() : found.reasons();
-        ConfidenceRules.Rule matched = ConfidenceRules.match(trust, level);
+        ConfidenceRules.Rule matched = ConfidenceRules.match(trust.apply(game), level);
         BigDecimal adjust = matched.adjust();
         return new PricedLine(card.id(), card.name(), card.setCode(), card.setName(), card.collectorNumber(),
                 card.rarity(), card.lang(), finish, condition, input.quantity(), market, valuation,
                 rule.creditRate, rule.checkRate,
                 valuation.multiply(rule.creditRate).multiply(adjust).setScale(2, RoundingMode.HALF_UP),
                 valuation.multiply(rule.checkRate).multiply(adjust).setScale(2, RoundingMode.HALF_UP),
-                level, adjust, matched.review(), reasons);
+                level, adjust, matched.review(), reasons, tcgplayer, game);
     }
 
     /**
@@ -166,13 +174,13 @@ public class TradeService {
             rows.add(new Object[]{id, i + 1, tenant, l.cardId(), l.name(), l.setCode(), l.collectorNumber(), l.rarity(),
                     l.lang(), l.finish(), l.condition(), l.quantity(), l.marketUnit(), l.valuationUnit(),
                     l.creditRate(), l.checkRate(), allocation.credit(), allocation.check(), l.confidence().name(),
-                    l.confidenceAdjust()});
+                    l.confidenceAdjust(), l.tcgplayerUnit()});
         }
         jdbc.batchUpdate("""
                 INSERT INTO trade_lines (trade_id, line_no, tenant_id, card_id, name, set_code, collector_number, rarity,
                     lang, finish, condition, quantity, market_unit, valuation_unit, credit_rate, check_rate,
-                    credit_alloc, check_alloc, confidence, confidence_adjust)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", rows);
+                    credit_alloc, check_alloc, confidence, confidence_adjust, tcgplayer_unit)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", rows);
         // The cards bought in go into stock at the trade's location, waiting to be put away.
         for (PricedLine l : quote.lines()) {
             inventory.add(tenant, location, null, new InventoryRepository.Stock(l.cardId(), l.name(), l.setCode(),

@@ -72,4 +72,29 @@ class ConfidenceTest {
                 List.of()), NOW);
         assertEquals(Confidence.Level.medium, r.level());
     }
+
+    static Confidence.Result withChecks(String market, Confidence.Check... checks) {
+        return Confidence.assess(new Confidence.Inputs($(market), NOW.minus(Duration.ofHours(3)), null, null, null, null,
+                List.of(), List.of(checks)), NOW);
+    }
+
+    @Test
+    void independentSalesThatAgreeLiftAOneSourcePrice() {
+        var r = withChecks("48.20", new Confidence.Check("eBay sold", $("45.00"), 6));
+        assertEquals(Confidence.Level.high, r.level(), r.reasons().toString());
+        assertTrue(r.reasons().stream().anyMatch(x -> x.text().equals("eBay sold says $45.00 (6 sales), in line with TCGplayer.")));
+    }
+
+    @Test
+    void independentSalesFarAwayWarn() {
+        var r = withChecks("48.20", new Confidence.Check("eBay sold", $("20.00"), 6));
+        assertEquals(Confidence.Level.medium, r.level(), r.reasons().toString());
+    }
+
+    @Test
+    void oneOrTwoSalesAreOnlyInformation() {
+        var r = withChecks("48.20", new Confidence.Check("eBay sold", $("20.00"), 2));
+        assertEquals(Confidence.Level.medium, r.level(), "still one source with no history: " + r.reasons());
+        assertTrue(r.reasons().stream().anyMatch(x -> x.kind() == Confidence.Kind.info && x.text().contains("too few")));
+    }
 }

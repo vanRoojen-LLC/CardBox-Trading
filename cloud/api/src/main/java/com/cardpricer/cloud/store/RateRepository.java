@@ -17,17 +17,39 @@ public class RateRepository {
         this.jdbc = jdbc;
     }
 
-    /** Ascending by threshold, for display. */
+    /** The games a store can set its own rates for. Any other game, and a game without its own, uses the default. */
+    public static final List<String> GAMES = List.of("magic-the-gathering", "star-wars-unlimited");
+    public static final String DEFAULT = "";
+
+    /** The store's default rates, ascending by threshold. */
     public List<BuyRateRule> rules(UUID tenant) {
-        return jdbc.query("SELECT threshold_min, credit_rate, check_rate FROM buy_rate_rules WHERE tenant_id = ? ORDER BY threshold_min",
-                (rs, i) -> new BuyRateRule(rs.getBigDecimal(1), rs.getBigDecimal(2), rs.getBigDecimal(3)), tenant);
+        return own(tenant, DEFAULT);
+    }
+
+    /** The rates a game's cards are offered at: its own if the store set them, otherwise the store's default. */
+    public List<BuyRateRule> rules(UUID tenant, String game) {
+        List<BuyRateRule> own = game == null || game.isEmpty() ? List.of() : own(tenant, game);
+        return own.isEmpty() ? own(tenant, DEFAULT) : own;
+    }
+
+    /** Only the rows saved for this game ("" for the default), ascending by threshold. */
+    public List<BuyRateRule> own(UUID tenant, String game) {
+        return jdbc.query("SELECT threshold_min, credit_rate, check_rate FROM buy_rate_rules WHERE tenant_id = ? AND game = ?"
+                        + " ORDER BY threshold_min",
+                (rs, i) -> new BuyRateRule(rs.getBigDecimal(1), rs.getBigDecimal(2), rs.getBigDecimal(3)), tenant, game);
     }
 
     @Transactional
     public void replace(UUID tenant, List<BuyRateRule> rules) {
-        jdbc.update("DELETE FROM buy_rate_rules WHERE tenant_id = ?", tenant);
-        jdbc.batchUpdate("INSERT INTO buy_rate_rules (tenant_id, threshold_min, credit_rate, check_rate) VALUES (?, ?, ?, ?)",
-                rules.stream().map(r -> new Object[]{tenant, r.thresholdMin, r.creditRate, r.checkRate}).toList());
+        replace(tenant, DEFAULT, rules);
+    }
+
+    /** Replaces a game's rates. An empty list for a game puts it back on the store's default. */
+    @Transactional
+    public void replace(UUID tenant, String game, List<BuyRateRule> rules) {
+        jdbc.update("DELETE FROM buy_rate_rules WHERE tenant_id = ? AND game = ?", tenant, game);
+        jdbc.batchUpdate("INSERT INTO buy_rate_rules (tenant_id, game, threshold_min, credit_rate, check_rate) VALUES (?, ?, ?, ?, ?)",
+                rules.stream().map(r -> new Object[]{tenant, game, r.thresholdMin, r.creditRate, r.checkRate}).toList());
     }
 
     /** Same lookup as the desktop BuyRateService: the highest matching threshold wins. */

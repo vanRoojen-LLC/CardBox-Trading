@@ -183,14 +183,19 @@ public class StoreController {
     }
 
     @GetMapping("/rates")
-    public Map<String, Object> rates(HttpServletRequest request) {
-        return Map.of("rules", rates.rules(CurrentUser.of(request).tenantId()).stream()
-                .map(r -> new Rule(r.thresholdMin, r.creditRate, r.checkRate)).toList());
+    public Map<String, Object> rates(@RequestParam(defaultValue = "") String game, HttpServletRequest request) {
+        UUID tenant = CurrentUser.of(request).tenantId();
+        game = game(game);
+        return Map.of("game", game, "own", game.isEmpty() || !rates.own(tenant, game).isEmpty(),
+                "rules", rates.rules(tenant, game).stream().map(r -> new Rule(r.thresholdMin, r.creditRate, r.checkRate)).toList());
     }
 
+    /** Saves the store's default rates, or with {@code game} that game's own. */
     @PutMapping("/rates")
-    public Map<String, Object> saveRates(@Valid @RequestBody RatesBody body, HttpServletRequest request) {
+    public Map<String, Object> saveRates(@RequestParam(defaultValue = "") String game, @Valid @RequestBody RatesBody body,
+                                         HttpServletRequest request) {
         CurrentUser user = requireOwner(request);
+        game = game(game);
         var seen = new HashSet<BigDecimal>();
         List<BuyRateRule> rules = body.rules().stream().map(r -> {
             var rule = new BuyRateRule(r.thresholdMin().setScale(2, java.math.RoundingMode.HALF_UP), r.creditRate(), r.checkRate());
@@ -199,19 +204,34 @@ public class StoreController {
         }).toList();
         if (!seen.contains(new BigDecimal("0.00")))
             throw ApiException.badRequest("Include a $0.00 threshold so every card has a rate");
-        rates.replace(user.tenantId(), rules);
-        return rates(request);
+        rates.replace(user.tenantId(), game, rules);
+        return rates(game, request);
+    }
+
+    /** Puts a game back on the store's default rates. */
+    @DeleteMapping("/rates")
+    public Map<String, Object> resetRates(@RequestParam String game, HttpServletRequest request) {
+        CurrentUser user = requireOwner(request);
+        game = game(game);
+        if (game.isEmpty()) throw ApiException.badRequest("The store's default rates can't be removed");
+        rates.replace(user.tenantId(), game, List.of());
+        return rates(game, request);
     }
 
     @GetMapping("/confidence-rules")
-    public Map<String, Object> confidenceRules(HttpServletRequest request) {
-        return Map.of("rules", confidenceRules.rules(CurrentUser.of(request).tenantId()).stream()
-                .map(r -> new ConfidenceRule(r.level().name(), r.adjust(), r.review())).toList());
+    public Map<String, Object> confidenceRules(@RequestParam(defaultValue = "") String game, HttpServletRequest request) {
+        UUID tenant = CurrentUser.of(request).tenantId();
+        game = game(game);
+        return Map.of("game", game, "own", game.isEmpty() || confidenceRules.hasOwn(tenant, game),
+                "rules", confidenceRules.rules(tenant, game).stream()
+                        .map(r -> new ConfidenceRule(r.level().name(), r.adjust(), r.review())).toList());
     }
 
     @PutMapping("/confidence-rules")
-    public Map<String, Object> saveConfidenceRules(@Valid @RequestBody ConfidenceBody body, HttpServletRequest request) {
+    public Map<String, Object> saveConfidenceRules(@RequestParam(defaultValue = "") String game,
+                                                   @Valid @RequestBody ConfidenceBody body, HttpServletRequest request) {
         CurrentUser user = requireOwner(request);
+        game = game(game);
         var seen = new HashSet<String>();
         List<ConfidenceRules.Rule> rules = body.rules().stream().map(r -> {
             if (!seen.add(r.level())) throw ApiException.badRequest("Each confidence level can only appear once");
@@ -220,8 +240,25 @@ public class StoreController {
             return new ConfidenceRules.Rule(com.cardpricer.cloud.catalog.Confidence.Level.valueOf(r.level()),
                     r.adjust().setScale(4, java.math.RoundingMode.HALF_UP), r.review());
         }).toList();
-        confidenceRules.replace(user.tenantId(), rules);
-        return confidenceRules(request);
+        confidenceRules.replace(user.tenantId(), game, rules);
+        return confidenceRules(game, request);
+    }
+
+    /** Puts a game back on the store's default confidence rules. */
+    @DeleteMapping("/confidence-rules")
+    public Map<String, Object> resetConfidenceRules(@RequestParam String game, HttpServletRequest request) {
+        CurrentUser user = requireOwner(request);
+        game = game(game);
+        if (game.isEmpty()) throw ApiException.badRequest("The store's default rules can't be removed");
+        confidenceRules.replace(user.tenantId(), game, List.of());
+        return confidenceRules(game, request);
+    }
+
+    private static String game(String game) {
+        String g = game == null ? "" : game.trim();
+        if (!g.isEmpty() && !RateRepository.GAMES.contains(g))
+            throw ApiException.badRequest("game must be one of " + RateRepository.GAMES);
+        return g;
     }
 
     @GetMapping("/staff")
