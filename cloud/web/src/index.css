@@ -786,8 +786,8 @@ button.confidence.low:hover, button.confidence.none:hover { background: var(--ba
 .points td { padding: 5px 8px 5px 0; border-bottom: 1px solid var(--line-soft); }
 .points td.num { font-weight: 600; }
 .points tr.used td { font-weight: 600; }
-.points .tag { margin-left: 6px; font-size: 11px; font-weight: 600; color: var(--accent-soft-text); background: var(--accent-soft); padding: 1px 6px; border-radius: 999px; }
-@media (max-width: 600px) { .points th:nth-child(3), .points td:nth-child(3) { display: none; } }
+.evidence .blend { margin: 8px 0 0; }
+@media (max-width: 600px) { .points th:nth-child(4), .points td:nth-child(4) { display: none; } }
 .trend { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; color: var(--accent); }
 .trend span { color: var(--muted); }
 .missing summary { cursor: pointer; color: var(--link); font-weight: 500; }

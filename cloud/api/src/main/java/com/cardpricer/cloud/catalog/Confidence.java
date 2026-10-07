@@ -26,10 +26,26 @@ public final class Confidence {
     /**
      * What one card and finish's price rests on. {@code other} is a second copy of the same price (swu-db's), null when
      * there is none; {@code low} and {@code mid} are the cheapest and median listings; {@code history} is the
-     * recorded daily market price, oldest first, over the last 30 days.
+     * recorded daily market price, oldest first, over the last 30 days. {@code independent} are other origins'
+     * prices for the same card (eBay sold, Manapool, PriceCharting), each checked against the market price.
      */
     public record Inputs(BigDecimal market, Instant observedAt, String otherSource, BigDecimal other, BigDecimal low,
-                         BigDecimal mid, List<BigDecimal> history) {}
+                         BigDecimal mid, List<BigDecimal> history, List<Check> independent) {
+        public Inputs(BigDecimal market, Instant observedAt, String otherSource, BigDecimal other, BigDecimal low,
+                      BigDecimal mid, List<BigDecimal> history) {
+            this(market, observedAt, otherSource, other, low, mid, history, List.of());
+        }
+    }
+
+    /** Another origin's price: "eBay sold", its median, and how many sales or listings it rests on (null: one price). */
+    public record Check(String label, BigDecimal value, Integer observations) {
+        boolean solid() {
+            return observations == null || observations >= MIN_OBSERVATIONS;
+        }
+    }
+
+    /** Fewer sales than this say something but not enough to confirm or doubt a price. */
+    static final int MIN_OBSERVATIONS = 3;
 
     /** Below this, listing spreads and small disagreements say little: a $0.25 card listed at $0.10 is normal. */
     static final BigDecimal SPREAD_FLOOR = new BigDecimal("2");
@@ -65,6 +81,22 @@ public final class Confidence {
                 reasons.add(new Reason(Kind.bad, in.otherSource() + " says " + money(in.other()) + ", " + pct + " apart."));
             else reasons.add(new Reason(Kind.warn, in.otherSource() + " says " + money(in.other()) + ", " + pct + " apart."));
         }
+        // Independent origins: the strongest corroboration, since they aren't copies of TCGplayer's number.
+        List<Check> independent = in.independent() == null ? List.of() : in.independent();
+        for (Check c : independent) {
+            if (c.value() == null || c.value().signum() <= 0) continue;
+            BigDecimal gap = in.market().subtract(c.value()).abs();
+            BigDecimal smaller = in.market().min(c.value());
+            double ratio = smaller.signum() == 0 ? 1 : gap.doubleValue() / smaller.doubleValue();
+            String said = c.label() + " says " + money(c.value()) + basis(c);
+            if (!c.solid()) reasons.add(new Reason(Kind.info, said + "; too few to weigh."));
+            else if (ratio <= 0.2 || gap.compareTo(new BigDecimal("0.50")) <= 0)
+                reasons.add(new Reason(Kind.good, said + ", in line with TCGplayer."));
+            else if (ratio > 0.5 && gap.compareTo(SPREAD_FLOOR) > 0)
+                reasons.add(new Reason(Kind.warn, said + ", " + percent(ratio) + " from TCGplayer."));
+            else reasons.add(new Reason(Kind.info, said + ", " + percent(ratio) + " from TCGplayer."));
+        }
+        boolean corroborated = independent.stream().anyMatch(c -> c.value() != null && c.solid());
         // Listings against recent sales.
         if (worthSpread && in.low() != null && in.low().compareTo(in.market().multiply(new BigDecimal("0.6"))) < 0) {
             double below = 1 - in.low().doubleValue() / in.market().doubleValue();
@@ -83,7 +115,7 @@ public final class Confidence {
             if (Math.abs(change) > 0.3 && last.subtract(first).abs().compareTo(SPREAD_FLOOR) > 0)
                 reasons.add(new Reason(Kind.warn, "Price moved fast: " + moved + "."));
             else reasons.add(new Reason(Kind.good, "Steady: " + moved + "."));
-        } else if (in.other() == null && in.low() == null) {
+        } else if (in.other() == null && in.low() == null && !corroborated) {
             reasons.add(new Reason(Kind.warn, "One source and " + history.size() + (history.size() == 1 ? " day" : " days")
                     + " of history so far: nothing to check this price against yet."));
         } else {
@@ -94,6 +126,11 @@ public final class Confidence {
         long warn = reasons.stream().filter(r -> r.kind() == Kind.warn).count();
         Level level = bad > 0 || warn >= 2 ? Level.low : warn == 1 ? Level.medium : Level.high;
         return new Result(level, reasons);
+    }
+
+    private static String basis(Check c) {
+        if (c.observations() == null) return "";
+        return " (" + c.observations() + (c.observations() == 1 ? " sale" : " sales") + ")";
     }
 
     private static String percent(double ratio) {

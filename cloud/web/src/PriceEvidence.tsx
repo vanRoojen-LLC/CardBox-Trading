@@ -3,13 +3,15 @@ import { api, money } from './api'
 
 export type ConfidenceLevel = 'high' | 'medium' | 'low' | 'none'
 export interface Reason { kind: 'good' | 'warn' | 'bad' | 'info'; text: string }
-interface Point { source: string; label: string; value: number | null; currency: string; observedAt: string | null; used: boolean }
+interface Point { source: string; label: string; value: number | null; currency: string; observedAt: string | null; used: boolean; weight: number | null; observations: number | null }
 interface Day { day: string; market: number }
 export interface Evidence {
   cardId: string
   game: string
   finish: string
   market: number | null
+  tcgplayer: number | null
+  sources: number
   url: string | null
   points: Point[]
   history: Day[]
@@ -92,14 +94,20 @@ export function EvidencePanel({ path }: { path: string }) {
         <ConfidenceBadge level={evidence.confidence} />
         {evidence.url && <a href={evidence.url} target="_blank" rel="noreferrer">Open on TCGplayer</a>}
       </div>
+      {evidence.market != null && <p className="blend small">
+        Trade value <strong>{money(evidence.market)}</strong>{evidence.sources > 1
+          ? <> from {evidence.sources} independent sources{evidence.tcgplayer != null && evidence.tcgplayer !== evidence.market && <>; TCGplayer alone says {money(evidence.tcgplayer)}</>}.</>
+          : <>, from TCGplayer only.</>}
+      </p>}
       <Reasons reasons={evidence.reasons} />
       <table className="points">
-        <thead><tr><th scope="col">Datapoint</th><th scope="col">Value</th><th scope="col">Source</th><th scope="col">Age</th></tr></thead>
+        <thead><tr><th scope="col">Datapoint</th><th scope="col">Value</th><th scope="col">Share of value</th><th scope="col">Source</th><th scope="col">Age</th></tr></thead>
         <tbody>
           {evidence.points.map((p, i) => (
             <tr key={i} className={p.used ? 'used' : undefined}>
-              <td>{p.label}{p.used && <span className="tag">priced from</span>}</td>
+              <td>{p.label}</td>
               <td className="num">{amount(p)}</td>
+              <td className="num">{p.used && p.weight != null ? `${Math.round(p.weight * 100)}%` : '—'}</td>
               <td>{p.source}</td>
               <td>{age(p.observedAt)}</td>
             </tr>

@@ -155,6 +155,45 @@ class ClubMetricsIntegrationTest {
                 LocalDate.now(ZoneOffset.UTC)).stream().findFirst().orElse(0L);
     }
 
+    Response post(String path, String bearer, Object body) throws Exception {
+        var builder = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(body)));
+        if (bearer != null) builder.header("Authorization", "Bearer " + bearer);
+        var response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        String raw = response.body();
+        return new Response(response.statusCode(), raw.startsWith("{") ? JSON.readTree(raw) : null, raw);
+    }
+
+    @Test
+    void clubPushesMarketSummariesWithItsSyncToken() throws Exception {
+        String path = "/api/partner/club-sync/market-summaries";
+        UUID card = UUID.randomUUID();
+        jdbc.update("INSERT INTO cards (id, name, set_code, set_name, collector_number, rarity, lang, usd, updated_at)"
+                + " VALUES (?, 'Test Card', 'tst', 'Test Set', '1', 'rare', 'en', 10.00, now())", card);
+        Map<String, Object> page = Map.of("segment_key", "magic-the-gathering", "since", "2026-07-09T00:00:00+00:00",
+                "first_page", true, "last_page", true, "printings", List.of(
+                        Map.of("printing_id", "p1", "external_ids", Map.of("scryfall:id", card.toString()), "treatment", "Foil",
+                                "foil", true, "set_code", "TST", "summaries", List.of(
+                                        Map.of("source", "ebay", "value_kind", "realized", "observations", 4, "median", "12.50",
+                                                "low", "10.00", "high", "15.00", "newest", "2026-10-06T12:00:00.123456+00:00"))),
+                        Map.of("printing_id", "p2", "external_ids", Map.of("scryfall:id", "not-a-uuid"), "treatment", "Normal",
+                                "foil", false, "summaries", List.of())));
+        String token = token(CLUB_CLIENT, AUDIENCE, ClubSyncAuth.SCOPE);
+        assertEquals(401, post(path, null, page).status());
+        assertEquals(401, post(path, token("someone-else", AUDIENCE, ClubSyncAuth.SCOPE), page).status());
+        var bad = new HashMap<>(page);
+        bad.put("segment_key", "pokemon");
+        assertEquals(400, post(path, token, bad).status());
+        var r = post(path, token, page);
+        assertEquals(200, r.status(), r.raw());
+        assertEquals(2, r.body().path("printings").asInt());
+        assertEquals(1, r.body().path("matched").asInt());
+        assertEquals(1, r.body().path("stored").asInt());
+        assertEquals("foil", jdbc.queryForObject("SELECT finish FROM club_market_summaries WHERE card_id = ?", String.class, card));
+        jdbc.update("DELETE FROM club_market_summaries WHERE card_id = ?", card);
+    }
+
     @Test
     void onlyClubsSyncTokenReadsTheMetrics() throws Exception {
         assertEquals(401, get(PATH, null, null).status());

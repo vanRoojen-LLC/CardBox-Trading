@@ -175,6 +175,7 @@ class CloudApiIntegrationTest {
     @Autowired com.cardpricer.cloud.catalog.SwuTcgplayerPrices tcgplayerPrices;
     @Autowired com.cardpricer.cloud.catalog.TcgTrackingCatalog tcgTracking;
     @Autowired com.cardpricer.cloud.catalog.PriceHistory priceHistory;
+    @Autowired com.cardpricer.cloud.catalog.ClubMarketSummaries clubMarket;
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
     final ObjectMapper json = new ObjectMapper();
     final HttpClient http = HttpClient.newBuilder().proxy(HttpClient.Builder.NO_PROXY).build();
@@ -406,6 +407,83 @@ class CloudApiIntegrationTest {
             jdbc.update("UPDATE swu_cards SET tcgplayer_market = NULL, tcgplayer_low = NULL, tcgplayer_mid = NULL, tcgplayer_high = NULL,"
                     + " tcgplayer_direct_low = NULL, tcgplayer_observed_at = NULL, price_disagrees = false");
             jdbc.update("DELETE FROM price_history");
+        }
+    }
+
+    static com.cardpricer.cloud.catalog.ClubMarketSummaries.Summary summary(String source, String kind, int n, String median) {
+        return new com.cardpricer.cloud.catalog.ClubMarketSummaries.Summary(source, kind, n, new java.math.BigDecimal(median),
+                null, null, java.time.Instant.now().minusSeconds(86400));
+    }
+
+    @Test
+    void clubsEbayPricesBlendIntoTheTradeValueAndEachGameHasItsOwnRates() throws Exception {
+        String ragavan = "22222222-2222-2222-2222-222222222222";
+        var lines = List.of(Map.of("cardId", ragavan, "finish", "normal", "condition", "NM", "quantity", 1));
+        String owner = signup("Blend Store", "b-" + UUID.randomUUID() + "@example.com");
+        try {
+            var page = new com.cardpricer.cloud.catalog.ClubMarketSummaries.Printing("p-rag",
+                    Map.of("scryfall:id", ragavan), "Normal", false, List.of(
+                    summary("ebay", "realized", 6, "40.00"), summary("pricecharting", "realized", 5, "41.00"),
+                    summary("ebay", "asking", 10, "60.00"), summary("tcgplayer", "estimate", 3, "48.00")));
+            var unknown = new com.cardpricer.cloud.catalog.ClubMarketSummaries.Printing("p-x",
+                    Map.of("scryfall:id", UUID.randomUUID().toString()), "Normal", false, List.of(summary("ebay", "realized", 4, "1.00")));
+            var result = clubMarket.ingest("magic-the-gathering", true, true, List.of(page, unknown));
+            assertEquals(1, result.matched(), "a printing Trading doesn't carry is skipped");
+            assertEquals(3, result.stored(), "TCGplayer's own price never comes back as a second source");
+
+            var r = call("GET", "/api/public/cards/" + ragavan + "/evidence?finish=normal", null, null);
+            assertEquals(200, r.status(), r.raw());
+            // TCGplayer $48.20 (weight 1), eBay sold $40 (0.9), PriceCharting $41 (0.6): the weighted median is $41.
+            assertEquals("41.0", r.body().path("market").asText(), r.raw());
+            assertEquals("48.2", r.body().path("tcgplayer").asText());
+            assertEquals(3, r.body().path("sources").asInt());
+            var points = new java.util.HashMap<String, JsonNode>();
+            r.body().path("points").forEach(p -> points.put(p.path("label").asText(), p));
+            var sold = points.get("eBay sold, median of 6");
+            assertNotNull(sold, r.raw());
+            assertEquals("CardBox Club", sold.path("source").asText());
+            assertTrue(sold.path("used").asBoolean());
+            assertEquals(0.36, sold.path("weight").asDouble(), 0.001);
+            assertFalse(points.get("eBay asking, median of 10").path("used").asBoolean(), "asking prices are shown, never blended");
+            assertTrue(r.body().path("reasons").toString().contains("PriceCharting sold says $41.00 (5 sales), in line"), r.raw());
+            assertEquals("high", r.body().path("confidence").asText(), "independent sales corroborate the price");
+
+            var quote = call("POST", "/api/app/trades/quote", owner, Map.of("payment", "credit", "lines", lines));
+            assertEquals(200, quote.status(), quote.raw());
+            assertEquals(0, new java.math.BigDecimal("20.50").compareTo(quote.body().path("creditOffer").decimalValue()),
+                    "the offer is worked out from the blended $41, at the default 50%: " + quote.raw());
+            assertEquals("48.2", quote.body().path("lines").get(0).path("tcgplayerUnit").asText());
+
+            // Magic gets its own rates; the store default and Star Wars stay as they were.
+            assertFalse(call("GET", "/api/app/rates?game=magic-the-gathering", owner, null).body().path("own").asBoolean());
+            assertEquals(400, call("GET", "/api/app/rates?game=pokemon", owner, null).status());
+            var saved = call("PUT", "/api/app/rates?game=magic-the-gathering", owner, Map.of("rules", List.of(
+                    Map.of("thresholdMin", 0, "creditRate", 0.6, "checkRate", 0.5))));
+            assertEquals(200, saved.status(), saved.raw());
+            assertTrue(saved.body().path("own").asBoolean());
+            assertEquals(0.5, call("GET", "/api/app/rates", owner, null).body().path("rules").get(0).path("creditRate").asDouble());
+            assertFalse(call("GET", "/api/app/rates?game=star-wars-unlimited", owner, null).body().path("own").asBoolean());
+            quote = call("POST", "/api/app/trades/quote", owner, Map.of("payment", "credit", "lines", lines));
+            assertEquals(0, new java.math.BigDecimal("24.60").compareTo(quote.body().path("creditOffer").decimalValue()), quote.raw());
+            // Magic's own confidence rules apply to Magic lines.
+            assertEquals(200, call("PUT", "/api/app/confidence-rules?game=magic-the-gathering", owner, Map.of("rules", List.of(
+                    Map.of("level", "high", "adjust", 0.5, "review", false)))).status());
+            quote = call("POST", "/api/app/trades/quote", owner, Map.of("payment", "credit", "lines", lines));
+            assertEquals(0, new java.math.BigDecimal("12.30").compareTo(quote.body().path("creditOffer").decimalValue()), quote.raw());
+            assertEquals(200, call("DELETE", "/api/app/confidence-rules?game=magic-the-gathering", owner, Map.of()).status());
+            var reset = call("DELETE", "/api/app/rates?game=magic-the-gathering", owner, Map.of());
+            assertFalse(reset.body().path("own").asBoolean());
+            assertEquals(400, call("DELETE", "/api/app/rates?game=", owner, Map.of()).status(), "the default can't be removed");
+            quote = call("POST", "/api/app/trades/quote", owner, Map.of("payment", "credit", "lines", lines));
+            assertEquals(0, new java.math.BigDecimal("20.50").compareTo(quote.body().path("creditOffer").decimalValue()), quote.raw());
+
+            // A full push without the card drops its old evidence, and the value is TCGplayer's again.
+            clubMarket.ingest("magic-the-gathering", true, true, List.of());
+            r = call("GET", "/api/public/cards/" + ragavan + "/evidence?finish=normal", null, null);
+            assertEquals("48.2", r.body().path("market").asText(), r.raw());
+            assertTrue(r.body().path("missing").toString().contains("CardBox Club has none for this card yet"));
+        } finally {
+            jdbc.update("DELETE FROM club_market_summaries");
         }
     }
 

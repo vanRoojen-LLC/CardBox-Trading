@@ -37,7 +37,9 @@ public class PricingService {
         }
 
         String rarityLower = rarity.toLowerCase();
-        if (rarityLower.equals("rare") || rarityLower.equals("mythic")) {
+        // Star Wars: Unlimited's Legendary and Special sit at or above Rare, as Magic's Mythic and Special do.
+        if (rarityLower.equals("rare") || rarityLower.equals("mythic") || rarityLower.equals("legendary")
+                || rarityLower.equals("special")) {
             return CardConstants.RARITY_MIN_RARE_MYTHIC;
         } else if (rarityLower.equals("uncommon")) {
             return CardConstants.RARITY_MIN_UNCOMMON;
