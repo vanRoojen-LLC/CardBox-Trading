@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 
-/** Scryfall serves every size from the same path, so the small thumbnail URL also names the large JPG and full PNG. */
+/**
+ * Scryfall serves every size from the same path, so the small thumbnail URL also names the large JPG and full PNG.
+ * Any other image (a CardBox scan) is shown as it is.
+ */
 function scryfallSizes(small: string) {
+  if (!small.includes('/small/')) return { large: small, png: small }
   return {
     large: small.replace('/small/', '/large/'),
     png: small.replace('/small/', '/png/').replace(/\.jpg(\?|$)/, '.png$1'),
@@ -11,18 +15,29 @@ function scryfallSizes(small: string) {
 const MAX_ZOOM = 8
 const LOUPE_SIZE = 180
 const LOUPE_POWER = 3
+/** How far a finger has to slide sideways, unzoomed, to move to the next image. */
+const SWIPE = 60
 
 interface View { scale: number; x: number; y: number }
 interface Loupe { left: number; top: number; bgSize: string; bgPos: string }
 const FIT: View = { scale: 1, x: 0, y: 0 }
 
+/** One image the lightbox can show; several are stepped through with the arrows. */
+export interface Slide { image: string; caption: string }
+
 /**
  * Full-size card viewer: fits the window by default, zooms with the wheel, pinch, double-click or the buttons,
- * pans by dragging, and has a loupe mode for checking condition. Esc or a click outside the card closes it.
+ * pans by dragging, and has a loupe mode for checking condition. With several images, the side arrows, the arrow
+ * keys or a swipe move between them. Esc or a click outside the card closes it.
  */
-export default function CardLightbox({ image, caption, onClose }: { image: string; caption: string; onClose: () => void }) {
+export default function CardLightbox({ slides, start = 0, onClose }: { slides: Slide[]; start?: number; onClose: () => void }) {
+  const [index, setIndex] = useState(Math.min(Math.max(0, start), slides.length - 1))
+  const { image, caption } = slides[index]
+  const many = slides.length > 1
   const sizes = scryfallSizes(image)
-  const [src, setSrc] = useState(sizes.large)
+  /** The full-resolution PNG once it has loaded; until then the large JPG shows. */
+  const [loaded, setLoaded] = useState<string | null>(null)
+  const src = loaded === sizes.png ? sizes.png : sizes.large
   const [view, setView] = useState<View>(FIT)
   const [loupeMode, setLoupeMode] = useState(false)
   const [loupe, setLoupe] = useState<Loupe | null>(null)
@@ -31,13 +46,21 @@ export default function CardLightbox({ image, caption, onClose }: { image: strin
   const closeRef = useRef<HTMLButtonElement>(null)
   const pointers = useRef(new Map<number, { x: number; y: number }>())
   const dragged = useRef(false)
+  const swipe = useRef<{ x: number; y: number } | null>(null)
   const closeHandler = useRef(onClose)
   useEffect(() => { closeHandler.current = onClose }, [onClose])
+
+  /** Moves `by` images along, wrapping round at the ends; the new image starts fitted to the window. */
+  const step = useCallback((by: number) => {
+    setIndex(i => (i + by + slides.length) % slides.length)
+    setView(FIT)
+    setLoupe(null)
+  }, [slides.length])
 
   // Show the large JPG at once, then swap in the full-resolution PNG when it arrives.
   useEffect(() => {
     const png = new Image()
-    png.onload = () => setSrc(png.src)
+    png.onload = () => setLoaded(sizes.png)
     png.src = sizes.png
     return () => { png.onload = null }
   }, [sizes.png])
@@ -74,6 +97,8 @@ export default function CardLightbox({ image, caption, onClose }: { image: strin
       else if (e.key === '+' || e.key === '=') zoomAt(1.5)
       else if (e.key === '-') zoomAt(1 / 1.5)
       else if (e.key === '0') setView(FIT)
+      else if (e.key === 'ArrowLeft') step(-1)
+      else if (e.key === 'ArrowRight') step(1)
     }
     document.addEventListener('keydown', onKey)
     return () => {
@@ -81,7 +106,7 @@ export default function CardLightbox({ image, caption, onClose }: { image: strin
       document.body.style.overflow = overflow
       previous?.focus()
     }
-  }, [zoomAt])
+  }, [zoomAt, step])
 
   // React's onWheel is passive, so the page would scroll too; listen directly to cancel it.
   useEffect(() => {
@@ -113,6 +138,7 @@ export default function CardLightbox({ image, caption, onClose }: { image: strin
     try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* pointer already gone */ }
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
     dragged.current = false
+    swipe.current = pointers.current.size === 1 ? { x: e.clientX, y: e.clientY } : null
     if (loupeMode) moveLoupe(e)
   }
 
@@ -139,6 +165,13 @@ export default function CardLightbox({ image, caption, onClose }: { image: strin
   }
 
   function onPointerUp(e: ReactPointerEvent<HTMLDivElement>) {
+    const from = swipe.current
+    swipe.current = null
+    // One finger sliding sideways across an unzoomed card turns to the next image.
+    if (from && many && !loupeMode && view.scale <= 1 && pointers.current.size === 1 && e.type === 'pointerup') {
+      const dx = e.clientX - from.x, dy = e.clientY - from.y
+      if (Math.abs(dx) > SWIPE && Math.abs(dx) > Math.abs(dy)) { dragged.current = true; step(dx < 0 ? 1 : -1) }
+    }
     pointers.current.delete(e.pointerId)
     if (loupeMode && e.pointerType !== 'mouse') setLoupe(null)
   }
@@ -146,7 +179,7 @@ export default function CardLightbox({ image, caption, onClose }: { image: strin
   function onBackdropClick(e: ReactMouseEvent) {
     if (dragged.current) { dragged.current = false; return }
     const target = e.target as HTMLElement
-    if (target === imgRef.current || target.closest('.lb-toolbar')) return
+    if (target === imgRef.current || target.closest('.lb-toolbar, .lb-nav')) return
     onClose()
   }
 
@@ -173,11 +206,15 @@ export default function CardLightbox({ image, caption, onClose }: { image: strin
         <img ref={imgRef} src={src} alt={caption} draggable={false}
              style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }} />
       </div>
+      {many && <>
+        <button type="button" className="lb-nav prev" onClick={() => step(-1)} aria-label="Previous image">‹</button>
+        <button type="button" className="lb-nav next" onClick={() => step(1)} aria-label="Next image">›</button>
+      </>}
       {loupe && <div className="loupe" aria-hidden="true" style={{
         left: loupe.left, top: loupe.top, width: LOUPE_SIZE, height: LOUPE_SIZE,
         backgroundImage: `url("${src}")`, backgroundSize: loupe.bgSize, backgroundPosition: loupe.bgPos,
       }} />}
-      <p className="lb-caption">{caption}</p>
+      <p className="lb-caption">{caption}{many && <span className="lb-count"> · {index + 1} of {slides.length}</span>}</p>
     </div>
   )
 }

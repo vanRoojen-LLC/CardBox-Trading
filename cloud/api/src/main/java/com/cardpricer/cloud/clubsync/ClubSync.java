@@ -56,6 +56,9 @@ public class ClubSync {
             + " AND coalesce(i.condition, l.default_condition) = ? AND " + LOCATION + " = ? AND " + STORAGE + " IS NOT DISTINCT FROM ?"
             + " AND i.batch_id = ?";
 
+    /** A line with more photos than this shows the first ones; the lightbox doesn't need hundreds. */
+    private static final int MAX_ROW_SCANS = 50;
+
     private final JdbcTemplate jdbc;
     private final InventoryRepository inventory;
 
@@ -261,6 +264,32 @@ public class ClubSync {
                         + " FROM club_link_items i " + SPOTS + " WHERE " + LINE + " ORDER BY i.item_id LIMIT 200",
                 line.get("club_link_id"), line.get("card_id"), line.get("finish"), line.get("condition"),
                 line.get("location_id"), line.get("storage_id"), line.get("source_batch_id"));
+    }
+
+    /**
+     * The photographed scans behind each of these synced inventory lines, so the Inventory page can show them in the
+     * row: line id to its scans (image, quantity, detail), in the same order as {@link #scans}.
+     */
+    public Map<UUID, List<Map<String, Object>>> scanPhotos(UUID tenant, Collection<UUID> lineIds) {
+        Map<UUID, List<Map<String, Object>>> byLine = new HashMap<>();
+        if (lineIds.isEmpty()) return byLine;
+        jdbc.query("SELECT ii.id, i.quantity, i.image_url, i.details::text FROM inventory_items ii"
+                        + " JOIN club_link_items i ON i.link_id = ii.club_link_id " + SPOTS
+                        + " WHERE ii.tenant_id = ? AND ii.id = ANY (?::uuid[]) AND i.image_url IS NOT NULL AND NOT i.removed"
+                        + " AND i.card_id = ii.card_id AND i.finish = ii.finish AND coalesce(i.condition, l.default_condition) = ii.condition"
+                        + " AND " + LOCATION + " = ii.location_id AND " + STORAGE + " IS NOT DISTINCT FROM ii.storage_id"
+                        + " AND i.batch_id = ii.source_batch_id ORDER BY ii.id, i.item_id",
+                rs -> {
+                    var scans = byLine.computeIfAbsent(rs.getObject(1, UUID.class), k -> new ArrayList<>());
+                    if (scans.size() >= MAX_ROW_SCANS) return;
+                    Map<String, Object> scan = new HashMap<>();
+                    scan.put("quantity", rs.getInt(2));
+                    scan.put("image", rs.getString(3));
+                    scan.put("details", rs.getString(4));
+                    scans.add(scan);
+                },
+                tenant, lineIds.stream().map(UUID::toString).toArray(String[]::new));
+        return byLine;
     }
 
     /** A CardBox store's open locations and storage spots, for Club to tag scans with. */

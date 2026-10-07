@@ -429,8 +429,8 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
       )}
 
       {enlarged?.image && (
-        <CardLightbox image={enlarged.image} onClose={() => setEnlarged(null)}
-                      caption={`${enlarged.name} · ${enlarged.setName} (${enlarged.set}) #${enlarged.number}`} />
+        <CardLightbox onClose={() => setEnlarged(null)}
+                      slides={[{ image: enlarged.image, caption: `${enlarged.name} · ${enlarged.setName} (${enlarged.set}) #${enlarged.number}` }]} />
       )}
     </section>
   )
