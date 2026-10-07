@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from './api'
+import { gameName, useGames, type Game, type GameScope } from './games'
 
-export type Game = 'mtg' | 'swu'
-export const GAME_LABELS: Record<Game, string> = { mtg: 'Magic', swu: 'Star Wars: Unlimited' }
+export type { Game }
+const label = (game: Game) => gameName(game) ?? game
 
 /** Another game that has matches for a search that found nothing in this one. */
 interface Elsewhere { game: Game; count: number; more: boolean; names: string[] }
@@ -29,25 +30,40 @@ export default function OtherGames({ query, game, onPick, link }: {
   }, [query, game])
 
   return <>{found.map(e => {
-    const label = `${e.count}${e.more ? '+' : ''} ${e.count === 1 && !e.more ? 'match' : 'matches'} in ${GAME_LABELS[e.game]}`
+    const matches = `${e.count}${e.more ? '+' : ''} ${e.count === 1 && !e.more ? 'match' : 'matches'} in ${label(e.game)}`
     return (
       <p key={e.game} className="elsewhere">
-        Did you mean to search {GAME_LABELS[e.game]}?{' '}
-        {onPick ? <button type="button" className="link" onClick={() => onPick(e.game)}>{label}</button>
-          : <Link to={link ? link(e.game, query.trim()) : `/?game=${e.game}&q=${encodeURIComponent(query.trim())}`}>{label}</Link>}
+        Did you mean to search {label(e.game)}?{' '}
+        {onPick ? <button type="button" className="link" onClick={() => onPick(e.game)}>{matches}</button>
+          : <Link to={link ? link(e.game, query.trim()) : `/?game=${e.game}&q=${encodeURIComponent(query.trim())}`}>{matches}</Link>}
         <span className="muted small"> {e.names.join(' · ')}</span>
       </p>
     )
   })}</>
 }
 
-/** The Magic / Star Wars: Unlimited switch above a card search. */
-export function GameSwitch({ game, onChange }: { game: Game; onChange: (game: Game) => void }) {
+/**
+ * The game switch above a card search: Magic and Star Wars: Unlimited as buttons, and every other game the viewer may
+ * search in a compact "More games" select, preview games marked (only a platform owner sees those). `scope` says which
+ * list: the free price check's ('public') or a signed-in store's ('app').
+ */
+export function GameSwitch({ game, onChange, scope = 'app' }: { game: Game; onChange: (game: Game) => void; scope?: GameScope }) {
+  const games = useGames(scope)
+  const native = games.filter(g => g.key === 'mtg' || g.key === 'swu')
+  const more = games.filter(g => g.key !== 'mtg' && g.key !== 'swu')
   return (
     <div className="seg game-switch" role="group" aria-label="Game">
-      {(Object.keys(GAME_LABELS) as Game[]).map(g => (
-        <button key={g} type="button" aria-pressed={g === game} onClick={() => onChange(g)}>{GAME_LABELS[g]}</button>
+      {native.map(g => (
+        <button key={g.key} type="button" aria-pressed={g.key === game} onClick={() => onChange(g.key)}>{g.name}</button>
       ))}
+      {more.length > 0 && (
+        <select aria-label="More games" value={more.some(g => g.key === game) ? game : ''}
+                className={more.some(g => g.key === game) ? 'chosen' : undefined}
+                onChange={e => { if (e.target.value) onChange(e.target.value) }}>
+          <option value="">More games…</option>
+          {more.map(g => <option key={g.key} value={g.key}>{g.preview ? `${g.name} (Preview)` : g.name}</option>)}
+        </select>
+      )}
     </div>
   )
 }

@@ -799,3 +799,5 @@ button.confidence.low:hover, button.confidence.none:hover { background: var(--ba
 label.inline { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-weight: 500; }
 label.inline input { min-height: 0; width: 20px; height: 20px; }
 .result .meta button.link { font-size: inherit; }
+.game-switch select { width: auto; min-width: 0; color: var(--text-2); }
+.game-switch select.chosen { background: var(--sel); color: var(--sel-text); border-color: var(--sel); }

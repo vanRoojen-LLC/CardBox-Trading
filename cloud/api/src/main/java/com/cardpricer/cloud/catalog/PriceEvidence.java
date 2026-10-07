@@ -45,7 +45,7 @@ public class PriceEvidence {
     private static final String MAGIC_LISTINGS = "Lowest, median and highest TCGplayer listing: Scryfall doesn't "
             + "publish them for Magic. TCGCSV does, and is the next source to add.";
 
-    private sealed interface Raw permits Magic, Swu {}
+    private sealed interface Raw permits Magic, Swu, Tcg {}
 
     private record Magic(BigDecimal usd, BigDecimal usdFoil, BigDecimal usdEtched, BigDecimal eur, BigDecimal eurFoil,
                          String tcgplayerId, Instant updatedAt) implements Raw {
@@ -69,13 +69,22 @@ public class PriceEvidence {
 
     private record Swu(boolean foil, BigDecimal tcgMarket, BigDecimal tcgLow, BigDecimal tcgMid, BigDecimal tcgHigh,
                        BigDecimal tcgDirectLow, Instant tcgObservedAt, BigDecimal swuMarket, BigDecimal swuLow,
-                       Instant swuObservedAt, String tcgplayerId) implements Raw {
+                       Instant swuObservedAt, String tcgplayerId, String tcgSource) implements Raw {
+        /** The mirror that served TCGplayer's price: TCGTracking, or TCGCSV as the fallback. */
+        String tcgLabel() {
+            return SwuTcgplayerPrices.TCGTRACKING.equals(tcgSource) ? "TCGTracking" : "TCGCSV";
+        }
+
         /** The same choice as inventory_cards (V23): TCGCSV unless it is missing or three days behind swu-db. */
         boolean tcgCurrent() {
             return tcgMarket != null && (swuObservedAt == null || tcgObservedAt == null
                     || tcgObservedAt.isAfter(swuObservedAt.minus(Duration.ofDays(3))));
         }
     }
+
+    /** A TCGTracking product in one subtype: TCGplayer's market and lowest listing, and nothing to check them against. */
+    private record Tcg(String game, boolean foil, BigDecimal market, BigDecimal low, Instant observedAt, int productId)
+            implements Raw {}
 
     private final JdbcTemplate jdbc;
 
@@ -123,6 +132,15 @@ public class PriceEvidence {
             missing.addFirst(MAGIC_LISTINGS);
             inputs = new Confidence.Inputs(market, m.updatedAt(), null, null, null, null, recent);
             url = m.tcgplayerId();
+        } else if (raw instanceof Tcg t) {
+            game = t.game();
+            market = t.foil() == finish.equals("foil") ? t.market() : null;
+            if (market != null) {
+                points.add(new Point("TCGTracking", "TCGplayer market", market, "USD", t.observedAt(), true));
+                if (t.low() != null) points.add(new Point("TCGTracking", "Lowest listing", t.low(), "USD", t.observedAt(), false));
+            }
+            inputs = new Confidence.Inputs(market, t.observedAt(), null, null, market == null ? null : t.low(), null, recent);
+            url = String.valueOf(t.productId());
         } else {
             Swu s = (Swu) raw;
             game = "star-wars-unlimited";
@@ -130,18 +148,19 @@ public class PriceEvidence {
             boolean tcg = s.tcgCurrent();
             market = !matches ? null : tcg ? s.tcgMarket() : s.swuMarket();
             if (matches) {
-                points.add(new Point("TCGCSV", "TCGplayer market", s.tcgMarket(), "USD", s.tcgObservedAt(), tcg));
-                points.add(new Point("TCGCSV", "Lowest listing", s.tcgLow(), "USD", s.tcgObservedAt(), false));
-                points.add(new Point("TCGCSV", "Median listing", s.tcgMid(), "USD", s.tcgObservedAt(), false));
-                points.add(new Point("TCGCSV", "Highest listing", s.tcgHigh(), "USD", s.tcgObservedAt(), false));
-                points.add(new Point("TCGCSV", "Lowest TCGplayer Direct", s.tcgDirectLow(), "USD", s.tcgObservedAt(), false));
+                String mirror = s.tcgLabel();
+                points.add(new Point(mirror, "TCGplayer market", s.tcgMarket(), "USD", s.tcgObservedAt(), tcg));
+                points.add(new Point(mirror, "Lowest listing", s.tcgLow(), "USD", s.tcgObservedAt(), false));
+                points.add(new Point(mirror, "Median listing", s.tcgMid(), "USD", s.tcgObservedAt(), false));
+                points.add(new Point(mirror, "Highest listing", s.tcgHigh(), "USD", s.tcgObservedAt(), false));
+                points.add(new Point(mirror, "Lowest TCGplayer Direct", s.tcgDirectLow(), "USD", s.tcgObservedAt(), false));
                 points.add(new Point("swu-db", "TCGplayer market, swu-db's copy", s.swuMarket(), "USD", s.swuObservedAt(), !tcg));
                 points.add(new Point("swu-db", "Lowest listing, swu-db's copy", s.swuLow(), "USD", s.swuObservedAt(), false));
                 points.removeIf(p -> p.value() == null && !p.used());
             }
             inputs = tcg
                     ? new Confidence.Inputs(market, s.tcgObservedAt(), "swu-db's copy", s.swuMarket(), s.tcgLow(), s.tcgMid(), recent)
-                    : new Confidence.Inputs(market, s.swuObservedAt(), "TCGCSV", s.tcgMarket(), s.swuLow(), null, recent);
+                    : new Confidence.Inputs(market, s.swuObservedAt(), s.tcgLabel(), s.tcgMarket(), s.swuLow(), null, recent);
             url = s.tcgplayerId();
         }
         Confidence.Result result = Confidence.assess(inputs, now);
@@ -165,19 +184,35 @@ public class PriceEvidence {
         jdbc.query(con -> {
             var ps = con.prepareStatement("""
                     SELECT id, treatment LIKE '%foil%', tcgplayer_market, tcgplayer_low, tcgplayer_mid, tcgplayer_high,
-                           tcgplayer_direct_low, tcgplayer_observed_at, market, low, price_observed_at, tcgplayer_id
+                           tcgplayer_direct_low, tcgplayer_observed_at, market, low, price_observed_at, tcgplayer_id,
+                           tcgplayer_source
                     FROM swu_cards WHERE id = ANY(?)""");
             ps.setArray(1, con.createArrayOf("uuid", array));
             return ps;
         }, rs -> {
             out.put(rs.getObject(1, UUID.class), new Swu(rs.getBoolean(2), rs.getBigDecimal(3), rs.getBigDecimal(4),
                     rs.getBigDecimal(5), rs.getBigDecimal(6), rs.getBigDecimal(7), instant(rs.getTimestamp(8)),
-                    rs.getBigDecimal(9), rs.getBigDecimal(10), instant(rs.getTimestamp(11)), rs.getString(12)));
+                    rs.getBigDecimal(9), rs.getBigDecimal(10), instant(rs.getTimestamp(11)), rs.getString(12),
+                    rs.getString(13)));
+        });
+        jdbc.query(con -> {
+            var ps = con.prepareStatement("""
+                    SELECT p.id, g.segment, p.sub_type ILIKE '%foil%', p.market, p.low, p.observed_at, p.product_id
+                    FROM tcg_products p JOIN tcg_games g ON g.category_id = p.category_id WHERE p.id = ANY(?)""");
+            ps.setArray(1, con.createArrayOf("uuid", array));
+            return ps;
+        }, rs -> {
+            out.put(rs.getObject(1, UUID.class), new Tcg(rs.getString(2), rs.getBoolean(3), rs.getBigDecimal(4),
+                    rs.getBigDecimal(5), instant(rs.getTimestamp(6)), rs.getInt(7)));
         });
         return out;
     }
 
-    /** TCGplayer's recorded market price per card and finish over the last {@code days}, oldest first. */
+    /**
+     * TCGplayer's recorded market price per card and finish over the last {@code days}, oldest first, whichever mirror
+     * served it (an SWU night that fell back to TCGCSV records under 'tcgplayer', a TCGTracking night under
+     * 'tcgplayer via tcgtracking'; the same price either way).
+     */
     private Map<Key, List<Day>> history(List<UUID> ids, int days) {
         Map<Key, List<Day>> out = new HashMap<>();
         if (ids.isEmpty()) return out;
@@ -185,7 +220,8 @@ public class PriceEvidence {
         jdbc.query(con -> {
             var ps = con.prepareStatement("""
                     SELECT card_id, finish, day, market FROM price_history
-                    WHERE card_id = ANY(?) AND source = 'tcgplayer' AND day > current_date - ? ORDER BY day""");
+                    WHERE card_id = ANY(?) AND source IN ('tcgplayer', 'tcgplayer via tcgtracking')
+                      AND day > current_date - ? ORDER BY day""");
             Array a = con.createArrayOf("uuid", array);
             ps.setArray(1, a);
             ps.setInt(2, days);

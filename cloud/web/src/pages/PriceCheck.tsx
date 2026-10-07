@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { api, money, type Card } from '../api'
 import SearchIcon from '../SearchIcon'
 import CardLightbox from '../CardLightbox'
-import OtherGames, { type Game } from '../OtherGames'
+import OtherGames, { GameSwitch, type Game } from '../OtherGames'
+import { loadGames, useGames, type GameInfo } from '../games'
 import { EvidencePanel } from '../PriceEvidence'
 
 /** A public result row; Star Wars: Unlimited rows also name their variant and link to TCGplayer. */
@@ -12,22 +13,26 @@ type PriceCard = Card & { variant?: string | null; url?: string | null; cardId?:
 const finishOf = (card: PriceCard) => card.usd != null ? 'normal' : card.usdFoil != null ? 'foil' : 'etched'
 interface SearchResult { cards: PriceCard[]; pricesUpdatedAt: string | null }
 
-const GAMES: Record<Game, { label: string; title: string; example: string }> = {
-  mtg: { label: 'Magic', title: 'Magic card price check', example: 'e.g. Lightning Bolt or DMU 391' },
-  swu: { label: 'Star Wars: Unlimited', title: 'Star Wars: Unlimited price check', example: 'e.g. Darth Vader or SOR 010' },
+/** Magic and SWU have their own wording; every other game reads "<name> price check". */
+const COPY: Record<string, { title: string; example: string }> = {
+  mtg: { title: 'Magic card price check', example: 'e.g. Lightning Bolt or DMU 391' },
+  swu: { title: 'Star Wars: Unlimited price check', example: 'e.g. Darth Vader or SOR 010' },
 }
+const copy = (game: Game, games: GameInfo[]) => COPY[game]
+  ?? { title: `${games.find(g => g.key === game)?.name ?? 'Card'} price check`, example: 'Card name, or set code and number' }
 
 /** Prices refresh nightly; two days without a good refresh is said on the page rather than shown as current. */
 const STALE_MS = 48 * 3600 * 1000
 
 /** The game in the address (?game=swu), so a store can link straight to it. Magic otherwise. */
 function gameFromUrl(): Game {
-  return new URLSearchParams(window.location.search).get('game') === 'swu' ? 'swu' : 'mtg'
+  return new URLSearchParams(window.location.search).get('game') || 'mtg'
 }
 
 /** The free price check: search a card, see its market price. Nothing else, by design. */
 export default function PriceCheck() {
   const [game, setGame] = useState<Game>(gameFromUrl)
+  const games = useGames('public')
   const [query, setQuery] = useState(() => new URLSearchParams(window.location.search).get('q') ?? '')
   const [result, setResult] = useState<SearchResult | null>(null)
   const [error, setError] = useState('')
@@ -36,6 +41,14 @@ export default function PriceCheck() {
   const [details, setDetails] = useState<string | null>(null)
   // The search the shown result answers, so the other-games hint never runs for a query still being typed.
   const [searched, setSearched] = useState('')
+
+  // A link to a game that is not (or no longer) public falls back to Magic once the list says so.
+  useEffect(() => {
+    const linked = gameFromUrl()
+    let current = true
+    loadGames('public').then(list => { if (current && !list.some(g => g.key === linked)) choose('mtg') })
+    return () => { current = false }
+  }, [])
 
   useEffect(() => {
     if (query.trim().length < 2) { setResult(null); setError(''); return }
@@ -60,16 +73,12 @@ export default function PriceCheck() {
 
   return (
     <section>
-      <h1>{GAMES[game].title}</h1>
+      <h1>{copy(game, games).title}</h1>
       <p className="lede">Free, no account. Search by name, set code or collector number.</p>
-      <div className="seg game-switch" role="group" aria-label="Game">
-        {(Object.keys(GAMES) as Game[]).map(g => (
-          <button key={g} type="button" aria-pressed={g === game} onClick={() => choose(g)}>{GAMES[g].label}</button>
-        ))}
-      </div>
+      <GameSwitch game={game} onChange={choose} scope="public" />
       <div className="search">
         <SearchIcon />
-        <input autoFocus placeholder={GAMES[game].example} value={query}
+        <input autoFocus placeholder={copy(game, games).example} value={query}
                onChange={e => setQuery(e.target.value)} aria-label="Card name, set or number" />
         {result && <span className="aside">{result.cards.length} {result.cards.length === 1 ? 'match' : 'matches'}</span>}
       </div>

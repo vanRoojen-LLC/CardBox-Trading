@@ -279,7 +279,7 @@ resource importJob 'Microsoft.App/jobs@2024-03-01' = if (deployApps) {
     workloadProfileName: 'Consumption'
     configuration: {
       triggerType: 'Schedule'
-      scheduleTriggerConfig: { cronExpression: '30 10 * * *', parallelism: 1, replicaCompletionCount: 1 } // daily, UTC
+      scheduleTriggerConfig: { cronExpression: '0 15 * * *', parallelism: 1, replicaCompletionCount: 1 } // daily at 15:00 UTC, after TCGTracking's ~9:35 AM ET price refresh in both EDT and EST
       replicaTimeout: 3600
       replicaRetryLimit: 1
       registries: [{ server: registry.properties.loginServer, identity: identity.id }]

@@ -112,10 +112,16 @@ public class CatalogRepository {
         return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 
-    /** A card trades and stock can take: a Magic card, or a Star Wars: Unlimited printing priced by its finish. */
+    /**
+     * A card trades and stock can take: a Magic card, or a Star Wars: Unlimited printing or TCGTracking product priced
+     * by its finish (through inventory_cards, which puts their one price in the normal or foil column). A TCGTracking
+     * game that is switched off takes no new lines.
+     */
     public Optional<CardRow> find(UUID id) {
         return jdbc.query("SELECT " + COLUMNS + " FROM cards WHERE id = ? UNION ALL SELECT " + COLUMNS
-                + " FROM inventory_cards WHERE id = ? AND id IN (SELECT id FROM swu_cards WHERE id = ?)", ROW, id, id, id)
+                + " FROM inventory_cards WHERE id = ? AND (id IN (SELECT id FROM swu_cards WHERE id = ?)"
+                + " OR id IN (SELECT p.id FROM tcg_products p JOIN tcg_games g ON g.category_id = p.category_id"
+                + " WHERE p.id = ? AND g.enabled))", ROW, id, id, id, id)
                 .stream().findFirst();
     }
 

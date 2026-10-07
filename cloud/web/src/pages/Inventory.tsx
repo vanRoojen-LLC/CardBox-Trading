@@ -4,6 +4,7 @@ import { aborted, api, CONDITIONS, FINISHES, money, type Card, type Money, type 
 import { flatTree, pathOf, pathText, placeText, subtreeCounts, type PathPart, type Spot } from '../storage'
 import SearchIcon from '../SearchIcon'
 import OtherGames, { GameSwitch, type Game } from '../OtherGames'
+import { useGames } from '../games'
 import { FACETS, TREATMENTS, ruleText, titleCase, valueLabel, type Conditions, type Facets } from '../cardDetails'
 import { ColorPips, FacetMenu, PriceMenu } from '../cardFilters'
 import ClubCollections from './ClubCollections'
@@ -114,6 +115,8 @@ function LocationPicker({ spots, locationId, value, counts, onChange }: {
 export default function Inventory({ locations, registerLocationId, owner }: { locations: StoreLocation[]; registerLocationId: string | null; owner: boolean }) {
   const open = locations.filter(l => !l.archived)
   const several = locations.length > 1
+  // Names the games stock is filed under in the filters (re-rendering when the list arrives).
+  useGames('app')
   const [view, setView] = useState(() => readStored('inventory.view', 'none'))
   const [filters, setFilters] = useState<Filters>(() => (several && registerLocationId ? { location: [registerLocationId] } : {}) as Filters)
   const [q, setQ] = useState('')

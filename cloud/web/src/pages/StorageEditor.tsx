@@ -3,6 +3,7 @@ import { api, type StoreLocation } from '../api'
 import { expandNames, flatTree, pathOf, pathText, type Spot } from '../storage'
 import { FACETS, KNOWN, ruleText, type Conditions, type FacetValue, type Facets } from '../cardDetails'
 import { FacetMenu } from '../cardFilters'
+import { useGames } from '../games'
 
 interface Rule { spotId: string; conditions: Conditions; cards: number; waiting: number }
 
@@ -13,6 +14,8 @@ type Editing = { mode: 'add'; parentId: string | null } | { mode: 'rename'; spot
  * and options (Store room › Shelf › Box › Section, or whatever fits). Owners edit it; everyone can see it.
  */
 export default function StorageEditor({ owner, locations }: { owner: boolean; locations: StoreLocation[] }) {
+  // Rules may name any game the store can search, and say it by name (re-rendering when the list arrives).
+  useGames('app')
   const open = locations.filter(l => !l.archived)
   const [locationId, setLocationId] = useState(open[0]?.id ?? '')
   const [spots, setSpots] = useState<Spot[]>([])

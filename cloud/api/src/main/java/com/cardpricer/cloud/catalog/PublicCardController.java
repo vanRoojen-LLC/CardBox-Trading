@@ -26,14 +26,18 @@ import java.util.Optional;
 public class PublicCardController {
     private final CatalogRepository catalog;
     private final SwuCatalogRepository swu;
+    private final TcgGames games;
+    private final TcgProductRepository tcg;
     private final PriceChecks priceChecks;
     private final PriceEvidence evidence;
 
-    public PublicCardController(CatalogRepository catalog, SwuCatalogRepository swu, PriceChecks priceChecks,
-                                PriceEvidence evidence) {
+    public PublicCardController(CatalogRepository catalog, SwuCatalogRepository swu, TcgGames games, TcgProductRepository tcg,
+                                PriceChecks priceChecks, PriceEvidence evidence) {
         this.evidence = evidence;
         this.catalog = catalog;
         this.swu = swu;
+        this.games = games;
+        this.tcg = tcg;
         this.priceChecks = priceChecks;
     }
 
@@ -43,8 +47,9 @@ public class PublicCardController {
                                                       @RequestParam(value = "game", defaultValue = "mtg") String game) {
         if (q.trim().length() < 2) throw ApiException.badRequest("Type at least 2 characters");
         if (q.length() > 100) throw ApiException.badRequest("Search is too long");
-        if (!game.equals("mtg") && !game.equals("swu")) throw ApiException.badRequest("Unknown game");
-        var response = game.equals("swu") ? swu(q, set) : mtg(q, set);
+        // Preview games are never on the free page.
+        if (games.find(game, false).isEmpty()) throw ApiException.badRequest("Unknown game");
+        var response = game.equals("swu") ? swu(q, set) : game.equals("mtg") ? mtg(q, set) : tcg(game, q, set);
         // Counted only once the search has succeeded. Answers are cacheable for an hour (below), so searches a
         // browser or CDN serves from its cache never reach us and are not counted.
         priceChecks.count();
@@ -61,15 +66,21 @@ public class PublicCardController {
                                                          @RequestParam(value = "game", defaultValue = "mtg") String game) {
         if (q.trim().length() < 2) throw ApiException.badRequest("Type at least 2 characters");
         if (q.length() > 100) throw ApiException.badRequest("Search is too long");
-        if (!game.equals("mtg") && !game.equals("swu")) throw ApiException.badRequest("Unknown game");
-        List<Map<String, Object>> games = new ArrayList<>();
+        if (games.find(game, false).isEmpty()) throw ApiException.badRequest("Unknown game");
+        List<Map<String, Object>> found = new ArrayList<>();
         if (!game.equals("mtg")) suggestion("mtg", catalog.search(q, "", ELSEWHERE_LIMIT).stream().map(CardRow::name).toList())
-                .ifPresent(games::add);
+                .ifPresent(found::add);
         if (!game.equals("swu")) suggestion("swu", swu.search(q, "", ELSEWHERE_LIMIT).stream()
                 .map(c -> c.subtitle() == null ? c.name() : c.name() + ", " + c.subtitle()).toList())
-                .ifPresent(games::add);
+                .ifPresent(found::add);
+        // Only games out of preview are asked, so the hint stays cheap however many preview games there are.
+        for (TcgGames.Game other : games.list(false)) {
+            if (other.nativeGame() || other.key().equals(game)) continue;
+            suggestion(other.key(), tcg.search(games.categories(other.key(), false), q, "", ELSEWHERE_LIMIT).stream()
+                    .map(TcgProduct::name).toList()).ifPresent(found::add);
+        }
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(Duration.ofHours(1)).cachePublic())
-                .body(Map.of("games", games));
+                .body(Map.of("games", found));
     }
 
     /** Matches counted up to this many; more reads as "40+". */
@@ -88,6 +99,9 @@ public class PublicCardController {
         if (!List.of("normal", "foil", "etched").contains(finish)) throw ApiException.badRequest("Unknown finish");
         var found = evidence.evidence(id, finish, java.time.Instant.now());
         if (found == null) throw ApiException.notFound("No prices for that card");
+        // A TCGTracking game still in preview is not on the free page, its prices included.
+        if (!found.game().equals(TcgGames.MAGIC.segment()) && !found.game().equals(TcgGames.SWU.segment())
+                && games.categories(found.game(), false).isEmpty()) throw ApiException.notFound("No prices for that card");
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(Duration.ofHours(1)).cachePublic()).body(found);
     }
 
@@ -110,6 +124,30 @@ public class PublicCardController {
         body.put("pricesUpdatedAt", swu.lastImport().map(Object::toString).orElse(null));
         body.put("source", "TCGplayer");
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(Duration.ofHours(1)).cachePublic()).body(body);
+    }
+
+    private ResponseEntity<Map<String, Object>> tcg(String game, String q, String set) {
+        List<Integer> categories = games.categories(game, false);
+        List<Map<String, Object>> cards = tcg.search(categories, q, set.trim().toUpperCase(Locale.ROOT), 40).stream()
+                .map(PublicCardController::view).toList();
+        Map<String, Object> body = new HashMap<>();
+        body.put("cards", cards);
+        body.put("pricesUpdatedAt", tcg.lastObserved(categories).map(Object::toString).orElse(null));
+        body.put("source", "TCGplayer via TCGTracking");
+        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(Duration.ofHours(1)).cachePublic()).body(body);
+    }
+
+    /**
+     * A TCGTracking product in the Magic row's shape: its card id (the same on the free page and in trades), its one
+     * market price in the Normal or Foil column by subtype, and any subtype other than Normal or Foil named as the
+     * variant ("Reverse Holofoil", "1st Edition").
+     */
+    public static Map<String, Object> view(TcgProduct card) {
+        Map<String, Object> view = view(card.toCardRow());
+        view.put("variant", card.subType().equals("Normal") || card.subType().equals("Foil") ? null : card.subType());
+        view.put("priceObservedAt", card.observedAt() == null ? null : card.observedAt().toString());
+        view.put("url", "https://www.tcgplayer.com/product/" + card.productId());
+        return view;
     }
 
     /**
@@ -136,7 +174,7 @@ public class PublicCardController {
         return view;
     }
 
-    static Map<String, Object> view(CardRow card) {
+    public static Map<String, Object> view(CardRow card) {
         Map<String, Object> view = new HashMap<>();
         view.put("id", card.id());
         view.put("name", card.name());
