@@ -66,8 +66,8 @@ each conditional on the stored ETag; the category and per-game set listings once
 `products_modified` moves, its prices when `pricing_modified` moves or our copy is over 72 hours old (the listings are
 edge-cached for days). Each run stops after `app.tcgtracking.budget-minutes` (20), most-stale sets first, so the first
 full sync (~3,400 sets) takes several nights and later nights fetch only what changed. A failed set is retried the next
-night. TCGTracking refreshes prices around 9:35 AM ET, after the job's 10:30 UTC start, so its prices are usually a day
-old when read.
+night. The job starts at 15:00 UTC, after TCGTracking's price refresh around 9:35 AM ET (in both EDT and EST), so each
+night reads that day's prices.
 
 Each night's prices also go into `price_history` (source `tcgplayer via tcgtracking` for TCGplayer's price served by
 TCGTracking, `tcgplayer` when TCGCSV or Scryfall served it): every SWU printing, and the Magic and TCGTracking cards a
@@ -84,7 +84,7 @@ Everything lives in one resource group. The Azure resources, the jar (`occ-price
 | Resource | SKU | Purpose |
 |---|---|---|
 | Container App `occpricer-app` | Consumption, 0.5 vCPU / 1 GiB, one replica always on | Web client + API |
-| Container Apps Job `occpricer-catalog-import` | Consumption, daily 10:30 UTC | Scryfall price import |
+| Container Apps Job `occpricer-catalog-import` | Consumption, daily 15:00 UTC | Scryfall, swu-db and TCGTracking imports |
 | PostgreSQL Flexible Server | Burstable B1ms, 32 GB | Data |
 | Container Registry | Basic | Images, built with `az acr build` |
 | Key Vault | Standard | Database password and session signing key |
