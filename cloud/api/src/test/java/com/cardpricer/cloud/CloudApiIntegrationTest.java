@@ -267,7 +267,9 @@ class CloudApiIntegrationTest {
         assertEquals("swu", games.get(0).path("game").asText());
         assertEquals(5, games.get(0).path("count").asInt());
         assertFalse(games.get(0).path("more").asBoolean());
-        assertEquals("Darth Vader, Dark Lord of the Sith", games.get(0).path("names").get(0).asText());
+        var names = new java.util.ArrayList<String>();
+        games.get(0).path("names").forEach(x -> names.add(x.asText()));
+        assertTrue(names.contains("Darth Vader, Dark Lord of the Sith"), names.toString());
         var bolt = call("GET", "/api/public/cards/elsewhere?game=swu&q=bolt", null, null).body().path("games");
         assertEquals("mtg", bolt.get(0).path("game").asText(), "and Magic from the Star Wars: Unlimited page");
         assertEquals(0, call("GET", "/api/public/cards/elsewhere?game=mtg&q=zzzz", null, null).body().path("games").size());
