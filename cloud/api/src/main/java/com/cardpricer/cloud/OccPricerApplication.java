@@ -1,6 +1,7 @@
 package com.cardpricer.cloud;
 
 import com.cardpricer.cloud.catalog.CatalogImporter;
+import com.cardpricer.cloud.catalog.PriceHistory;
 import com.cardpricer.cloud.catalog.SwuCatalogImporter;
 import com.cardpricer.cloud.catalog.SwuTcgplayerPrices;
 import org.springframework.boot.SpringApplication;
@@ -38,6 +39,13 @@ public class OccPricerApplication {
                 // TCGplayer's prices from TCGCSV, matched through the product ids swu-db just loaded.
                 try {
                     context.getBean(SwuTcgplayerPrices.class).importFromTcgcsv();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    status = 1;
+                }
+                // Whatever refreshed tonight goes into the price history, even if another import failed.
+                try {
+                    context.getBean(PriceHistory.class).record();
                 } catch (Exception e) {
                     e.printStackTrace();
                     status = 1;

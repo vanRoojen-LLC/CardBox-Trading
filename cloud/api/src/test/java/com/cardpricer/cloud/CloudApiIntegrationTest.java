@@ -127,6 +127,7 @@ class CloudApiIntegrationTest {
     @Autowired CatalogImporter importer;
     @Autowired SwuCatalogImporter swuImporter;
     @Autowired com.cardpricer.cloud.catalog.SwuTcgplayerPrices tcgplayerPrices;
+    @Autowired com.cardpricer.cloud.catalog.PriceHistory priceHistory;
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
     final ObjectMapper json = new ObjectMapper();
     final HttpClient http = HttpClient.newBuilder().proxy(HttpClient.Builder.NO_PROXY).build();
@@ -322,6 +323,73 @@ class CloudApiIntegrationTest {
         } finally {
             jdbc.update("UPDATE swu_cards SET tcgplayer_market = NULL, tcgplayer_low = NULL, tcgplayer_observed_at = NULL, price_disagrees = false");
         }
+    }
+
+    @Test
+    void priceEvidenceShowsEveryDatapointWithItsSourceAgeAndConfidence() throws Exception {
+        var prices = com.cardpricer.cloud.catalog.SwuTcgplayerPrices.parse(json.readTree("""
+                {"results":[{"productId":540208,"lowPrice":5.00,"midPrice":7.00,"highPrice":19.99,"marketPrice":6.45,
+                             "directLowPrice":6.10,"subTypeName":"Normal"}]}"""));
+        try {
+            tcgplayerPrices.apply(prices, java.time.Instant.now());
+            assertTrue(priceHistory.record() > 0);
+            String id = null;
+            for (var c : searchSwu("vader")) if (c.path("id").asText().equals("SOR-087")) id = c.path("cardId").asText();
+            assertNotNull(id);
+            var r = call("GET", "/api/public/cards/" + id + "/evidence?finish=normal", null, null);
+            assertEquals(200, r.status(), r.raw());
+            var points = new java.util.HashMap<String, JsonNode>();
+            r.body().path("points").forEach(p -> points.put(p.path("label").asText(), p));
+            assertEquals("6.45", points.get("TCGplayer market").path("value").asText());
+            assertTrue(points.get("TCGplayer market").path("used").asBoolean(), "the price offers use is marked");
+            assertEquals("7.0", points.get("Median listing").path("value").asText());
+            assertEquals("19.99", points.get("Highest listing").path("value").asText());
+            assertEquals("6.1", points.get("Lowest TCGplayer Direct").path("value").asText());
+            assertEquals("TCGCSV", points.get("Lowest listing").path("source").asText());
+            assertFalse(points.get("TCGplayer market").path("observedAt").isNull(), "every datapoint says how old it is");
+            assertEquals("6.5", points.get("TCGplayer market, swu-db's copy").path("value").asText());
+            assertEquals("high", r.body().path("confidence").asText(), r.raw());
+            assertEquals(1, r.body().path("history").size(), "tonight's price is recorded");
+            assertTrue(r.body().path("missing").toString().contains("TCGplayer API"), "what we can't show is said plainly");
+            assertEquals(400, call("GET", "/api/public/cards/" + id + "/evidence?finish=shiny", null, null).status());
+            // A Magic card has one source until history builds up, so it starts at medium.
+            var magic = call("GET", "/api/public/cards/22222222-2222-2222-2222-222222222222/evidence", null, null);
+            assertEquals("medium", magic.body().path("confidence").asText(), magic.raw());
+        } finally {
+            jdbc.update("UPDATE swu_cards SET tcgplayer_market = NULL, tcgplayer_low = NULL, tcgplayer_mid = NULL, tcgplayer_high = NULL,"
+                    + " tcgplayer_direct_low = NULL, tcgplayer_observed_at = NULL, price_disagrees = false");
+            jdbc.update("DELETE FROM price_history");
+        }
+    }
+
+    @Test
+    void confidenceRulesScaleOffersAndHoldTradesForReview() throws Exception {
+        String owner = signup("Trust Store", "t-" + UUID.randomUUID() + "@example.com");
+        var defaults = call("GET", "/api/app/confidence-rules", owner, null);
+        assertEquals(3, defaults.body().path("rules").size());
+        assertEquals(0, java.math.BigDecimal.ONE.compareTo(defaults.body().path("rules").get(1).path("adjust").decimalValue()),
+                "no rules means offers are unchanged");
+        assertEquals(400, call("PUT", "/api/app/confidence-rules", owner, Map.of("rules", List.of(
+                Map.of("level", "low", "adjust", 1.5, "review", false)))).status());
+        assertEquals(200, call("PUT", "/api/app/confidence-rules", owner, Map.of("rules", List.of(
+                Map.of("level", "high", "adjust", 1, "review", false),
+                Map.of("level", "medium", "adjust", 0.5, "review", true),
+                Map.of("level", "low", "adjust", 0.5, "review", true)))).status());
+        var lines = List.of(Map.of("cardId", "22222222-2222-2222-2222-222222222222", "finish", "normal", "condition", "NM", "quantity", 1));
+        var quote = call("POST", "/api/app/trades/quote", owner, Map.of("payment", "credit", "lines", lines));
+        assertEquals(200, quote.status(), quote.raw());
+        var line = quote.body().path("lines").get(0);
+        assertEquals("medium", line.path("confidence").asText());
+        assertTrue(line.path("review").asBoolean());
+        assertTrue(line.path("reasons").size() > 0);
+        // Ragavan's $24.00 credit offer at half for a medium-confidence price.
+        assertEquals(0, new java.math.BigDecimal("12.00").compareTo(quote.body().path("creditOffer").decimalValue()), quote.raw());
+        assertTrue(quote.body().path("review").asBoolean());
+        assertEquals(400, call("POST", "/api/app/trades", owner, Map.of("payment", "credit", "lines", lines)).status(),
+                "a held trade needs staff to confirm they checked the price");
+        var saved = call("POST", "/api/app/trades", owner, Map.of("payment", "credit", "lines", lines, "pricesReviewed", true));
+        assertEquals(200, saved.status(), saved.raw());
+        assertEquals("medium", saved.body().path("lines").get(0).path("confidence").asText());
     }
 
     @Test

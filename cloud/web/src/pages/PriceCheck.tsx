@@ -3,9 +3,13 @@ import { api, money, type Card } from '../api'
 import SearchIcon from '../SearchIcon'
 import CardLightbox from '../CardLightbox'
 import OtherGames, { type Game } from '../OtherGames'
+import { EvidencePanel } from '../PriceEvidence'
 
 /** A public result row; Star Wars: Unlimited rows also name their variant and link to TCGplayer. */
-type PriceCard = Card & { variant?: string | null; url?: string | null }
+type PriceCard = Card & { variant?: string | null; url?: string | null; cardId?: string }
+
+/** The finish a row's price is for: its normal price when it has one, else foil, else etched. */
+const finishOf = (card: PriceCard) => card.usd != null ? 'normal' : card.usdFoil != null ? 'foil' : 'etched'
 interface SearchResult { cards: PriceCard[]; pricesUpdatedAt: string | null }
 
 const GAMES: Record<Game, { label: string; title: string; example: string }> = {
@@ -28,6 +32,8 @@ export default function PriceCheck() {
   const [result, setResult] = useState<SearchResult | null>(null)
   const [error, setError] = useState('')
   const [enlarged, setEnlarged] = useState<PriceCard | null>(null)
+  // The row whose price evidence is open.
+  const [details, setDetails] = useState<string | null>(null)
   // The search the shown result answers, so the other-games hint never runs for a query still being typed.
   const [searched, setSearched] = useState('')
 
@@ -77,7 +83,8 @@ export default function PriceCheck() {
             <div className="rows">
               <div className="rows-head"><span style={{ flex: 1 }}>Card</span><span className="price-col">Normal</span><span className="price-col">Foil</span></div>
               {result.cards.map(card => (
-                <article key={card.id} className="result">
+                <div key={card.id}>
+                <article className="result">
                   {card.image
                     ? <button type="button" className="thumb" onClick={() => setEnlarged(card)} aria-label={`Enlarge ${card.name}`}>
                         <img src={card.image} alt="" loading="lazy" />
@@ -87,12 +94,18 @@ export default function PriceCheck() {
                     <h3>{card.name}</h3>
                     <div className="meta"><span>{card.setName}</span><b>{card.set.toUpperCase()} #{card.number}</b><span className={`rarity ${card.rarity}`}>{card.rarity}</span>
                       {card.variant && <span className="variant">{card.variant}</span>}
-                      {card.url && <a href={card.url} target="_blank" rel="noreferrer">TCGplayer</a>}</div>
+                      {card.url && <a href={card.url} target="_blank" rel="noreferrer">TCGplayer</a>}
+                      {(card.usd != null || card.usdFoil != null || card.usdEtched != null) &&
+                        <button type="button" className="link" aria-expanded={details === card.id}
+                                onClick={() => setDetails(details === card.id ? null : card.id)}>
+                          {details === card.id ? 'Hide price details' : 'Price details'}</button>}</div>
                   </div>
                   <div className="price-col"><small>Normal</small>{money(card.usd)}</div>
                   <div className="price-col foil"><small>Foil</small>{money(card.usdFoil)}
                     {card.usdEtched != null && <span className="etched">Etched {money(card.usdEtched)}</span>}</div>
                 </article>
+                {details === card.id && <EvidencePanel path={`/api/public/cards/${card.cardId ?? card.id}/evidence?finish=${finishOf(card)}&v=${__BUILD_ID__}`} />}
+                </div>
               ))}
             </div>
           )}

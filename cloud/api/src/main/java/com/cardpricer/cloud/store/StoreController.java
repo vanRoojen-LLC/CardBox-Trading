@@ -38,6 +38,10 @@ import java.util.UUID;
 public class StoreController {
     public record Rule(@NotNull BigDecimal thresholdMin, @NotNull BigDecimal creditRate, @NotNull BigDecimal checkRate) {}
     public record RatesBody(@NotNull @Size(min = 1, max = 20) List<@Valid Rule> rules) {}
+    /** {@code adjust} is the share of the normal offer paid at that level: 1 keeps it, 0.9 pays 90% of it. */
+    public record ConfidenceRule(@NotNull @Pattern(regexp = "high|medium|low") String level, @NotNull BigDecimal adjust,
+                                 boolean review) {}
+    public record ConfidenceBody(@NotNull @Size(min = 1, max = 3) List<@Valid ConfidenceRule> rules) {}
     /** Staff sign in through Auth0 with this email; their account links on their first sign-in. */
     public record StaffBody(@NotBlank @Size(max = 120) String name, @NotBlank @Email String email,
                             @Pattern(regexp = "owner|staff") String role) {}
@@ -48,14 +52,16 @@ public class StoreController {
                                @Size(max = 40) String phone, Boolean archived) {}
 
     private final RateRepository rates;
+    private final ConfidenceRules confidenceRules;
     private final JdbcTemplate jdbc;
     private final CardBoxClient cardbox;
     private final CardBoxTokens tokens;
     private final StoreNames storeNames;
 
-    public StoreController(RateRepository rates, JdbcTemplate jdbc, CardBoxClient cardbox, CardBoxTokens tokens,
-                           StoreNames storeNames) {
+    public StoreController(RateRepository rates, ConfidenceRules confidenceRules, JdbcTemplate jdbc, CardBoxClient cardbox,
+                           CardBoxTokens tokens, StoreNames storeNames) {
         this.rates = rates;
+        this.confidenceRules = confidenceRules;
         this.jdbc = jdbc;
         this.cardbox = cardbox;
         this.tokens = tokens;
@@ -195,6 +201,27 @@ public class StoreController {
             throw ApiException.badRequest("Include a $0.00 threshold so every card has a rate");
         rates.replace(user.tenantId(), rules);
         return rates(request);
+    }
+
+    @GetMapping("/confidence-rules")
+    public Map<String, Object> confidenceRules(HttpServletRequest request) {
+        return Map.of("rules", confidenceRules.rules(CurrentUser.of(request).tenantId()).stream()
+                .map(r -> new ConfidenceRule(r.level().name(), r.adjust(), r.review())).toList());
+    }
+
+    @PutMapping("/confidence-rules")
+    public Map<String, Object> saveConfidenceRules(@Valid @RequestBody ConfidenceBody body, HttpServletRequest request) {
+        CurrentUser user = requireOwner(request);
+        var seen = new HashSet<String>();
+        List<ConfidenceRules.Rule> rules = body.rules().stream().map(r -> {
+            if (!seen.add(r.level())) throw ApiException.badRequest("Each confidence level can only appear once");
+            if (r.adjust().compareTo(new BigDecimal("0.01")) < 0 || r.adjust().compareTo(BigDecimal.ONE) > 0)
+                throw ApiException.badRequest("The offer share must be between 1% and 100%");
+            return new ConfidenceRules.Rule(com.cardpricer.cloud.catalog.Confidence.Level.valueOf(r.level()),
+                    r.adjust().setScale(4, java.math.RoundingMode.HALF_UP), r.review());
+        }).toList();
+        confidenceRules.replace(user.tenantId(), rules);
+        return confidenceRules(request);
     }
 
     @GetMapping("/staff")

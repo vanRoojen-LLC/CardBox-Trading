@@ -91,6 +91,82 @@ export default function Rates({ me }: { me: Me }) {
       )}
       {message && <p className="notice">{message}</p>}
       {error && <p className="error" role="alert">{error}</p>}
+      <ConfidenceRules owner={owner} />
     </section>
+  )
+}
+
+type Level = 'high' | 'medium' | 'low'
+interface TrustRule { level: Level; adjust: string; review: boolean }
+const LEVELS: { level: Level; label: string; help: string }[] = [
+  { level: 'high', label: 'High', help: 'Fresh, sources agree, listings and recent sales line up.' },
+  { level: 'medium', label: 'Medium', help: 'One warning, such as a single source, a fast move or a wide listing spread.' },
+  { level: 'low', label: 'Low', help: 'A stale price, sources far apart, or two or more warnings.' },
+]
+
+/**
+ * What the offer does by how far a card's price can be trusted. Offer % scales the buy-rate offer; "Hold for review"
+ * keeps the trade from saving until staff tick that they checked the flagged prices.
+ */
+function ConfidenceRules({ owner }: { owner: boolean }) {
+  const [rules, setRules] = useState<TrustRule[] | null>(null)
+  const [saved, setSaved] = useState('')
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const load = (data: { rules: { level: Level; adjust: number; review: boolean }[] }) => {
+    const next = data.rules.map(r => ({ level: r.level, adjust: pct(r.adjust), review: r.review }))
+    setRules(next); setSaved(JSON.stringify(next))
+  }
+  useEffect(() => { api<{ rules: { level: Level; adjust: number; review: boolean }[] }>('/api/app/confidence-rules').then(load).catch(e => setError(e.message)) }, [])
+  const dirty = rules !== null && JSON.stringify(rules) !== saved
+  const update = (level: Level, change: Partial<TrustRule>) => { setRules(rules!.map(r => r.level === level ? { ...r, ...change } : r)); setMessage('') }
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault()
+    if (!rules || saving) return
+    const bad = rules.find(r => r.adjust.trim() === '' || Number(r.adjust) < 1 || Number(r.adjust) > 100)
+    if (bad) { setError(`${bad.level[0].toUpperCase() + bad.level.slice(1)}: the offer must be between 1% and 100%.`); setMessage(''); return }
+    setSaving(true)
+    try {
+      load(await api('/api/app/confidence-rules', { method: 'PUT', body: { rules: rules.map(r => ({ level: r.level, adjust: Number(r.adjust) / 100, review: r.review })) } }))
+      setMessage('Confidence rules saved.'); setError('')
+    } catch (err) { setError((err as Error).message); setMessage('') }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <>
+      <h2 style={{ marginTop: 32 }}>Price confidence</h2>
+      <p className="lede">Every trade line gets a confidence label from the price evidence: how fresh it is, whether sources agree, how listings sit against recent sales, and how it has moved.
+        Choose what each level does to the offer. 100% and no hold leave offers as the buy rates set them.</p>
+      {rules === null ? (!error && <p className="muted">Loading…</p>) : (
+        <form onSubmit={save}>
+          <div className="table-wrap"><table className="grid">
+            <thead><tr><th scope="col">Confidence</th><th scope="col">Offer</th><th scope="col">Hold for review</th></tr></thead>
+            <tbody>
+              {LEVELS.map(({ level, label, help }) => {
+                const r = rules.find(x => x.level === level)!
+                return (
+                  <tr key={level}>
+                    <td><span className={`confidence ${level}`}><span className="dot" aria-hidden="true" />{label}</span><div className="muted small">{help}</div></td>
+                    <td><input type="number" min={1} max={100} step="any" required disabled={!owner} aria-label={`${label} confidence: percent of the normal offer`}
+                      value={r.adjust} onChange={e => update(level, { adjust: e.target.value })} />% of the offer</td>
+                    <td><label className="inline"><input type="checkbox" disabled={!owner} checked={r.review}
+                      onChange={e => update(level, { review: e.target.checked })} /> Staff must check the price</label></td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table></div>
+          {owner ? (
+            <p className="actions"><button type="submit" disabled={saving || !dirty}>{saving ? 'Saving…' : 'Save confidence rules'}</button>
+              {dirty && !saving && <span className="muted small" role="status" style={{ alignSelf: 'center' }}>Unsaved changes</span>}</p>
+          ) : <p className="muted">Only the store owner can change these.</p>}
+        </form>
+      )}
+      {message && <p className="notice">{message}</p>}
+      {error && <p className="error" role="alert">{error}</p>}
+    </>
   )
 }
