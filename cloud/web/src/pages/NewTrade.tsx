@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { aborted, api, CONDITIONS, FINISHES, money, type Card } from '../api'
 import CardLightbox from '../CardLightbox'
 import SearchIcon from '../SearchIcon'
+import OtherGames from '../OtherGames'
 
 interface Line { key: number; card: Card; finish: string; condition: string; quantity: number }
 interface PricedLine { valuationUnit: number; creditUnit: number; checkUnit: number; creditRate: number; checkRate: number }
@@ -71,7 +72,7 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Card[]>([])
   const [active, setActive] = useState(0)
-  const [noMatch, setNoMatch] = useState(false)
+  const [noMatch, setNoMatch] = useState<string | false>(false)
   const [lines, setLines] = useState<Line[]>(() => {
     nextKey = Math.max(nextKey, ...draft.lines.map(l => l.key + 1))
     return draft.lines
@@ -116,7 +117,7 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
     const controller = new AbortController()
     const timer = setTimeout(() => {
       api<Card[]>(`/api/app/cards?q=${encodeURIComponent(query.trim())}`, { signal: controller.signal })
-        .then(r => { setResults(r); setActive(0); setNoMatch(r.length === 0); setSearchError('') })
+        .then(r => { setResults(r); setActive(0); setNoMatch(r.length === 0 ? query.trim() : false); setSearchError('') })
         .catch(e => { if (!aborted(e)) setSearchError(e.message) })
     }, 250)
     return () => { clearTimeout(timer); controller.abort() }
@@ -289,7 +290,11 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
                    aria-activedescendant={results[active] ? `match-${active}` : undefined} />
             {results.length > 0 && <span className="aside hints"><span className="kbd">Enter</span> adds the highlighted card</span>}
           </div>
-          {noMatch && query.trim().length >= 2 && <p className="muted">No cards found.</p>}
+          {noMatch && query.trim().length >= 2 && <>
+            <p className="muted">No cards found.</p>
+            {/* Trades take Magic cards; a card from another game links to its price instead. */}
+            <OtherGames query={noMatch} game="mtg" link={(g, q) => `/app/price?game=${g}&q=${encodeURIComponent(q)}`} />
+          </>}
           {searchError && <p className="error" role="alert">{searchError}</p>}
           {results.length > 0 && (
             <ul className="matches" id="matches" role="listbox">
