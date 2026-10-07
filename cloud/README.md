@@ -3,7 +3,7 @@
 The multi-store web version of CardBox Trading (formerly OCC Pricer), live at **https://cardbox.trading**. One container serves the React client
 and the API; PostgreSQL holds the data.
 
-- **Free price check** at `/`: search a card and see its Scryfall market price. No account, as Scryfall's terms require.
+- **Free price check** at `/`: search a Magic, Star Wars: Unlimited or other public game's card and see its market price. No account, as Scryfall's terms require.
 - **Store workflow** under `/app` (CardBox sign-in through Auth0, 30-day trial): trade entry with store credit, check or split payouts,
   customers linked by phone number, trade history, tiered buy rates, a store profile, several owners and staff per store,
   multiple locations with every trade tagged to the location it was taken at, inventory per location kept in a storage
@@ -46,6 +46,32 @@ cd ../web && npm install && npm run dev                          # client on :51
 
 `import-catalog --app.catalog.file=src/test/resources/cards-fixture.json` loads a five-card fixture instead of Scryfall.
 `mvn verify` runs the integration tests against PostgreSQL in Docker.
+
+## Card data sources
+
+The nightly `import-catalog` job blends several sources, each logged as its own run in `catalog_imports` (source = the
+base URL read, game = the game or `tcgtracking`):
+
+- **Magic**: Scryfall's bulk data (prices are TCGplayer's, as Scryfall reports them).
+- **Star Wars: Unlimited**: the catalog from swu-db (api.swu-db.com, as CardBox Club uses). TCGplayer prices come from
+  **TCGTracking** first (`/v1/79/sets`, then each set's `/pricing`), and from **TCGCSV** (tcgcsv.com) only if
+  TCGTracking fails; swu-db's own price fills any gap.
+- **Every other game TCGplayer lists**: TCGTracking's free Open TCG API (`app.tcgtracking.base`, default
+  https://openapi.tcgtracking.com/v1), static JSON re-hosting TCGplayer's catalog and prices, into `tcg_games`,
+  `tcg_sets` and `tcg_products` (one row per product per price subtype, card ids stable across imports, 1000px images).
+  Each game is keyed by its CardBox Club segment (`pokemon`, `lorcana`, ...; Pokemon Japan shares `pokemon`).
+
+TCGTracking is a free service, so the sync is gentle: one request at a time, `app.tcgtracking.pause-ms` (1 s) apart,
+each conditional on the stored ETag; the category and per-game set listings once a run; a set's cards only when its
+`products_modified` moves, its prices when `pricing_modified` moves or our copy is over 72 hours old (the listings are
+edge-cached for days). Each run stops after `app.tcgtracking.budget-minutes` (20), most-stale sets first, so the first
+full sync (~3,400 sets) takes several nights and later nights fetch only what changed. A failed set is retried the next
+night. TCGTracking refreshes prices around 9:35 AM ET, after the job's 10:30 UTC start, so its prices are usually a day
+old when read.
+
+New games arrive as **previews**: only a platform owner sees them (`GET /api/app/games`, and trade and stock search).
+Setting `tcg_games.preview = false` puts a game on the free price check (`GET /api/public/games`) and in every store's
+search; `enabled = false` stops syncing and searching it.
 
 ## Azure
 
