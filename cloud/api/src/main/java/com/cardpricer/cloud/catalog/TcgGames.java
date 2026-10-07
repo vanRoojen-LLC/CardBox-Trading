@@ -11,8 +11,8 @@ import java.util.Optional;
 /**
  * The games Trading offers: its two native catalogs, Magic ("mtg") and Star Wars: Unlimited ("swu"), and every
  * TCGTracking game with products, keyed by its segment (CardBox Club's game key). A TCGTracking game is a preview until
- * the owner turns preview off in {@code tcg_games}; previews are offered only to a platform owner, never on the free
- * price check. A segment with several categories (Pokemon and Pokemon Japan) is one game, named after its first
+ * the owner turns preview off in {@code tcg_games}; previews are offered only to the Preview list (shared with CardBox
+ * Club), never on the free price check. A segment with several categories (Pokemon and Pokemon Japan) is one game, named after its first
  * category, and is a preview only while every category the viewer may see is.
  */
 @Repository

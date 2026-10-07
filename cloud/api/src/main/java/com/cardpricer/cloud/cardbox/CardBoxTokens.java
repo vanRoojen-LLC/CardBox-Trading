@@ -37,16 +37,18 @@ public class CardBoxTokens {
         }
     }
 
-    public void save(String sub, String accessToken, Instant expiresAt, boolean platformOwner) {
+    public void save(String sub, String accessToken, Instant expiresAt, boolean platformOwner, boolean preview) {
         jdbc.update("""
-                INSERT INTO cardbox_tokens (auth0_sub, token, expires_at, platform_owner) VALUES (?, ?, ?, ?)
+                INSERT INTO cardbox_tokens (auth0_sub, token, expires_at, platform_owner, preview) VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT (auth0_sub) DO UPDATE SET token = excluded.token, expires_at = excluded.expires_at,
-                    platform_owner = excluded.platform_owner, updated_at = now()""",
-                sub, encrypt(accessToken), Timestamp.from(expiresAt), platformOwner);
+                    platform_owner = excluded.platform_owner, preview = excluded.preview, updated_at = now()""",
+                sub, encrypt(accessToken), Timestamp.from(expiresAt), platformOwner, preview);
     }
 
-    public void setPlatformOwner(String sub, boolean platformOwner) {
-        jdbc.update("UPDATE cardbox_tokens SET platform_owner = ? WHERE auth0_sub = ?", platformOwner, sub);
+    /** CardBox's platform owner role and Preview list, as of the person's latest roles answer. */
+    public void setRoles(String sub, CardBoxSignIn.Roles roles) {
+        jdbc.update("UPDATE cardbox_tokens SET platform_owner = ?, preview = ? WHERE auth0_sub = ?",
+                roles.platformOwner(), roles.preview(), sub);
     }
 
     /** The person's token while it is still valid; empty means they need to sign in again. */

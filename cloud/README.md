@@ -73,7 +73,10 @@ Each night's prices also go into `price_history` (source `tcgplayer via tcgtrack
 TCGTracking, `tcgplayer` when TCGCSV or Scryfall served it): every SWU printing, and the Magic and TCGTracking cards a
 store holds or has traded. Sets holding such a card have their TCGTracking prices read daily.
 
-New games arrive as **previews**: only a platform owner sees them (`GET /api/app/games`, and trade and stock search).
+New games arrive as **previews**: only the Preview list sees them (`GET /api/app/games`, and trade and stock search).
+The Preview list is CardBox Club's, one list for both apps: platform owners always, plus everyone the owner gives the
+`preview_access` role on Club (Settings > Segments, "Who sees Preview", or the Users page). Trading copies it from
+Club at each sign-in and whenever the Admin tab reads roles (`cardbox_tokens.preview`, V27).
 Setting `tcg_games.preview = false` puts a game on the free price check (`GET /api/public/games`) and in every store's
 search; `enabled = false` stops syncing and searching it.
 
