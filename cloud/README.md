@@ -73,6 +73,13 @@ Each night's prices also go into `price_history` (source `tcgplayer via tcgtrack
 TCGTracking, `tcgplayer` when TCGCSV or Scryfall served it): every SWU printing, and the Magic and TCGTracking cards a
 store holds or has traded. Sets holding such a card have their TCGTracking prices read daily.
 
+For those held and traded cards, every game Magic and SWU included, the night also reads each holding set's
+TCGTracking `/skus` file (`TcgSkuPrices`, `tcg_sku_prices`, V28; at most `app.tcgtracking.sku-max-sets`, 600, a night,
+same pause): TCGplayer's market, low and high **per condition** (NM, LP, MP, HP, DMG) and language, the **active
+listing count**, and **Mana Pool's** price. The evidence panel lists the English condition prices with their listing
+counts and warns when a card has fewer than 3 near-mint listings ("thin market"). Mana Pool's near-mint English
+price goes into `price_history` as `manapool via tcgtracking`, an independent origin the blend weighs beside TCGplayer.
+
 New games arrive as **previews**: only the Preview list sees them (`GET /api/app/games`, and trade and stock search).
 The Preview list is CardBox Club's, one list for both apps: platform owners always, plus everyone the owner gives the
 `preview_access` role on Club (Settings > Segments, "Who sees Preview", or the Users page). Trading copies it from

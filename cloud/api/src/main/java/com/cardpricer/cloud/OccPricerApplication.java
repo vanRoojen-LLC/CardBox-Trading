@@ -4,6 +4,7 @@ import com.cardpricer.cloud.catalog.CatalogImporter;
 import com.cardpricer.cloud.catalog.PriceHistory;
 import com.cardpricer.cloud.catalog.SwuCatalogImporter;
 import com.cardpricer.cloud.catalog.SwuTcgplayerPrices;
+import com.cardpricer.cloud.catalog.TcgSkuPrices;
 import com.cardpricer.cloud.catalog.TcgTrackingCatalog;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
@@ -48,6 +49,13 @@ public class OccPricerApplication {
                 // Every other game, from TCGTracking: time-boxed and incremental, so it picks up where last night stopped.
                 try {
                     context.getBean(TcgTrackingCatalog.class).sync();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    status = 1;
+                }
+                // Condition prices, listing counts and Mana Pool's price for the cards stores hold or have traded.
+                try {
+                    context.getBean(TcgSkuPrices.class).sync();
                 } catch (Exception e) {
                     e.printStackTrace();
                     status = 1;

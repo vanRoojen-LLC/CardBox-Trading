@@ -109,11 +109,27 @@ public class PriceEvidence {
     private record Tcg(String game, boolean foil, BigDecimal market, BigDecimal low, Instant observedAt, int productId)
             implements Raw {}
 
+    /** TCGplayer's price for one condition in English, with its active listing count, from TCGTracking's SKU files. */
+    record Sku(String condition, BigDecimal market, BigDecimal low, Integer listings, Instant observedAt) {}
+
+    /** Conditions in the order the panel lists them. */
+    static final List<String> CONDITIONS = List.of("NM", "LP", "MP", "HP", "DMG");
+    private static final Map<String, String> CONDITION_NAMES = Map.of("NM", "Near Mint", "LP", "Lightly Played",
+            "MP", "Moderately Played", "HP", "Heavily Played", "DMG", "Damaged");
+    /** Fewer near-mint listings than this is a thin market: the price can move on one sale. */
+    static final int THIN_LISTINGS = 3;
+    private static final String LISTINGS_KNOWN = "Sellers and the listings themselves (price, shipping, seller rating): "
+            + "only the official TCGplayer API, which needs a partner key, or crawling TCGplayer's site gives these.";
+
     /** Another origin's latest price from price_history, such as Manapool's through TCG Tracking. */
     private record Recorded(String source, BigDecimal market, LocalDate day) {}
 
-    private record Extra(List<ClubMarketSummaries.Summary> club, List<Recorded> recorded) {
-        static final Extra NONE = new Extra(List.of(), List.of());
+    private record Extra(List<ClubMarketSummaries.Summary> club, List<Recorded> recorded, List<Sku> skus) {
+        static final Extra NONE = new Extra(List.of(), List.of(), List.of());
+
+        Extra(List<ClubMarketSummaries.Summary> club, List<Recorded> recorded) {
+            this(club, recorded, new ArrayList<>());
+        }
     }
 
     private final JdbcTemplate jdbc;
@@ -222,16 +238,33 @@ public class PriceEvidence {
                     checks.add(new Confidence.Check(name(s.source()) + " sold", s.median(), s.observations()));
             }
         }
+        List<Point> skuPoints = new ArrayList<>();
+        Integer nearMintListings = null;
+        for (Sku k : extra.skus().stream().sorted(java.util.Comparator.comparingInt(k -> CONDITIONS.indexOf(k.condition())))
+                .toList()) {
+            if (k.market() != null) skuPoints.add(new Point("TCGTracking", "TCGplayer market, "
+                    + CONDITION_NAMES.getOrDefault(k.condition(), k.condition()) + (k.listings() == null ? ""
+                    : " (" + k.listings() + " listing" + (k.listings() == 1 ? "" : "s") + ")"), k.market(), "USD",
+                    k.observedAt(), false, null, k.listings()));
+            if (k.condition().equals("NM")) nearMintListings = k.listings();
+        }
+        if (!skuPoints.isEmpty()) missing.replaceAll(m -> m.equals(MISSING.getFirst()) ? LISTINGS_KNOWN : m);
         Blend.Result blend = collapse(blendInputs);
         List<Point> weighted = new ArrayList<>();
         for (Point p : points) weighted.add(p.used() ? p.weighted(blend.weights().getOrDefault("tcgplayer", 1.0)) : p);
         for (int i = 0; i < extraPoints.size(); i++) weighted.add(extraPoints.get(i).weighted(blend.weights().get("#" + i)));
+        weighted.addAll(skuPoints);
         if (extra.club().stream().noneMatch(s -> s.valueKind().equals("realized"))) missing.add(NO_CLUB);
         inputs = new Confidence.Inputs(inputs.market(), inputs.observedAt(), inputs.otherSource(), inputs.other(),
                 inputs.low(), inputs.mid(), inputs.history(), checks);
         Confidence.Result result = Confidence.assess(inputs, now);
         List<Confidence.Reason> reasons = new ArrayList<>(result.reasons());
         BigDecimal value = blend.value() == null ? market : blend.value();
+        if (market != null && nearMintListings != null && nearMintListings < THIN_LISTINGS)
+            reasons.add(new Confidence.Reason(Confidence.Kind.warn, nearMintListings == 0
+                    ? "No near-mint listings on TCGplayer: the price rests on past sales only."
+                    : "Thin market: " + nearMintListings + " near-mint listing" + (nearMintListings == 1 ? "" : "s")
+                    + " on TCGplayer, so one sale can move the price."));
         int sources = blend.weights().size();
         if (market != null && value.compareTo(market) != 0)
             reasons.add(new Confidence.Reason(Confidence.Kind.info, "Trade value " + money(value) + " blends " + sources
@@ -308,6 +341,21 @@ public class PriceEvidence {
             Key key = new Key(rs.getObject(1, UUID.class), rs.getString(2));
             Extra e = out.computeIfAbsent(key, k -> new Extra(List.of(), new ArrayList<>()));
             e.recorded().add(new Recorded(rs.getString(3), rs.getBigDecimal(4), rs.getDate(5).toLocalDate()));
+        });
+        jdbc.query(con -> {
+            var ps = con.prepareStatement("""
+                    SELECT DISTINCT ON (card_id, finish, condition) card_id, finish, condition, market, low, listings,
+                           observed_at
+                    FROM tcg_sku_cards WHERE card_id = ANY(?) AND language = 'EN' AND observed_at > now() - interval '3 days'
+                    ORDER BY card_id, finish, condition, observed_at DESC""");
+            ps.setArray(1, con.createArrayOf("uuid", array));
+            return ps;
+        }, rs -> {
+            Key key = new Key(rs.getObject(1, UUID.class), rs.getString(2));
+            Extra e = out.computeIfAbsent(key, k -> new Extra(List.of(), new ArrayList<>()));
+            int listings = rs.getInt(6);
+            e.skus().add(new Sku(rs.getString(3), rs.getBigDecimal(4), rs.getBigDecimal(5), rs.wasNull() ? null : listings,
+                    instant(rs.getTimestamp(7))));
         });
         return out;
     }
