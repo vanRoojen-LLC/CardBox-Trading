@@ -40,8 +40,8 @@ public class CatalogImporter {
     private static final String UPSERT = """
             INSERT INTO cards (id, name, set_code, set_name, collector_number, rarity, lang, released_at,
                                usd, usd_foil, usd_etched, image_small, type_line, oracle_text, flavor_text, artist,
-                               colors, color_identity, mana_value, set_type, treatments, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+                               colors, color_identity, mana_value, set_type, treatments, eur, eur_foil, tcgplayer_id, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
             ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, set_code = EXCLUDED.set_code,
                 set_name = EXCLUDED.set_name, collector_number = EXCLUDED.collector_number, rarity = EXCLUDED.rarity,
                 lang = EXCLUDED.lang, released_at = EXCLUDED.released_at, usd = EXCLUDED.usd,
@@ -49,7 +49,7 @@ public class CatalogImporter {
                 type_line = EXCLUDED.type_line, oracle_text = EXCLUDED.oracle_text, flavor_text = EXCLUDED.flavor_text,
                 artist = EXCLUDED.artist, colors = EXCLUDED.colors, color_identity = EXCLUDED.color_identity,
                 mana_value = EXCLUDED.mana_value, set_type = EXCLUDED.set_type, treatments = EXCLUDED.treatments,
-                updated_at = now()""";
+                eur = EXCLUDED.eur, eur_foil = EXCLUDED.eur_foil, tcgplayer_id = EXCLUDED.tcgplayer_id, updated_at = now()""";
 
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
@@ -156,7 +156,9 @@ public class CatalogImporter {
                 text(card, "type_line"), text(card, "oracle_text"), text(card, "flavor_text"), text(card, "artist"),
                 colors(card), strings(card.path("color_identity")),
                 card.path("cmc").isNumber() ? card.path("cmc").decimalValue() : null,
-                card.path("set_type").asText(null), treatments(card)};
+                card.path("set_type").asText(null), treatments(card),
+                price(prices, "eur"), price(prices, "eur_foil"),
+                card.path("tcgplayer_id").isNumber() ? card.path("tcgplayer_id").asText() : null};
     }
 
     /** The card's colors, or every face's for double-faced cards, in WUBRG order. Empty is colorless. */

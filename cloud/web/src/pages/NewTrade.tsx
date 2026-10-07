@@ -4,9 +4,14 @@ import { aborted, api, CONDITIONS, FINISHES, money, type Card } from '../api'
 import CardLightbox from '../CardLightbox'
 import SearchIcon from '../SearchIcon'
 import OtherGames, { GameSwitch, type Game } from '../OtherGames'
+import { ConfidenceBadge, EvidencePanel, type ConfidenceLevel, type Reason } from '../PriceEvidence'
 
 interface Line { key: number; card: Card; finish: string; condition: string; quantity: number }
-interface PricedLine { valuationUnit: number; creditUnit: number; checkUnit: number; creditRate: number; checkRate: number }
+interface PricedLine {
+  valuationUnit: number; creditUnit: number; checkUnit: number; creditRate: number; checkRate: number
+  /** How far the price can be trusted, the share of the offer the store's rule for that pays, and whether it holds the trade. */
+  confidence: ConfidenceLevel; confidenceAdjust: number; review: boolean; reasons: Reason[]
+}
 interface Quote {
   lines: PricedLine[]
   /** The line keys this quote priced, in order; the server answers line by line. */
@@ -17,6 +22,8 @@ interface Quote {
   creditOffer: number
   checkOffer: number
   settlement: { payment: string; credit: number; check: number }
+  /** A line's confidence rule holds the trade until staff confirm they checked the flagged prices. */
+  review: boolean
 }
 interface Saved { id: string; number: number }
 type Payment = 'credit' | 'check' | 'partial'
@@ -98,6 +105,9 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
   // A ref as well as state: a second Ctrl+S can arrive before React re-renders with saving = true.
   const savingRef = useRef(false)
   const [enlarged, setEnlarged] = useState<Card | null>(null)
+  // The line whose price evidence is open, and whether staff confirmed the flagged prices for the trade on screen.
+  const [evidenceFor, setEvidenceFor] = useState<number | null>(null)
+  const [reviewed, setReviewed] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const linesRef = useRef<HTMLDivElement>(null)
   // Waits a frame for the line to render, and gives way if staff already started typing the next search.
@@ -158,6 +168,9 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
     credit: payment === 'partial' && splitCredit !== '' ? Number(splitCredit) : undefined,
   }), [lines, payment, splitCredit])
 
+  // A confirmation covers the prices staff looked at; any change to the trade asks again.
+  useEffect(() => setReviewed(false), [request])
+
   useEffect(() => {
     if (lines.length === 0) { setQuote(null); return }
     // Prices are matched to lines by key, and a reply that arrives after a newer request started is dropped.
@@ -208,7 +221,8 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
   const current = quote != null && quote.asked === JSON.stringify(request)
   const checkPaid = payment === 'check' || (payment === 'partial' && Number(quote?.settlement.check ?? 0) > 0)
   const needsCheckNumber = checkPaid && checkNumber.trim() === ''
-  const canSave = lines.length > 0 && current && !(payment === 'partial' && splitCredit === '') && !needsCheckNumber && !saving
+  const needsReview = current && !!quote?.review && !reviewed
+  const canSave = lines.length > 0 && current && !(payment === 'partial' && splitCredit === '') && !needsCheckNumber && !needsReview && !saving
   const save = useCallback(async () => {
     if (!canSave || savingRef.current) return
     savingRef.current = true
@@ -216,15 +230,15 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
     try {
       const result = await api<Saved>('/api/app/trades', {
         method: 'POST',
-        body: { ...request, customerPhone: phone || undefined, customerName, checkNumber, locationId: locationId ?? undefined },
+        body: { ...request, customerPhone: phone || undefined, customerName, checkNumber, locationId: locationId ?? undefined, pricesReviewed: reviewed },
       })
       setSaved(result)
-      setLines([]); setSelected(null); setPhone(''); setCustomerName(''); setLookedUpName(null); setCheckNumber(''); setSplitCredit(''); setPayment('credit')
+      setLines([]); setSelected(null); setEvidenceFor(null); setPhone(''); setCustomerName(''); setLookedUpName(null); setCheckNumber(''); setSplitCredit(''); setPayment('credit')
       setSaveError('')
       searchRef.current?.focus()
     } catch (e) { setSaveError((e as Error).message) }
     finally { savingRef.current = false; setSaving(false) }
-  }, [canSave, request, phone, customerName, checkNumber, locationId])
+  }, [canSave, request, phone, customerName, checkNumber, locationId, reviewed])
 
   // Counter shortcuts: / search, 1-5 condition, F foil, + and - quantity, Delete removes, arrows move, Ctrl/Cmd+S save.
   useEffect(() => {
@@ -341,6 +355,13 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
                     <div className="card">
                       <strong>{line.card.name}</strong>
                       <span className="meta">{line.card.set.toUpperCase()} #{line.card.number} · <span style={{ textTransform: 'capitalize' }}>{line.card.rarity}</span></span>
+                      {priced && <span className="line-trust">
+                        <ConfidenceBadge level={priced.confidence} open={evidenceFor === line.key}
+                          title={priced.reasons.map(r => r.text).join(' ')}
+                          onClick={() => setEvidenceFor(evidenceFor === line.key ? null : line.key)} />
+                        {Number(priced.confidenceAdjust) < 1 && <span className="muted small">offer at {Math.round(Number(priced.confidenceAdjust) * 100)}%</span>}
+                        {priced.review && <span className="flag small">Check this price</span>}
+                      </span>}
                     </div>
                     <div className="controls">
                       {finishes.length > 1
@@ -362,6 +383,11 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
                       <small>{line.quantity > 1 ? `${money(priced?.valuationUnit)} each` : 'our value'}</small></div>
                     <div className="credit">{money(times(priced?.creditUnit, line.quantity))}<small>credit</small></div>
                     <div className="check">{money(times(priced?.checkUnit, line.quantity))}<small>check</small></div>
+                    {evidenceFor === line.key && (
+                      <div className="line-evidence">
+                        <EvidencePanel path={`/api/app/cards/${line.card.id}/evidence?finish=${line.finish}`} />
+                      </div>
+                    )}
                     <button type="button" className="remove icon-button" aria-label={`Remove ${line.card.name}`} onClick={() => remove(line.key)}>
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                         <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
@@ -413,13 +439,20 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
             <label>Check number{checkPaid && <span className="muted small"> (required)</span>}
               <input value={checkNumber} required={checkPaid} aria-invalid={needsCheckNumber || undefined} onChange={e => setCheckNumber(e.target.value)} /></label>
           )}
+          {current && !!quote?.review && (
+            <label className="review-check">
+              <input type="checkbox" checked={reviewed} onChange={e => setReviewed(e.target.checked)} />
+              <span>I checked the flagged prices <span className="muted small">({quote!.lines.filter(l => l.review).length} flagged by your price confidence rules)</span></span>
+            </label>
+          )}
           {saveError && <p className="error" role="alert" style={{ margin: 0 }}>{saveError}</p>}
           <button type="button" className="save" onClick={save} disabled={!canSave}>
             {saving ? 'Saving…' : <>Save trade <span className="kbd">Ctrl S</span></>}
           </button>
           {lines.length > 0 && !saving && (() => {
             const why = !current ? 'Updating the offer…' : payment === 'partial' && splitCredit === '' ? 'Enter the store credit amount to save.'
-              : needsCheckNumber ? 'Enter the check number to save.' : ''
+              : needsCheckNumber ? 'Enter the check number to save.'
+              : needsReview ? 'Check the flagged prices, then tick the box to save.' : ''
             return why && <p className="muted small" role="status" style={{ margin: 0, textAlign: 'center' }}>{why}</p>
           })()}
           <p className="muted small" style={{ margin: 0, textAlign: 'center' }}>Saving records the trade and gives you its POS CSV.</p>

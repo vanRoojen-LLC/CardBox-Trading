@@ -2,6 +2,9 @@ package com.cardpricer.cloud.trade;
 
 import com.cardpricer.cloud.catalog.CardRow;
 import com.cardpricer.cloud.catalog.CatalogRepository;
+import com.cardpricer.cloud.catalog.Confidence;
+import com.cardpricer.cloud.catalog.PriceEvidence;
+import com.cardpricer.cloud.store.ConfidenceRules;
 import com.cardpricer.cloud.inventory.InventoryRepository;
 import com.cardpricer.cloud.store.RateRepository;
 import com.cardpricer.cloud.web.ApiException;
@@ -21,6 +24,7 @@ import java.io.StringWriter;
 import java.io.UncheckedIOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -38,7 +42,8 @@ public class TradeService {
     public record PricedLine(UUID cardId, String name, String setCode, String setName, String collectorNumber,
                              String rarity, String lang, String finish, String condition, int quantity,
                              BigDecimal marketUnit, BigDecimal valuationUnit, BigDecimal creditRate, BigDecimal checkRate,
-                             BigDecimal creditUnit, BigDecimal checkUnit) {
+                             BigDecimal creditUnit, BigDecimal checkUnit, Confidence.Level confidence,
+                             BigDecimal confidenceAdjust, boolean review, List<Confidence.Reason> reasons) {
         SettlementEngine.Line settlementLine(int index) {
             BigDecimal qty = BigDecimal.valueOf(quantity);
             return new SettlementEngine.Line(String.valueOf(index), quantity, valuationUnit.multiply(qty),
@@ -46,17 +51,23 @@ public class TradeService {
         }
     }
 
+    /** {@code review} is true when a line's confidence rule holds the trade until staff confirm they checked it. */
     public record Quote(List<PricedLine> lines, BigDecimal marketTotal, BigDecimal creditOffer, BigDecimal checkOffer,
-                        SettlementEngine.Settlement settlement) {}
+                        SettlementEngine.Settlement settlement, boolean review) {}
 
     private final CatalogRepository catalog;
     private final RateRepository rates;
     private final JdbcTemplate jdbc;
     private final InventoryRepository inventory;
+    private final PriceEvidence evidence;
+    private final ConfidenceRules confidenceRules;
     private final PricingService pricing = new PricingService();
     private final SettlementEngine engine = new SettlementEngine();
 
-    public TradeService(CatalogRepository catalog, RateRepository rates, JdbcTemplate jdbc, InventoryRepository inventory) {
+    public TradeService(CatalogRepository catalog, RateRepository rates, JdbcTemplate jdbc, InventoryRepository inventory,
+                        PriceEvidence evidence, ConfidenceRules confidenceRules) {
+        this.evidence = evidence;
+        this.confidenceRules = confidenceRules;
         this.catalog = catalog;
         this.rates = rates;
         this.jdbc = jdbc;
@@ -71,7 +82,10 @@ public class TradeService {
         if (inputs == null || inputs.isEmpty()) throw ApiException.badRequest("Add at least one card");
         if (inputs.size() > 500) throw ApiException.badRequest("A trade can have at most 500 lines");
         List<BuyRateRule> rules = rates.rules(tenant);
-        List<PricedLine> lines = inputs.stream().map(input -> price(input, rules)).toList();
+        List<ConfidenceRules.Rule> trust = confidenceRules.rules(tenant);
+        var evidenceByLine = evidence.evidence(inputs.stream().filter(i -> i.cardId() != null)
+                .map(i -> new PriceEvidence.Key(i.cardId(), i.finish() == null ? "normal" : i.finish())).toList(), Instant.now());
+        List<PricedLine> lines = inputs.stream().map(input -> price(input, rules, trust, evidenceByLine)).toList();
         List<SettlementEngine.Line> settlementLines = new ArrayList<>();
         for (int i = 0; i < lines.size(); i++) settlementLines.add(lines.get(i).settlementLine(i));
         var creditOnly = engine.settle(settlementLines, "credit", BigDecimal.ZERO, BigDecimal.ZERO);
@@ -87,10 +101,12 @@ public class TradeService {
             }
             default -> throw ApiException.badRequest("Payment must be credit, check or partial");
         };
-        return new Quote(lines, creditOnly.market(), creditOnly.credit(), checkOnly.check(), settlement);
+        return new Quote(lines, creditOnly.market(), creditOnly.credit(), checkOnly.check(), settlement,
+                lines.stream().anyMatch(PricedLine::review));
     }
 
-    private PricedLine price(LineInput input, List<BuyRateRule> rules) {
+    private PricedLine price(LineInput input, List<BuyRateRule> rules, List<ConfidenceRules.Rule> trust,
+                             Map<PriceEvidence.Key, PriceEvidence.Evidence> evidenceByLine) {
         if (input.cardId() == null) throw ApiException.badRequest("Each line needs a card");
         if (input.quantity() < 1 || input.quantity() > 999) throw ApiException.badRequest("Quantity must be between 1 and 999");
         String condition = input.condition() == null ? "NM" : input.condition();
@@ -103,11 +119,18 @@ public class TradeService {
         BigDecimal base = pricing.applyPricingRules(market, card.rarity());
         BigDecimal valuation = pricing.applyConditionMultiplier(base, condition).setScale(2, RoundingMode.HALF_UP);
         BuyRateRule rule = RateRepository.match(rules, valuation);
+        // How far the price can be trusted, and what the store's rule for that says to do with the offer.
+        var found = evidenceByLine.get(new PriceEvidence.Key(card.id(), finish));
+        Confidence.Level level = found == null ? Confidence.Level.medium : found.confidence();
+        List<Confidence.Reason> reasons = found == null ? List.of() : found.reasons();
+        ConfidenceRules.Rule matched = ConfidenceRules.match(trust, level);
+        BigDecimal adjust = matched.adjust();
         return new PricedLine(card.id(), card.name(), card.setCode(), card.setName(), card.collectorNumber(),
                 card.rarity(), card.lang(), finish, condition, input.quantity(), market, valuation,
                 rule.creditRate, rule.checkRate,
-                valuation.multiply(rule.creditRate).setScale(2, RoundingMode.HALF_UP),
-                valuation.multiply(rule.checkRate).setScale(2, RoundingMode.HALF_UP));
+                valuation.multiply(rule.creditRate).multiply(adjust).setScale(2, RoundingMode.HALF_UP),
+                valuation.multiply(rule.checkRate).multiply(adjust).setScale(2, RoundingMode.HALF_UP),
+                level, adjust, matched.review(), reasons);
     }
 
     /**
@@ -142,12 +165,14 @@ public class TradeService {
             var allocation = s.lines().get(i);
             rows.add(new Object[]{id, i + 1, tenant, l.cardId(), l.name(), l.setCode(), l.collectorNumber(), l.rarity(),
                     l.lang(), l.finish(), l.condition(), l.quantity(), l.marketUnit(), l.valuationUnit(),
-                    l.creditRate(), l.checkRate(), allocation.credit(), allocation.check()});
+                    l.creditRate(), l.checkRate(), allocation.credit(), allocation.check(), l.confidence().name(),
+                    l.confidenceAdjust()});
         }
         jdbc.batchUpdate("""
                 INSERT INTO trade_lines (trade_id, line_no, tenant_id, card_id, name, set_code, collector_number, rarity,
                     lang, finish, condition, quantity, market_unit, valuation_unit, credit_rate, check_rate,
-                    credit_alloc, check_alloc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", rows);
+                    credit_alloc, check_alloc, confidence, confidence_adjust)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", rows);
         // The cards bought in go into stock at the trade's location, waiting to be put away.
         for (PricedLine l : quote.lines()) {
             inventory.add(tenant, location, null, new InventoryRepository.Stock(l.cardId(), l.name(), l.setCode(),
