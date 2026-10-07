@@ -1,4 +1,5 @@
 /** Card details inventory filters on and storage rules test, with how their values read on the page. */
+import { gameName, knownSegments } from './games'
 
 export interface FacetValue { value: string; label: string | null; cards: number | null }
 export type Facets = Record<string, FacetValue[]>
@@ -11,7 +12,6 @@ export const FACETS: { key: string; label: string; searchable?: boolean }[] = [
   { key: 'source', label: 'Came from' }, { key: 'batch', label: 'Import batch', searchable: true },
 ]
 
-export const GAMES: Record<string, string> = { 'magic-the-gathering': 'Magic', 'star-wars-unlimited': 'Star Wars: Unlimited' }
 export const COLORS: Record<string, string> = { W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green', M: 'Multicolor', C: 'Colorless' }
 export const TREATMENTS: Record<string, string> = {
   none: 'Plain', showcase: 'Showcase', 'extended-art': 'Extended art', borderless: 'Borderless', 'full-art': 'Full art',
@@ -22,7 +22,7 @@ export const titleCase = (s: string) => s.replace(/[-_]/g, ' ').replace(/\b\w/g,
 /** How a filter value reads on the page. */
 export function valueLabel(facet: string, v: { value: string; label?: string | null }): string {
   switch (facet) {
-    case 'game': return GAMES[v.value] ?? titleCase(v.value)
+    case 'game': return gameName(v.value) ?? titleCase(v.value)
     case 'set': return v.label ? `${v.label} (${v.value})` : v.value
     case 'color': return COLORS[v.value] ?? v.value
     case 'treatment': return TREATMENTS[v.value] ?? titleCase(v.value)
@@ -36,7 +36,8 @@ export function valueLabel(facet: string, v: { value: string; label?: string | n
 
 /** Values a rule may name even when nothing in stock has them yet. */
 export const KNOWN: Record<string, string[]> = {
-  game: ['magic-the-gathering', 'star-wars-unlimited'],
+  /** Magic, SWU and every game the games list has named on this page. */
+  get game() { return knownSegments() },
   rarity: ['common', 'uncommon', 'rare', 'mythic', 'special'],
   color: ['W', 'U', 'B', 'R', 'G', 'M', 'C'],
   type: ['Creature', 'Instant', 'Sorcery', 'Enchantment', 'Artifact', 'Planeswalker', 'Land', 'Battle', 'Legendary', 'Token'],
