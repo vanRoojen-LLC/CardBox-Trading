@@ -4,6 +4,7 @@ import com.cardpricer.cloud.web.ApiException;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -18,7 +19,7 @@ import java.util.Optional;
 
 /**
  * The free price check. No account, no payment: Scryfall's terms require its price data to stay free.
- * Deliberately minimal: card identity and market price only, never a store's buy offers.
+ * Card identity, market price and the evidence behind it; never a store's buy offers.
  */
 @RestController
 @RequestMapping("/api/public")
@@ -28,9 +29,11 @@ public class PublicCardController {
     private final TcgGames games;
     private final TcgProductRepository tcg;
     private final PriceChecks priceChecks;
+    private final PriceEvidence evidence;
 
     public PublicCardController(CatalogRepository catalog, SwuCatalogRepository swu, TcgGames games, TcgProductRepository tcg,
-                                PriceChecks priceChecks) {
+                                PriceChecks priceChecks, PriceEvidence evidence) {
+        this.evidence = evidence;
         this.catalog = catalog;
         this.swu = swu;
         this.games = games;
@@ -87,6 +90,16 @@ public class PublicCardController {
         if (names.isEmpty()) return Optional.empty();
         return Optional.of(Map.of("game", game, "count", names.size(), "more", names.size() >= ELSEWHERE_LIMIT,
                 "names", names.stream().distinct().limit(3).toList()));
+    }
+
+    /** The datapoints behind a price and how far it can be trusted. The same for everyone: no store's offers. */
+    @GetMapping("/cards/{id}/evidence")
+    public ResponseEntity<PriceEvidence.Evidence> evidence(@PathVariable java.util.UUID id,
+                                                           @RequestParam(value = "finish", defaultValue = "normal") String finish) {
+        if (!List.of("normal", "foil", "etched").contains(finish)) throw ApiException.badRequest("Unknown finish");
+        var found = evidence.evidence(id, finish, java.time.Instant.now());
+        if (found == null) throw ApiException.notFound("No prices for that card");
+        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(Duration.ofHours(1)).cachePublic()).body(found);
     }
 
     private ResponseEntity<Map<String, Object>> mtg(String q, String set) {
@@ -153,6 +166,7 @@ public class PublicCardController {
         view.put("usdFoil", foil ? card.market() : null);
         view.put("usdEtched", null);
         view.put("priceObservedAt", card.priceObservedAt() == null ? null : card.priceObservedAt().toString());
+        view.put("cardId", card.tradingId());
         view.put("url", card.tcgplayerId() == null ? null : "https://www.tcgplayer.com/product/" + card.tcgplayerId());
         return view;
     }

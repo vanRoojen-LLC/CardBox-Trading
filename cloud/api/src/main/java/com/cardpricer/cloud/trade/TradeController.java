@@ -2,6 +2,7 @@ package com.cardpricer.cloud.trade;
 
 import com.cardpricer.cloud.auth.CurrentUser;
 import com.cardpricer.cloud.catalog.CatalogRepository;
+import com.cardpricer.cloud.catalog.PriceEvidence;
 import com.cardpricer.cloud.catalog.PublicCardController;
 import com.cardpricer.cloud.catalog.SwuCatalogRepository;
 import com.cardpricer.cloud.catalog.TcgGames;
@@ -31,7 +32,7 @@ public class TradeController {
     public record QuoteRequest(List<TradeService.LineInput> lines, String payment, BigDecimal credit, BigDecimal check) {}
     public record SaveRequest(List<TradeService.LineInput> lines, String payment, BigDecimal credit, BigDecimal check,
                               @Size(max = 40) String customerPhone, @Size(max = 120) String customerName,
-                              @Size(max = 40) String checkNumber, UUID locationId) {}
+                              @Size(max = 40) String checkNumber, UUID locationId, Boolean pricesReviewed) {}
 
     private final TradeService trades;
     private final CatalogRepository catalog;
@@ -40,9 +41,11 @@ public class TradeController {
     private final TcgProductRepository tcg;
     private final JdbcTemplate jdbc;
     private final PutAway putAway;
+    private final PriceEvidence priceEvidence;
 
     public TradeController(TradeService trades, CatalogRepository catalog, SwuCatalogRepository swu, TcgGames games,
-                           TcgProductRepository tcg, JdbcTemplate jdbc, PutAway putAway) {
+                           TcgProductRepository tcg, JdbcTemplate jdbc, PutAway putAway, PriceEvidence priceEvidence) {
+        this.priceEvidence = priceEvidence;
         this.trades = trades;
         this.games = games;
         this.tcg = tcg;
@@ -86,6 +89,14 @@ public class TradeController {
         }).toList();
     }
 
+    /** Every price datapoint for a card and finish, its history and how far it can be trusted. */
+    @GetMapping("/cards/{id}/evidence")
+    public PriceEvidence.Evidence evidence(@PathVariable UUID id, @RequestParam(value = "finish", defaultValue = "normal") String finish) {
+        var found = priceEvidence.evidence(id, finish, java.time.Instant.now());
+        if (found == null) throw ApiException.notFound("No prices for that card");
+        return found;
+    }
+
     @PostMapping("/trades/quote")
     public TradeService.Quote quote(@RequestBody QuoteRequest body, HttpServletRequest request) {
         return trades.quote(CurrentUser.of(request).tenantId(), body.lines(), body.payment(), body.credit(), body.check());
@@ -99,6 +110,8 @@ public class TradeController {
                 throw ApiException.badRequest("Enter the check number");
         }
         var quote = trades.quote(user.tenantId(), body.lines(), body.payment(), body.credit(), body.check());
+        if (quote.review() && !Boolean.TRUE.equals(body.pricesReviewed()))
+            throw ApiException.badRequest("Some prices are flagged for review. Check them, then tick \"I checked the flagged prices\".");
         UUID location = trades.location(user.tenantId(), body.locationId());
         UUID id = trades.save(user.tenantId(), user.userId(), location, quote, body.customerPhone(), body.customerName(), body.checkNumber());
         putAway.arrived(() -> putAway.tradeArrived(user.tenantId(), location, quote.lines().stream().map(TradeService.PricedLine::cardId).distinct().toList()));
@@ -137,8 +150,8 @@ public class TradeController {
         if (rows.isEmpty()) throw ApiException.notFound("Trade not found");
         Map<String, Object> trade = new HashMap<>(rows.getFirst());
         trade.put("lines", jdbc.queryForList("""
-                SELECT line_no, name, set_code, collector_number, finish, condition, quantity, market_unit,
-                       valuation_unit, credit_rate, check_rate, credit_alloc, check_alloc
+                SELECT line_no, card_id, name, set_code, collector_number, finish, condition, quantity, market_unit,
+                       valuation_unit, credit_rate, check_rate, credit_alloc, check_alloc, confidence, confidence_adjust
                 FROM trade_lines WHERE trade_id = ? AND tenant_id = ? ORDER BY line_no""", id, tenant));
         return trade;
     }

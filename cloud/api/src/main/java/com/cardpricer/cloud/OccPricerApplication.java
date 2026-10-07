@@ -1,6 +1,7 @@
 package com.cardpricer.cloud;
 
 import com.cardpricer.cloud.catalog.CatalogImporter;
+import com.cardpricer.cloud.catalog.PriceHistory;
 import com.cardpricer.cloud.catalog.SwuCatalogImporter;
 import com.cardpricer.cloud.catalog.SwuTcgplayerPrices;
 import com.cardpricer.cloud.catalog.TcgTrackingCatalog;
@@ -47,6 +48,13 @@ public class OccPricerApplication {
                 // Every other game, from TCGTracking: time-boxed and incremental, so it picks up where last night stopped.
                 try {
                     context.getBean(TcgTrackingCatalog.class).sync();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    status = 1;
+                }
+                // Whatever refreshed tonight goes into the price history, even if another import failed.
+                try {
+                    context.getBean(PriceHistory.class).record();
                 } catch (Exception e) {
                     e.printStackTrace();
                     status = 1;

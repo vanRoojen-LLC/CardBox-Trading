@@ -39,14 +39,22 @@ public class SwuTcgplayerPrices {
     private static final Logger log = LoggerFactory.getLogger(SwuTcgplayerPrices.class);
     /** Leaves a price TCGCSV no longer has in place; its observed time says how old it is. */
     private static final String APPLY = """
-            UPDATE swu_cards SET tcgplayer_market = ?, tcgplayer_low = COALESCE(?, tcgplayer_low), tcgplayer_observed_at = ?
+            UPDATE swu_cards SET tcgplayer_market = ?, tcgplayer_low = COALESCE(?, tcgplayer_low), tcgplayer_mid = ?,
+                tcgplayer_high = ?, tcgplayer_direct_low = ?, tcgplayer_observed_at = ?
             WHERE tcgplayer_id = ? AND (treatment LIKE '%foil%') = ?""";
     private static final String DISAGREE = """
             UPDATE swu_cards SET price_disagrees = market IS NOT NULL AND tcgplayer_market IS NOT NULL
                 AND abs(market - tcgplayer_market) > 2 AND abs(market - tcgplayer_market) > 0.5 * least(market, tcgplayer_market)""";
 
-    /** One finish's prices for one product. */
-    public record Price(BigDecimal market, BigDecimal low) {}
+    /**
+     * One finish's prices for one product: TCGplayer's market price (from recent sales), and its lowest, median and
+     * highest listing and lowest TCGplayer Direct listing. TCGCSV publishes nothing else per product.
+     */
+    public record Price(BigDecimal market, BigDecimal low, BigDecimal mid, BigDecimal high, BigDecimal directLow) {
+        public Price(BigDecimal market, BigDecimal low) {
+            this(market, low, null, null, null);
+        }
+    }
 
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
@@ -155,7 +163,8 @@ public class SwuTcgplayerPrices {
         Map<String, Map<String, Price>> out = new HashMap<>();
         for (JsonNode row : payload.path("results")) {
             out.computeIfAbsent(row.path("productId").asText(), k -> new HashMap<>())
-                    .put(row.path("subTypeName").asText(), new Price(price(row.path("marketPrice")), price(row.path("lowPrice"))));
+                    .put(row.path("subTypeName").asText(), new Price(price(row.path("marketPrice")), price(row.path("lowPrice")),
+                            price(row.path("midPrice")), price(row.path("highPrice")), price(row.path("directLowPrice"))));
         }
         return out;
     }
@@ -166,8 +175,8 @@ public class SwuTcgplayerPrices {
         Timestamp at = Timestamp.from(observed);
         prices.forEach((product, finishes) -> {
             Price normal = finishes.get("Normal"), foil = finishes.get("Foil");
-            if (normal != null && normal.market() != null) batch.add(new Object[]{normal.market(), normal.low(), at, product, false});
-            if (foil != null && foil.market() != null) batch.add(new Object[]{foil.market(), foil.low(), at, product, true});
+            if (normal != null && normal.market() != null) batch.add(row(normal, at, product, false));
+            if (foil != null && foil.market() != null) batch.add(row(foil, at, product, true));
         });
         int updated = 0;
         for (int n : jdbc.batchUpdate(APPLY, batch)) updated += Math.max(n, 0);
@@ -176,6 +185,10 @@ public class SwuTcgplayerPrices {
         if (disagreeing > 0) log.warn("{} SWU printings have TCGCSV and swu-db prices that disagree", disagreeing);
         log.info("Applied TCGplayer prices to {} SWU printings", updated);
         return updated;
+    }
+
+    private static Object[] row(Price p, Timestamp at, String product, boolean foil) {
+        return new Object[]{p.market(), p.low(), p.mid(), p.high(), p.directLow(), at, product, foil};
     }
 
     /** When TCGCSV last refreshed from TCGplayer; now if it does not say. */
