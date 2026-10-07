@@ -68,20 +68,20 @@ export function History({ locations }: { locations: StoreLocation[] }) {
       )}
       {error && <p className="error">{error}</p>}
       <div className="table-wrap">
-        <table className="grid">
+        <table className="grid trades">
           <thead><tr><th>#</th><th>When</th><th>Customer</th><th className="r">Cards</th><th className="r">Credit</th><th className="r">Check</th>{several && <th>Location</th>}<th>By</th><th><span className="sr-only">POS export</span></th></tr></thead>
           <tbody>
             {shown.map(t => (
               <tr key={t.id} className="clickable" onClick={() => navigate(`/app/history/${t.id}`)}>
-                <td><Link to={`/app/history/${t.id}`} onClick={e => e.stopPropagation()}><strong>{t.number}</strong></Link></td>
-                <td className="num">{when(t.created_at)}</td>
-                <td>{t.customer_name || (t.customer_phone ? 'Customer' : 'Walk-in')}<div className="muted small num">{phoneText(t.customer_phone)}</div></td>
-                <td className="r">{t.cards}</td>
-                <td className="r credit">{Number(t.credit_total) > 0 ? money(t.credit_total) : '—'}</td>
-                <td className="r">{Number(t.check_total) > 0 ? money(t.check_total) : '—'}</td>
-                {several && <td>{t.location}</td>}
-                <td>{t.created_by}</td>
-                <td><a href={`/api/app/trades/${t.id}/pos.csv`} onClick={e => e.stopPropagation()}>CSV</a></td>
+                <td className="t-number"><Link to={`/app/history/${t.id}`} onClick={e => e.stopPropagation()}><strong>{t.number}</strong></Link></td>
+                <td className="num t-when">{when(t.created_at)}</td>
+                <td className="t-customer">{t.customer_name || (t.customer_phone ? 'Customer' : 'Walk-in')}<div className="muted small num">{phoneText(t.customer_phone)}</div></td>
+                <td className="r t-cards">{t.cards}<span className="t-unit"> card{t.cards === 1 ? '' : 's'}</span></td>
+                <td className="r credit t-credit">{Number(t.credit_total) > 0 ? <>{money(t.credit_total)}<span className="t-unit"> credit</span></> : <span className="t-none">—</span>}</td>
+                <td className="r t-check">{Number(t.check_total) > 0 ? <>{money(t.check_total)}<span className="t-unit"> check</span></> : <span className="t-none">—</span>}</td>
+                {several && <td className="t-location">{t.location}</td>}
+                <td className="t-by">{t.created_by}</td>
+                <td className="t-csv"><a href={`/api/app/trades/${t.id}/pos.csv`} onClick={e => e.stopPropagation()}>CSV</a></td>
               </tr>
             ))}
           </tbody>
@@ -114,7 +114,7 @@ export function TradeDetail() {
       <p className="muted" style={{ marginTop: 0 }}>{new Date(trade.created_at).toLocaleString()} · {trade.location} · by {trade.created_by}
         {trade.customer_phone && <> · {trade.customer_name || 'Customer'} <span className="num">{phoneText(trade.customer_phone)}</span></>}
         {trade.check_number && <> · check #{trade.check_number}</>}</p>
-      <div className="table-wrap">
+      <div className="table-wrap scroll">
         <table className="grid">
           <thead><tr><th>Card</th><th>Finish</th><th>Cond.</th><th className="r">Qty</th><th className="r">Value each</th><th className="r">Credit</th><th className="r">Check</th></tr></thead>
           <tbody>

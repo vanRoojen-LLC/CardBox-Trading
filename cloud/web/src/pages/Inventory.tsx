@@ -393,6 +393,17 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
         </div>
       )}
 
+      {/* Phones hide the column headers, so selecting every line and sorting live here instead. */}
+      {items.length > 0 && (
+        <div className="inv-mobile-tools">
+          <label className="check-all"><input type="checkbox" checked={allVisible || allMatching} onChange={toggleAll} /> Select all shown</label>
+          <select aria-label="Sort by" value={sort.key} onChange={e => setSort(s => ({ key: e.target.value, dir: s.dir }))}>
+            {COLUMNS.filter(c => c.sort).map(c => <option key={c.key} value={c.sort}>Sort by {c.key === 'condition' ? 'condition' : c.label.toLowerCase()}</option>)}
+          </select>
+          <button type="button" className="secondary small" aria-label={sort.dir === 'asc' ? 'Ascending; tap for descending' : 'Descending; tap for ascending'}
+            onClick={() => setSort(s => ({ ...s, dir: s.dir === 'asc' ? 'desc' : 'asc' }))}>{sort.dir === 'asc' ? '▲' : '▼'}</button>
+        </div>
+      )}
       <div className="table-wrap">
         <table className="grid inventory dense">
           <thead><tr>
@@ -646,19 +657,19 @@ function InventoryRow({ item, several, locations, spots, selected, onSelect, mov
         <td className="card-cell"><strong>{item.name}</strong>
           {item.typeLine && <div className="muted small">{item.typeLine}</div>}</td>
         <td className="set-cell" title={item.setName ?? undefined}><span className="set-code">{item.set.toUpperCase()}</span> <span className="muted">#{item.number}</span></td>
-        <td className="num">{item.year ?? <span className="muted">—</span>}</td>
-        <td><ColorPips colors={item.colors} /></td>
-        <td>{item.rarity ? <span className={`rarity ${item.rarity}`}>{item.rarity}</span> : <span className="muted">—</span>}</td>
-        <td><span style={{ textTransform: 'capitalize' }}>{item.finish}</span>{treatments.length > 0 && <div className="muted small">{treatments.join(', ')}</div>}</td>
-        <td>{item.condition}</td>
-        <td>{several && <div className="muted small">{item.location}</div>}
+        <td className="num c-year">{item.year ?? <span className="muted">—</span>}</td>
+        <td className="c-color"><ColorPips colors={item.colors} /></td>
+        <td className="c-rarity">{item.rarity ? <span className={`rarity ${item.rarity}`}>{item.rarity}</span> : <span className="muted">—</span>}</td>
+        <td className="c-finish"><span style={{ textTransform: 'capitalize' }}>{item.finish}</span>{treatments.length > 0 && <div className="muted small">{treatments.join(', ')}</div>}</td>
+        <td className="c-cond">{item.condition}</td>
+        <td className="c-where">{several && <div className="muted small">{item.location}</div>}
           {item.path.length ? placeText(item.path) : <span className="unshelved">Not put away</span>}
           {item.destination?.length > 0 && <button type="button" className="headed link" aria-expanded={!!why}
             title="Where your storage rules send it. Click to see why." onClick={toggleWhy}>→ {placeText(item.destination)}</button>}</td>
-        <td>{synced ? item.clubCollection : <span className="muted">Store stock</span>}</td>
-        <td>{item.batchName ?? <span className="muted">—</span>}</td>
-        <td className="r">{money(item.market)}</td>
-        <td className="r">
+        <td className="c-collection">{synced ? item.clubCollection : <span className="muted">Store stock</span>}</td>
+        <td className="c-batch">{item.batchName ?? <span className="muted">—</span>}</td>
+        <td className="r c-market">{money(item.market)}</td>
+        <td className="r c-qty">
           {synced ? item.quantity : <QuantityStepper item={item} onQuantity={onQuantity} />}
         </td>
         <td className="r row-links">

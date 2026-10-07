@@ -288,7 +288,7 @@ export function TeamAdmin({ onChange, store }: { onChange: () => Promise<void>; 
       {tab === 'invites' && (
         invites.length === 0
           ? <p className="empty">No open invitations.{canInvite && <> <button type="button" className="link" onClick={() => setModal({ kind: 'invite' })}>Invite someone</button></>}</p>
-          : <div className="table-wrap" style={{ marginTop: 14 }}><table className="grid">
+          : <div className="table-wrap scroll" style={{ marginTop: 14 }}><table className="grid">
             <thead><tr><th>Invited</th><th>Role</th><th>Status</th><th>Sent</th><th>Expires</th><th><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>{invites.map(i => (
               <tr key={i.id}>
