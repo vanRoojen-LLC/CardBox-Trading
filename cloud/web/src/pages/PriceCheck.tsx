@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react'
 import { api, money, type Card } from '../api'
 import SearchIcon from '../SearchIcon'
 import CardLightbox from '../CardLightbox'
+import OtherGames, { type Game } from '../OtherGames'
 
 /** A public result row; Star Wars: Unlimited rows also name their variant and link to TCGplayer. */
 type PriceCard = Card & { variant?: string | null; url?: string | null }
 interface SearchResult { cards: PriceCard[]; pricesUpdatedAt: string | null }
-type Game = 'mtg' | 'swu'
 
 const GAMES: Record<Game, { label: string; title: string; example: string }> = {
   mtg: { label: 'Magic', title: 'Magic card price check', example: 'e.g. Lightning Bolt or DMU 391' },
@@ -24,19 +24,23 @@ function gameFromUrl(): Game {
 /** The free price check: search a card, see its market price. Nothing else, by design. */
 export default function PriceCheck() {
   const [game, setGame] = useState<Game>(gameFromUrl)
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(() => new URLSearchParams(window.location.search).get('q') ?? '')
   const [result, setResult] = useState<SearchResult | null>(null)
   const [error, setError] = useState('')
   const [enlarged, setEnlarged] = useState<PriceCard | null>(null)
+  // The search the shown result answers, so the other-games hint never runs for a query still being typed.
+  const [searched, setSearched] = useState('')
 
   useEffect(() => {
     if (query.trim().length < 2) { setResult(null); setError(''); return }
+    let current = true
+    const q = query.trim()
     const timer = setTimeout(() => {
-      api<SearchResult>(`/api/public/cards?game=${game}&q=${encodeURIComponent(query.trim())}&v=${__BUILD_ID__}`)
-        .then(r => { setResult(r); setError('') })
-        .catch(e => setError(e.message))
+      api<SearchResult>(`/api/public/cards?game=${game}&q=${encodeURIComponent(q)}&v=${__BUILD_ID__}`)
+        .then(r => { if (current) { setResult(r); setSearched(q); setError('') } })
+        .catch(e => { if (current) setError(e.message) })
     }, 300)
-    return () => clearTimeout(timer)
+    return () => { current = false; clearTimeout(timer) }
   }, [query, game])
 
   function choose(next: Game) {
@@ -66,7 +70,10 @@ export default function PriceCheck() {
       {error && <p className="error">{error}</p>}
       {result && (
         <>
-          {result.cards.length === 0 ? <p className="muted">No cards found.</p> : (
+          {result.cards.length === 0 ? <>
+            <p className="muted">No cards found.</p>
+            <OtherGames query={searched} game={game} onPick={choose} />
+          </> : (
             <div className="rows">
               <div className="rows-head"><span style={{ flex: 1 }}>Card</span><span className="price-col">Normal</span><span className="price-col">Foil</span></div>
               {result.cards.map(card => (

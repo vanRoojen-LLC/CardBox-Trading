@@ -2,6 +2,8 @@ package com.cardpricer.cloud.trade;
 
 import com.cardpricer.cloud.auth.CurrentUser;
 import com.cardpricer.cloud.catalog.CatalogRepository;
+import com.cardpricer.cloud.catalog.PublicCardController;
+import com.cardpricer.cloud.catalog.SwuCatalogRepository;
 import com.cardpricer.cloud.inventory.PutAway;
 import com.cardpricer.cloud.web.ApiException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -31,19 +33,31 @@ public class TradeController {
 
     private final TradeService trades;
     private final CatalogRepository catalog;
+    private final SwuCatalogRepository swu;
     private final JdbcTemplate jdbc;
     private final PutAway putAway;
 
-    public TradeController(TradeService trades, CatalogRepository catalog, JdbcTemplate jdbc, PutAway putAway) {
+    public TradeController(TradeService trades, CatalogRepository catalog, SwuCatalogRepository swu, JdbcTemplate jdbc,
+                           PutAway putAway) {
         this.trades = trades;
         this.putAway = putAway;
         this.catalog = catalog;
+        this.swu = swu;
         this.jdbc = jdbc;
     }
 
     @GetMapping("/cards")
-    public List<Map<String, Object>> cards(@RequestParam("q") String q, @RequestParam(value = "set", defaultValue = "") String set) {
+    public List<Map<String, Object>> cards(@RequestParam("q") String q, @RequestParam(value = "set", defaultValue = "") String set,
+                                           @RequestParam(value = "game", defaultValue = "mtg") String game) {
         if (q.trim().length() < 2) throw ApiException.badRequest("Type at least 2 characters");
+        if (q.length() > 100) throw ApiException.badRequest("Search is too long");
+        // A Star Wars: Unlimited printing in the same shape, under the id trades and stock know it by.
+        if (game.equals("swu")) return swu.search(q, set.trim().toUpperCase(Locale.ROOT), 40).stream().map(card -> {
+            Map<String, Object> view = PublicCardController.view(card);
+            view.put("id", card.tradingId());
+            return view;
+        }).toList();
+        if (!game.equals("mtg")) throw ApiException.badRequest("Unknown game");
         return catalog.search(q, set.trim().toUpperCase(Locale.ROOT), 40).stream().map(card -> {
             Map<String, Object> view = new HashMap<>();
             view.put("id", card.id());

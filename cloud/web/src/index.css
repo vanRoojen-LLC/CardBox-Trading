@@ -115,6 +115,8 @@ h2 { font-size: 1.05rem; font-weight: 650; margin: 0; }
 .page.wide { max-width: 1480px; padding: 20px; }
 .footer { max-width: 1040px; margin: 0 auto; padding: 0 20px 32px; color: var(--muted); font-size: .85rem; }
 .lede { margin: 0 0 1rem; color: var(--muted); }
+.elsewhere { margin: .25rem 0 .75rem; }
+.elsewhere .small { display: block; margin-top: .15rem; overflow-wrap: anywhere; }
 
 /* Controls */
 input, select, button, textarea { font: inherit; }

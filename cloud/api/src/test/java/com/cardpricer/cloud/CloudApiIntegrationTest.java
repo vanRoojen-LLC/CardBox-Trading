@@ -259,6 +259,24 @@ class CloudApiIntegrationTest {
     }
 
     @Test
+    void emptySearchOffersTheOtherGame() throws Exception {
+        var r = call("GET", "/api/public/cards/elsewhere?game=mtg&q=darth%20vader", null, null);
+        assertEquals(200, r.status(), r.raw());
+        var games = r.body().path("games");
+        assertEquals(1, games.size());
+        assertEquals("swu", games.get(0).path("game").asText());
+        assertEquals(5, games.get(0).path("count").asInt());
+        assertFalse(games.get(0).path("more").asBoolean());
+        var names = new java.util.ArrayList<String>();
+        games.get(0).path("names").forEach(x -> names.add(x.asText()));
+        assertTrue(names.contains("Darth Vader, Dark Lord of the Sith"), names.toString());
+        var bolt = call("GET", "/api/public/cards/elsewhere?game=swu&q=bolt", null, null).body().path("games");
+        assertEquals("mtg", bolt.get(0).path("game").asText(), "and Magic from the Star Wars: Unlimited page");
+        assertEquals(0, call("GET", "/api/public/cards/elsewhere?game=mtg&q=zzzz", null, null).body().path("games").size());
+        assertEquals(400, call("GET", "/api/public/cards/elsewhere?game=pkmn&q=vader", null, null).status());
+    }
+
+    @Test
     void swuSearchTakesSetNumberSubtitleAndVariant() throws Exception {
         for (String q : new String[]{"SOR 10", "sor 010", "sor #010", "dark lord", "darth vader dark lord"}) {
             var cards = searchSwu(q);
@@ -382,6 +400,32 @@ class CloudApiIntegrationTest {
     void storeWorkflowRequiresSignIn() throws Exception {
         assertEquals(401, call("GET", "/api/app/trades", null, null).status());
         assertEquals(401, call("GET", "/api/app/rates", "occ_session=forged.123.abc", null).status());
+    }
+
+    @Test
+    void starWarsUnlimitedCardsTradeAndStock() throws Exception {
+        String owner = signup("OCC", "owner-" + UUID.randomUUID() + "@example.com");
+        var found = call("GET", "/api/app/cards?game=swu&q=vader", owner, null);
+        assertEquals(200, found.status(), found.raw());
+        JsonNode leader = null;
+        for (var c : found.body()) if (c.path("set").asText().equals("SOR") && c.path("number").asText().equals("010")) leader = c;
+        assertNotNull(leader, found.raw());
+        assertEquals("4.45", leader.path("usd").asText());
+        String id = leader.path("id").asText();
+        assertEquals(0, call("GET", "/api/app/cards?q=vader", owner, null).body().size(), "the Magic search is unchanged");
+
+        var quote = call("POST", "/api/app/trades/quote", owner, Map.of("payment", "credit",
+                "lines", java.util.List.of(Map.of("cardId", id, "finish", "normal", "condition", "NM", "quantity", 1))));
+        assertEquals(200, quote.status(), quote.raw());
+        assertEquals("Darth Vader, Dark Lord of the Sith", quote.body().path("lines").get(0).path("name").asText());
+        assertEquals(0, new java.math.BigDecimal("4.45").compareTo(quote.body().path("lines").get(0).path("marketUnit").decimalValue()));
+
+        String main = call("GET", "/api/app/store", owner, null).body().path("locations").get(0).path("id").asText();
+        assertEquals(200, call("POST", "/api/app/inventory", owner, Map.of("cardId", id, "finish", "normal", "condition", "NM",
+                "quantity", 2, "locationId", main)).status());
+        var stock = call("GET", "/api/app/inventory?q=vader", owner, null).body().path("items").get(0);
+        assertEquals("star-wars-unlimited", stock.path("game").asText());
+        assertEquals("4.45", stock.path("market").asText());
     }
 
     @Test

@@ -112,8 +112,11 @@ public class CatalogRepository {
         return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 
+    /** A card trades and stock can take: a Magic card, or a Star Wars: Unlimited printing priced by its finish. */
     public Optional<CardRow> find(UUID id) {
-        return jdbc.query("SELECT " + COLUMNS + " FROM cards WHERE id = ?", ROW, id).stream().findFirst();
+        return jdbc.query("SELECT " + COLUMNS + " FROM cards WHERE id = ? UNION ALL SELECT " + COLUMNS
+                + " FROM inventory_cards WHERE id = ? AND id IN (SELECT id FROM swu_cards WHERE id = ?)", ROW, id, id, id)
+                .stream().findFirst();
     }
 
     public Optional<Instant> lastImport() {
