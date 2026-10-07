@@ -102,7 +102,7 @@ public class PublicCardController {
      * An SWU printing in the Magic row's shape: its one market price sits in the Normal or Foil column by its finish,
      * and the variant (Hyperspace, Showcase, a promo) is named beside it.
      */
-    static Map<String, Object> view(SwuCard card) {
+    public static Map<String, Object> view(SwuCard card) {
         Map<String, Object> view = new HashMap<>();
         view.put("id", card.setCode() + "-" + card.sourceNumber());
         view.put("name", card.subtitle() == null ? card.name() : card.name() + ", " + card.subtitle());

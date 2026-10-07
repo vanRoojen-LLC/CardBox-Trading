@@ -40,3 +40,14 @@ export default function OtherGames({ query, game, onPick, link }: {
     )
   })}</>
 }
+
+/** The Magic / Star Wars: Unlimited switch above a card search. */
+export function GameSwitch({ game, onChange }: { game: Game; onChange: (game: Game) => void }) {
+  return (
+    <div className="seg game-switch" role="group" aria-label="Game">
+      {(Object.keys(GAME_LABELS) as Game[]).map(g => (
+        <button key={g} type="button" aria-pressed={g === game} onClick={() => onChange(g)}>{GAME_LABELS[g]}</button>
+      ))}
+    </div>
+  )
+}

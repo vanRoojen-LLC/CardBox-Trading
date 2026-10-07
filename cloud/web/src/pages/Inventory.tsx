@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { aborted, api, CONDITIONS, FINISHES, money, type Card, type Money, type StoreLocation } from '../api'
 import { flatTree, pathOf, pathText, placeText, subtreeCounts, type PathPart, type Spot } from '../storage'
 import SearchIcon from '../SearchIcon'
-import OtherGames from '../OtherGames'
+import OtherGames, { GameSwitch, type Game } from '../OtherGames'
 import { FACETS, TREATMENTS, ruleText, titleCase, valueLabel, type Conditions, type Facets } from '../cardDetails'
 import { ColorPips, FacetMenu, PriceMenu } from '../cardFilters'
 import ClubCollections from './ClubCollections'
@@ -771,6 +771,7 @@ function AddCards({ locations, spots, defaultLocation, onAdded }: {
   locations: StoreLocation[]; spots: Spot[]; defaultLocation: string; onAdded: () => void
 }) {
   const [query, setQuery] = useState('')
+  const [game, setGame] = useState<Game>('mtg')
   const [results, setResults] = useState<Card[]>([])
   // The search that came back empty, so the other-games hint answers it and not a query still being typed.
   const [noMatch, setNoMatch] = useState('')
@@ -785,10 +786,10 @@ function AddCards({ locations, spots, defaultLocation, onAdded }: {
   useEffect(() => {
     if (query.trim().length < 2) return
     const controller = new AbortController()
-    const t = setTimeout(() => api<Card[]>(`/api/app/cards?q=${encodeURIComponent(query.trim())}`, { signal: controller.signal })
+    const t = setTimeout(() => api<Card[]>(`/api/app/cards?game=${game}&q=${encodeURIComponent(query.trim())}`, { signal: controller.signal })
       .then(r => { setResults(r); setActive(0); setNoMatch(r.length === 0 ? query.trim() : '') }).catch(e => { if (!aborted(e)) setError(e.message) }), 250)
     return () => { clearTimeout(t); controller.abort() }
-  }, [query])
+  }, [query, game])
   const finishes = useMemo(() => card ? FINISHES.filter(f => f.price(card) != null) : [], [card])
   const shown = query.trim().length >= 2 ? results.slice(0, 12) : []
 
@@ -822,6 +823,7 @@ function AddCards({ locations, spots, defaultLocation, onAdded }: {
 
   return (
     <div className="panel add-cards">
+      <GameSwitch game={game} onChange={g => { setGame(g); setNoMatch(''); searchRef.current?.focus() }} />
       <div className="search">
         <SearchIcon />
         <input ref={searchRef} autoFocus placeholder="Find a card to add" aria-label="Find a card to add" value={query}
@@ -832,8 +834,7 @@ function AddCards({ locations, spots, defaultLocation, onAdded }: {
       </div>
       {noMatch && noMatch === query.trim() && <>
         <p className="muted">No cards found.</p>
-        {/* Stock takes Magic cards here; a card from another game links to its price instead. */}
-        <OtherGames query={noMatch} game="mtg" link={(g, q) => `/app/price?game=${g}&q=${encodeURIComponent(q)}`} />
+        <OtherGames query={noMatch} game={game} onPick={g => { setGame(g); setNoMatch(''); searchRef.current?.focus() }} />
       </>}
       {shown.length > 0 && (
         <ul className="pick-list" id="add-matches" role="listbox">
