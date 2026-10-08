@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import { CardBoxStores } from './CardBoxStores'
 import SupportReports from '../SupportReports'
+import CatalogCoverage from '../CatalogCoverage'
 import DateField from '../DateField'
 import { confirmPlan, planLabel, PLANS } from '../plans'
 
@@ -27,10 +28,11 @@ export default function Admin({ me, onChange }: { me: { email: string; cardbox: 
       <CardBoxStores />
       <p className="muted small" style={{ marginTop: 20 }}>Each store's team is on its Team page. Platform owner roles and everyone's
         CardBox accounts are managed on <a href="https://cardbox.club/roles" target="_blank" rel="noreferrer">cardbox.club</a>.</p>
+      <CatalogCoverage />
       <SupportReports />
     </section>
   )
-  return <><LocalAdmin onChange={onChange} /><SupportReports /></>
+  return <><LocalAdmin onChange={onChange} /><CatalogCoverage /><SupportReports /></>
 }
 
 function LocalAdmin({ onChange }: { onChange: () => Promise<void> }) {

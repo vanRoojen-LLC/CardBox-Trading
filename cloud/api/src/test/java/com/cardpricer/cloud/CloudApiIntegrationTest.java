@@ -232,7 +232,11 @@ class CloudApiIntegrationTest {
      * as {@code sub}/{@code email}, and the callback answers. Returns the callback's response.
      */
     Response auth0SignIn(String sub, String email, boolean verified) throws Exception {
-        var start = call("GET", "/api/auth/login", null, null);
+        return auth0SignIn(sub, email, verified, "/api/auth/login");
+    }
+
+    Response auth0SignIn(String sub, String email, boolean verified, String loginPath) throws Exception {
+        var start = call("GET", loginPath, null, null);
         assertEquals(302, start.status(), start.raw());
         assertTrue(start.location().startsWith(issuer() + "authorize?"), start.location());
         assertEquals("S256", query(start.location(), "code_challenge_method"));
@@ -1372,6 +1376,39 @@ class CloudApiIntegrationTest {
         var off = call("POST", "/api/partner/club-sync/catalog-printings", null,
                 Map.of("segment_key", "magic-the-gathering", "printings", List.of()));
         assertEquals(503, off.status(), "collection sync is switched off in this test, and the relay with it");
+    }
+
+    @Test
+    void aBrowserVisitWithoutASessionGoesToSignInAndComesBack() throws Exception {
+        // Opened in the address bar: sign in, then back to the same address. The app's own fetches still get 401 JSON.
+        var builder = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/admin/catalog-links?x=1"))
+                .header("Accept", "text/html,application/xhtml+xml").header("Sec-Fetch-Mode", "navigate").GET();
+        var visit = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(302, visit.statusCode(), visit.body());
+        assertEquals("/api/auth/login?returnTo=%2Fapi%2Fadmin%2Fcatalog-links%3Fx%3D1",
+                local(visit.headers().firstValue("Location").orElse("")));
+        var fetch = http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/admin/catalog-links"))
+                .header("Accept", "*/*").header("Sec-Fetch-Mode", "cors").GET().build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(401, fetch.statusCode());
+        assertTrue(fetch.body().contains("Please sign in"));
+
+        String sub = "auth0|" + UUID.randomUUID(), email = "back-" + UUID.randomUUID() + "@example.com";
+        var first = auth0SignIn(sub, email, true);
+        assertEquals(200, call("POST", "/api/auth/signup", first.cookie(), Map.of("storeName", "Return Store", "name", "Owner")).status());
+        var back = auth0SignIn(sub, email, true, "/api/auth/login?returnTo=" + java.net.URLEncoder.encode("/app/history?q=a b",
+                java.nio.charset.StandardCharsets.UTF_8));
+        assertEquals(302, back.status(), back.raw());
+        assertEquals("/app/history?q=a%20b", local(back.location()));
+        var elsewhere = auth0SignIn(sub, email, true, "/api/auth/login?returnTo=%2F%2Fevil.example");
+        assertEquals("/app", local(elsewhere.location()), "never another site");
+        assertEquals("/app", local(auth0SignIn(sub, email, true).location()));
+    }
+
+    /** A redirect's path and query on this site; the servlet container makes Location absolute. */
+    String local(String location) {
+        URI uri = URI.create(location.replace(" ", "%20"));
+        assertTrue(uri.getHost() == null || uri.getHost().equals("localhost"), location);
+        return uri.getRawPath() + (uri.getRawQuery() == null ? "" : "?" + uri.getRawQuery());
     }
 
     @Test
