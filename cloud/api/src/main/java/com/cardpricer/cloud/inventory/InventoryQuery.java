@@ -15,12 +15,14 @@ import java.util.UUID;
  * Every value is a bind parameter; field and sort names come from fixed lists.
  */
 public final class InventoryQuery {
-    /** {@code i} is the line, {@code c} its card, {@code loc} its location, {@code cl} the CardBox collection it syncs from. */
+    /** {@code i} is the line, {@code c} its card, {@code loc} its location, {@code cl} the CardBox collection it syncs from, {@code bv} its blended value. */
     public static final String FROM = """
             FROM inventory_items i JOIN locations loc ON loc.id = i.location_id
             LEFT JOIN inventory_cards c ON c.id = i.card_id
-            LEFT JOIN club_links cl ON cl.id = i.club_link_id""";
-    public static final String MARKET = "CASE i.finish WHEN 'foil' THEN c.usd_foil WHEN 'etched' THEN c.usd_etched ELSE c.usd END";
+            LEFT JOIN club_links cl ON cl.id = i.club_link_id
+            LEFT JOIN blended_values bv ON bv.card_id = i.card_id AND bv.finish = coalesce(i.finish, 'normal')""";
+    /** The blended trade value a quote uses ({@code BlendedValues}), else the card's own price for the line's finish. */
+    public static final String MARKET = "coalesce(bv.market, CASE i.finish WHEN 'foil' THEN c.usd_foil WHEN 'etched' THEN c.usd_etched ELSE c.usd END)";
     static final String YEAR = "extract(year FROM c.released_at)::int";
     static final String RARITY_RANK = "array_position(ARRAY['common','uncommon','rare','mythic','special','bonus'], i.rarity)";
     /** Main card types, in the order stores usually think of them. */

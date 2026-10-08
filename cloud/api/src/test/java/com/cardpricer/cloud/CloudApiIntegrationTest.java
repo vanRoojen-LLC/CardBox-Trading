@@ -141,6 +141,7 @@ class CloudApiIntegrationTest {
         registry.add("spring.datasource.password", POSTGRES::getPassword);
         registry.add("app.session-secret", () -> "test-secret-test-secret-test-secret-0123");
         registry.add("app.secure-cookie", () -> "false");
+        registry.add("app.blended.initial-delay-ms", () -> "3600000");
         registry.add("app.rate-limit.auth-per-minute", () -> "1000");
         registry.add("app.rate-limit.public-per-minute", () -> "1000");
         registry.add("app.auth0.issuer", CloudApiIntegrationTest::issuer);
@@ -177,6 +178,7 @@ class CloudApiIntegrationTest {
     @Autowired com.cardpricer.cloud.catalog.PriceHistory priceHistory;
     @Autowired com.cardpricer.cloud.catalog.TcgSkuPrices skuPrices;
     @Autowired com.cardpricer.cloud.catalog.ClubMarketSummaries clubMarket;
+    @Autowired com.cardpricer.cloud.catalog.BlendedValues blendedValues;
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
     final ObjectMapper json = new ObjectMapper();
     final HttpClient http = HttpClient.newBuilder().proxy(HttpClient.Builder.NO_PROXY).build();
@@ -455,6 +457,14 @@ class CloudApiIntegrationTest {
                     "the offer is worked out from the blended $41, at the default 50%: " + quote.raw());
             assertEquals("48.2", quote.body().path("lines").get(0).path("tcgplayerUnit").asText());
 
+            // The inventory list values the card the same way: the blended $41, not TCGplayer's $48.20 alone.
+            String main = call("GET", "/api/app/store", owner, null).body().path("locations").get(0).path("id").asText();
+            assertEquals(200, call("POST", "/api/app/inventory", owner, Map.of("cardId", ragavan, "finish", "normal",
+                    "condition", "NM", "quantity", 1, "locationId", main)).status());
+            blendedValues.refresh(java.time.Instant.now());
+            var stock = call("GET", "/api/app/inventory?q=ragavan", owner, null).body().path("items").get(0);
+            assertEquals(0, new java.math.BigDecimal("41").compareTo(stock.path("market").decimalValue()), stock.toString());
+
             // Magic gets its own rates; the store default and Star Wars stay as they were.
             assertFalse(call("GET", "/api/app/rates?game=magic-the-gathering", owner, null).body().path("own").asBoolean());
             assertEquals(400, call("GET", "/api/app/rates?game=pokemon", owner, null).status());
@@ -482,6 +492,10 @@ class CloudApiIntegrationTest {
             clubMarket.ingest("magic-the-gathering", true, true, List.of());
             r = call("GET", "/api/public/cards/" + ragavan + "/evidence?finish=normal", null, null);
             assertEquals("48.2", r.body().path("market").asText(), r.raw());
+            blendedValues.refresh(java.time.Instant.now());
+            stock = call("GET", "/api/app/inventory?q=ragavan", owner, null).body().path("items").get(0);
+            assertEquals(0, new java.math.BigDecimal("48.2").compareTo(stock.path("market").decimalValue()),
+                    "a push invalidates the blended value: " + stock);
             assertTrue(r.body().path("missing").toString().contains("CardBox Club has none for this card yet"));
         } finally {
             jdbc.update("DELETE FROM club_market_summaries");
