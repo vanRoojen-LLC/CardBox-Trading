@@ -38,10 +38,19 @@ public class AdminController {
 
     private final JdbcTemplate jdbc;
     private final CardBoxClient cardbox;
+    private final com.cardpricer.cloud.catalog.CatalogPrintingLinks catalogLinks;
 
-    public AdminController(JdbcTemplate jdbc, CardBoxClient cardbox) {
+    public AdminController(JdbcTemplate jdbc, CardBoxClient cardbox,
+                           com.cardpricer.cloud.catalog.CatalogPrintingLinks catalogLinks) {
         this.jdbc = jdbc;
         this.cardbox = cardbox;
+        this.catalogLinks = catalogLinks;
+    }
+
+    /** How much of Trading's catalog the catalog service's printings cover yet, per game. */
+    @GetMapping("/catalog-links")
+    public Map<String, Object> catalogLinks() {
+        return catalogLinks.coverage();
     }
 
     @GetMapping("/stores")
