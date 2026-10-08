@@ -146,7 +146,7 @@ public class InventoryCounts {
         List<Map<String, String>> notMatched = new ArrayList<>();
         for (var u : upserts) {
             if (u.itemId() == null || u.itemId().isBlank()) throw ApiException.badRequest("Every item needs item_id");
-            var match = ClubSync.match(u);
+            var match = clubSync.match(u);
             if (match.reason() != null || !known.contains(match.cardId())) {
                 notMatched.add(Map.of("item_id", u.itemId(), "reason", match.reason() != null ? match.reason() : "Not in Trading's card list yet"));
                 continue;

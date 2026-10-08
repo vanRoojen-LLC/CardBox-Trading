@@ -272,6 +272,57 @@ class ClubSyncIntegrationTest {
     }
 
     @Test
+    void otherGamesGoInUnderTradingsOwnCatalogByTheirCatalogKeys() throws Exception {
+        link();
+        jdbc.update("""
+                INSERT INTO swu_cards (set_code, source_number, set_name, collector_number, treatment, variant, name, image,
+                                       tcgplayer_id, swu_cid, market)
+                VALUES ('ZKT', '005', 'Key Test', '005', 'normal', 'Normal', 'Key Luke', 'https://img/luke.png', '7001', 'cid-luke', 2.50),
+                       ('ZKT', '005F', 'Key Test', '005', 'foil', 'Foil', 'Key Luke', 'https://img/luke-f.png', '7001', 'cid-luke-f', 9.00)
+                ON CONFLICT DO NOTHING""");
+        jdbc.update("INSERT INTO tcg_games (category_id, segment, name) VALUES (9902, 'key-test-game', 'Key Test Game') ON CONFLICT DO NOTHING");
+        jdbc.update("""
+                INSERT INTO tcg_products (category_id, product_id, sub_type, set_id, set_code, set_name, name, image_url, market)
+                VALUES (9902, 880001, 'Normal', 1, 'KT1', 'Key Set', 'Key Card', 'https://img/key.png', 1.25),
+                       (9902, 880001, 'Holofoil', 1, 'KT1', 'Key Set', 'Key Card', 'https://img/key.png', 4.75)
+                ON CONFLICT DO NOTHING""");
+        UUID lukeFoil = jdbc.queryForObject("SELECT id FROM swu_cards WHERE set_code = 'ZKT' AND source_number = '005F'", UUID.class);
+        UUID keyHolo = jdbc.queryForObject("SELECT id FROM tcg_products WHERE product_id = 880001 AND sub_type = 'Holofoil'", UUID.class);
+
+        var luke = Map.<String, Object>of("item_id", "k1", "version", 1, "game", "star-wars-unlimited", "club_printing_id", "swu-zkt-005-f",
+                "treatment", "Foil", "quantity", 1, "name", "Key Luke", "set_code", "ZKT", "collector_number", "005",
+                "external_ids", Map.of("swu-db:cid", "cid-luke-f", "tcgplayer", "7001"));
+        var card = Map.<String, Object>of("item_id", "k2", "version", 1, "game", "key-test-game", "club_printing_id", "kt-880001-holo",
+                "treatment", "Holofoil", "quantity", 1, "name", "Key Card", "set_code", "KT1", "collector_number", "1",
+                "external_ids", Map.of("tcgplayer", "880001", "tcgplayer:sub_type", "Holofoil"));
+        var sent = club("POST", "/items", Map.of("upserts", List.of(luke, card)));
+        assertEquals(200, sent.status(), sent.raw());
+        assertEquals(0, sent.body().path("not_matched").size(), sent.raw());
+
+        // Filed under Trading's priced copies of the printings, foil priced as foil, with no Club stand-ins.
+        assertEquals(Map.of(lukeFoil + "/foil", 1, keyHolo + "/foil", 1), synced());
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM club_cards WHERE club_printing_id IN ('swu-zkt-005-f', 'kt-880001-holo')", Integer.class));
+    }
+
+    @Test
+    void aCardOnAClubStandInMovesToTradingsCatalogWhenResentWithItsKeys() throws Exception {
+        link();
+        jdbc.update("""
+                INSERT INTO swu_cards (set_code, source_number, set_name, collector_number, treatment, variant, name, swu_cid, market)
+                VALUES ('ZKU', '010', 'Key Test', '010', 'normal', 'Normal', 'Key Leia', 'cid-leia', 3.00) ON CONFLICT DO NOTHING""");
+        UUID leia = jdbc.queryForObject("SELECT id FROM swu_cards WHERE set_code = 'ZKU' AND source_number = '010'", UUID.class);
+        Map<String, Object> before = new HashMap<>(Map.of("item_id", "k3", "version", 4, "game", "star-wars-unlimited",
+                "club_printing_id", "swu-zku-010", "quantity", 1, "name", "Key Leia", "set_code", "ZKU", "collector_number", "010"));
+        club("POST", "/items", Map.of("upserts", List.of(before)));
+        assertFalse(synced().containsKey(leia + "/normal"));
+
+        // The nightly snapshot resends it at the same version, now with the catalog keys.
+        before.put("external_ids", Map.of("swu-db:cid", "cid-leia"));
+        assertEquals(1, club("POST", "/items", Map.of("upserts", List.of(before))).body().path("applied").asInt());
+        assertEquals(Map.of(leia + "/normal", 1), synced());
+    }
+
+    @Test
     void aCardThatCouldNotGoInBeforeGoesInWhenResentAtTheSameVersion() throws Exception {
         link();
         Map<String, Object> before = Map.of("item_id", "s1", "version", 7, "game", "star-wars-unlimited", "quantity", 1,
