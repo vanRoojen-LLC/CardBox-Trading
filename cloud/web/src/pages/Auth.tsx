@@ -1,16 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api, ApiError } from '../api'
+import { safeReturnTo } from '../returnTo'
 
 // Sign-in is a full-page redirect to Auth0 Universal Login, so these are plain links, not fetches.
 const SIGN_IN = '/api/auth/login'
 const SIGN_UP = '/api/auth/login?signup=true'
 const OTHER_ACCOUNT = '/api/auth/login?chooseAccount=true'
-
-/** Where to land after signing in: a page on this site only, never another origin. */
-export function safeReturnTo(value: string | null): string | null {
-  return value && value.startsWith('/') && !value.startsWith('//') && !value.includes('\\') ? value : null
-}
 
 const withReturn = (href: string, returnTo: string | null) =>
   returnTo ? `${href}${href.includes('?') ? '&' : '?'}returnTo=${encodeURIComponent(returnTo)}` : href
