@@ -24,6 +24,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.io.IOException;
+import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -83,10 +84,13 @@ public class AuthController {
      */
     @GetMapping("/login")
     public void login(@RequestParam(defaultValue = "false") boolean signup,
-                      @RequestParam(defaultValue = "false") boolean chooseAccount, HttpServletResponse response) throws IOException {
+                      @RequestParam(defaultValue = "false") boolean chooseAccount,
+                      @RequestParam(required = false) String returnTo, HttpServletResponse response) throws IOException {
         if (!auth0.configured()) throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "Sign-in is not configured");
         String state = random(), nonce = random(), verifier = random();
-        setCookie(response, TRANSACTION_COOKIE, tokens.seal(TRANSACTION, String.join(" ", state, nonce, verifier), Duration.ofMinutes(10)),
+        // The page to come back to rides in the sealed transaction, URL-encoded so it holds no spaces.
+        String back = URLEncoder.encode(safeReturnTo(returnTo), StandardCharsets.UTF_8);
+        setCookie(response, TRANSACTION_COOKIE, tokens.seal(TRANSACTION, String.join(" ", state, nonce, verifier, back), Duration.ofMinutes(10)),
                 Duration.ofMinutes(10), "/api/auth");
         response.sendRedirect(auth0.authorizeUrl(url("/api/auth/callback"), state, nonce, challenge(verifier), signup, chooseAccount,
                 cardbox.audience()));
@@ -102,7 +106,7 @@ public class AuthController {
             fail(response, "Sign-in was cancelled or refused. Please try again.");
             return;
         }
-        if (transaction.isEmpty() || transaction.get().length != 3 || code == null
+        if (transaction.isEmpty() || transaction.get().length < 3 || code == null
                 || !MessageDigest.isEqual(transaction.get()[0].getBytes(StandardCharsets.UTF_8), String.valueOf(state).getBytes(StandardCharsets.UTF_8))) {
             fail(response, "Your sign-in expired. Please try again.");
             return;
@@ -120,8 +124,10 @@ public class AuthController {
             return;
         }
         String email = identity.email().trim().toLowerCase(Locale.ROOT);
+        String back = transaction.get().length > 3
+                ? safeReturnTo(URLDecoder.decode(transaction.get()[3], StandardCharsets.UTF_8)) : "/app";
         if (cardbox.enabled()) {
-            cardboxCallback(identity, email, response);
+            cardboxCallback(identity, email, back, response);
             return;
         }
 
@@ -167,14 +173,15 @@ public class AuthController {
             return;
         }
         setCookie(response, AuthFilter.COOKIE, tokens.issue(user), SessionTokens.LIFETIME, "/");
-        response.sendRedirect("/app");
+        response.sendRedirect(back);
     }
 
     /**
      * With the CardBox link on, CardBox says which stores the person is on and with what role; Trading never
      * creates a store or membership of its own.
      */
-    private void cardboxCallback(Auth0Client.Identity identity, String email, HttpServletResponse response) throws IOException {
+    private void cardboxCallback(Auth0Client.Identity identity, String email, String back, HttpServletResponse response)
+            throws IOException {
         Optional<UUID> user;
         try {
             user = cardboxSignIn.signIn(identity, email);
@@ -187,7 +194,7 @@ public class AuthController {
             return;
         }
         setCookie(response, AuthFilter.COOKIE, tokens.issue(user.get()), SessionTokens.LIFETIME, "/");
-        response.sendRedirect("/app");
+        response.sendRedirect(back);
     }
 
     /** The signed-in Auth0 identity waiting to create a store, or 404. */
@@ -325,5 +332,12 @@ public class AuthController {
     private void setCookie(HttpServletResponse response, String name, String value, Duration maxAge, String path) {
         response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from(name, value)
                 .httpOnly(true).secure(secureCookie).sameSite("Lax").path(path).maxAge(maxAge).build().toString());
+    }
+
+    /** A page on this site to land on after signing in; anything else (another origin, a malformed path) is /app. */
+    static String safeReturnTo(String value) {
+        if (value == null || value.length() > 500 || !value.startsWith("/") || value.startsWith("//")
+                || value.contains("\\") || value.chars().anyMatch(c -> c < 0x20)) return "/app";
+        return value;
     }
 }

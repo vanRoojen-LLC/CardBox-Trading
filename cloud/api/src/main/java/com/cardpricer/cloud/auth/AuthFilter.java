@@ -12,6 +12,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.UUID;
@@ -60,7 +62,7 @@ public class AuthFilter extends OncePerRequestFilter {
         }
         var userId = tokens.verify(sessionCookie(request));
         if (userId.isEmpty()) {
-            reject(response, 401, "Please sign in");
+            signIn(request, response);
             return;
         }
         var rows = jdbc.query("""
@@ -83,7 +85,7 @@ public class AuthFilter extends OncePerRequestFilter {
                 },
                 userId.get(), cardbox);
         if (rows.isEmpty()) {
-            reject(response, 401, "Please sign in");
+            signIn(request, response);
             return;
         }
         CurrentUser user = (CurrentUser) rows.getFirst()[0];
@@ -109,6 +111,27 @@ public class AuthFilter extends OncePerRequestFilter {
         if (request.getCookies() == null) return null;
         return Arrays.stream(request.getCookies()).filter(c -> COOKIE.equals(c.getName()))
                 .map(Cookie::getValue).findFirst().orElse(null);
+    }
+
+    /**
+     * No session: a person who opened the address in their browser goes to sign in and comes back here; the app's own
+     * requests and other API clients get 401 JSON, which the app turns into its sign-in page.
+     */
+    private static void signIn(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        if (browserVisit(request)) {
+            String here = request.getRequestURI() + (request.getQueryString() == null ? "" : "?" + request.getQueryString());
+            response.sendRedirect("/api/auth/login?returnTo=" + URLEncoder.encode(here, StandardCharsets.UTF_8));
+            return;
+        }
+        reject(response, 401, "Please sign in");
+    }
+
+    /** A top-level page load (the address bar or a link), not a fetch: browsers ask for HTML only then. */
+    static boolean browserVisit(HttpServletRequest request) {
+        if (!"GET".equals(request.getMethod())) return false;
+        String accept = request.getHeader("Accept"), mode = request.getHeader("Sec-Fetch-Mode");
+        if (mode != null) return mode.equals("navigate");
+        return accept != null && accept.contains("text/html");
     }
 
     private static void reject(HttpServletResponse response, int status, String message) throws IOException {

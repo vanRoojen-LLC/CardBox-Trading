@@ -3,6 +3,7 @@ import { Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import { api, ApiError, SIGNED_OUT, type Me } from './api'
 import PriceCheck from './pages/PriceCheck'
 import { Login, Signup } from './pages/Auth'
+import { safeReturnTo } from './returnTo'
 import StoreApp from './pages/StoreApp'
 import { Mark, Wordmark } from './Brand'
 
@@ -24,11 +25,11 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Public me={me}><PriceCheck /></Public>} />
-      <Route path="/login" element={me ? <Navigate to="/app" replace /> : <Public me={me}><Login /></Public>} />
+      <Route path="/login" element={me ? <Navigate to={safeReturnTo(new URLSearchParams(window.location.search).get('returnTo')) ?? '/app'} replace /> : <Public me={me}><Login /></Public>} />
       <Route path="/signup" element={me ? <Navigate to="/app" replace /> : <Public me={me}><Signup onDone={refresh} /></Public>} />
       <Route path="/app/*" element={
         me === undefined ? <p className="page muted">Loading…</p>
-          : me === null ? <Navigate to={expired ? `/login?error=${encodeURIComponent('Your session ended. Sign in again to carry on.')}` : '/login'} replace />
+          : me === null ? <Navigate to={signInUrl(expired)} replace />
           : <StoreApp me={me} onSignOut={refresh} />
       } />
       <Route path="*" element={<Navigate to="/" replace />} />
@@ -70,4 +71,14 @@ export function useSignOut(onSignOut: () => Promise<void>) {
     await onSignOut()
     navigate('/')
   }
+}
+
+/** The sign-in page, coming back to the page the person asked for once they are in. */
+function signInUrl(expired: boolean) {
+  const params = new URLSearchParams()
+  if (expired) params.set('error', 'Your session ended. Sign in again to carry on.')
+  const here = window.location.pathname + window.location.search
+  if (here !== '/app' && here !== '/app/') params.set('returnTo', here)
+  const query = params.toString()
+  return query ? `/login?${query}` : '/login'
 }

@@ -1,22 +1,27 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api, ApiError } from '../api'
+import { safeReturnTo } from '../returnTo'
 
 // Sign-in is a full-page redirect to Auth0 Universal Login, so these are plain links, not fetches.
 const SIGN_IN = '/api/auth/login'
 const SIGN_UP = '/api/auth/login?signup=true'
 const OTHER_ACCOUNT = '/api/auth/login?chooseAccount=true'
 
+const withReturn = (href: string, returnTo: string | null) =>
+  returnTo ? `${href}${href.includes('?') ? '&' : '?'}returnTo=${encodeURIComponent(returnTo)}` : href
+
 export function Login() {
   const [params] = useSearchParams()
   const error = params.get('error')
+  const returnTo = safeReturnTo(params.get('returnTo'))
   return (
     <div className="panel narrow">
       <h1>Store sign in</h1>
       <p className="muted">You sign in with your CardBox login, the same one you use on cardbox.club.</p>
       {error && <p className="error">{error}</p>}
-      <a className="button" href={SIGN_IN}>Sign in</a>
-      <p className="muted"><a href={OTHER_ACCOUNT}>Use a different account</a></p>
+      <a className="button" href={withReturn(SIGN_IN, returnTo)}>Sign in</a>
+      <p className="muted"><a href={withReturn(OTHER_ACCOUNT, returnTo)}>Use a different account</a></p>
       <p className="muted">New store? <a href={SIGN_UP}>Start a free trial</a></p>
     </div>
   )
