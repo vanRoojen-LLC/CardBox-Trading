@@ -75,6 +75,8 @@ public class ClubMarketSummaries {
                     DELETE FROM club_market_summaries m USING club_market_pushes p
                     WHERE p.game = ? AND m.game = p.game AND m.received_at < p.started_at""", game);
             jdbc.update("UPDATE club_market_pushes SET finished_at = now() WHERE game = ?", game);
+            // New evidence changes blended values: inventory recomputes them on the next pass (BlendedValues).
+            jdbc.update("UPDATE blended_values SET computed_at = '-infinity'");
         }
         return new Result(printings.size(), matched, stored, removed);
     }
