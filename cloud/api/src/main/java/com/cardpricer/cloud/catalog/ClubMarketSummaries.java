@@ -20,8 +20,8 @@ import java.util.UUID;
  * other independent sources, as per-source aggregates. Club reads them from its catalog and pushes them twice a day,
  * one game at a time and in pages; the last page of a push drops the rows that push no longer carries.
  * <p>
- * Club's printings are matched to Trading's cards by their Scryfall id (Magic) or swu-db card id, falling back to the
- * TCGplayer product (Star Wars: Unlimited). TCGplayer's own price, and copies of it, are left out: Trading already
+ * Club's printings are matched to Trading's cards by CatalogCardMatch: Scryfall id (Magic) or swu-db card id, falling
+ * back to the TCGplayer product (Star Wars: Unlimited). TCGplayer's own price, and copies of it, are left out: Trading already
  * holds it, and counting it twice would make one source look like two.
  */
 @Repository
@@ -40,9 +40,11 @@ public class ClubMarketSummaries {
     public record Result(int printings, int matched, int stored, int removed) {}
 
     private final JdbcTemplate jdbc;
+    private final CatalogCardMatch match;
 
-    public ClubMarketSummaries(JdbcTemplate jdbc) {
+    public ClubMarketSummaries(JdbcTemplate jdbc, CatalogCardMatch match) {
         this.jdbc = jdbc;
+        this.match = match;
     }
 
     @Transactional
@@ -54,8 +56,9 @@ public class ClubMarketSummaries {
         for (Printing p : printings) {
             String finish = finish(p);
             List<Summary> kept = p.summaries().stream().filter(s -> !"tcgplayer".equals(s.source())).toList();
-            UUID card = game.equals("magic-the-gathering") ? magic(p) : swu(p);
-            if (card == null) continue;
+            CatalogCardMatch.Match found = match.find(game, p.externalIds(), p.foil());
+            if (found == null) continue;
+            UUID card = found.cardId();
             matched++;
             for (Summary s : kept) {
                 stored += jdbc.update("""
@@ -102,41 +105,7 @@ public class ClubMarketSummaries {
     }
 
     static String finish(Printing p) {
-        String treatment = p.treatment() == null ? "" : p.treatment().toLowerCase();
-        if (treatment.contains("etched")) return "etched";
-        return p.foil() ? "foil" : "normal";
-    }
-
-    private UUID magic(Printing p) {
-        String scryfall = id(p, "scryfall:id");
-        if (scryfall == null) scryfall = id(p, "scryfall");
-        UUID id;
-        try {
-            id = scryfall == null ? null : UUID.fromString(scryfall);
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
-        if (id == null) return null;
-        return jdbc.query("SELECT id FROM cards WHERE id = ?", (rs, i) -> rs.getObject(1, UUID.class), id)
-                .stream().findFirst().orElse(null);
-    }
-
-    private UUID swu(Printing p) {
-        String cid = id(p, "swu-db:cid"), tcgplayer = id(p, "tcgplayer");
-        if (cid == null && tcgplayer == null) return null;
-        // The swu-db card id names one variant; the TCGplayer product is the fallback, matched on the finish.
-        return jdbc.query("""
-                SELECT id FROM swu_cards
-                WHERE (swu_cid = ? OR tcgplayer_id = ?) AND (treatment LIKE '%foil%') = ?
-                ORDER BY (swu_cid IS NOT DISTINCT FROM ?) DESC LIMIT 1""",
-                (rs, i) -> rs.getObject(1, UUID.class), cid, tcgplayer, p.foil(), cid).stream().findFirst().orElse(null);
-    }
-
-    private static String id(Printing p, String key) {
-        Object v = p.externalIds() == null ? null : p.externalIds().get(key);
-        if (v == null) return null;
-        String s = String.valueOf(v).trim();
-        return s.isEmpty() || s.length() > 100 ? null : s;
+        return CatalogCardMatch.finish(p.treatment(), p.foil());
     }
 
 }

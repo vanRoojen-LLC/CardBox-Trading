@@ -178,6 +178,7 @@ class CloudApiIntegrationTest {
     @Autowired com.cardpricer.cloud.catalog.PriceHistory priceHistory;
     @Autowired com.cardpricer.cloud.catalog.TcgSkuPrices skuPrices;
     @Autowired com.cardpricer.cloud.catalog.ClubMarketSummaries clubMarket;
+    @Autowired com.cardpricer.cloud.catalog.CatalogPrintingLinks catalogLinks;
     @Autowired com.cardpricer.cloud.catalog.BlendedValues blendedValues;
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
     final ObjectMapper json = new ObjectMapper();
@@ -1316,6 +1317,61 @@ class CloudApiIntegrationTest {
         String cookie = signup("Unlinked", "unlinked-" + UUID.randomUUID() + "@example.com");
         assertFalse(call("GET", "/api/auth/me", cookie, null).body().path("cardbox").asBoolean());
         assertEquals(404, call("GET", "/api/cardbox/people", cookie, null).status());
+    }
+
+    static com.cardpricer.cloud.catalog.CatalogPrintingLinks.Printing catalogPrinting(String id, String treatment,
+                                                                                      boolean foil, Map<String, Object> ids) {
+        return new com.cardpricer.cloud.catalog.CatalogPrintingLinks.Printing(id, "SET", "1", treatment, "en", foil, ids);
+    }
+
+    @Test
+    void catalogPrintingsLinkToTradingsCardsAndTheGapIsCounted() throws Exception {
+        String ragavan = "22222222-2222-2222-2222-222222222222";
+        var magic = catalogLinks.ingest("magic-the-gathering", true, true, List.of(
+                catalogPrinting("cardprint:mtg:rag:normal", "Normal", false, Map.of("scryfall:id", ragavan)),
+                catalogPrinting("cardprint:mtg:rag:etched", "Etched Foil", true, Map.of("scryfall:id", ragavan)),
+                catalogPrinting("cardprint:mtg:unknown", "Normal", false, Map.of("scryfall:id", UUID.randomUUID().toString())),
+                catalogPrinting("cardprint:mtg:noid", "Normal", false, Map.of())));
+        assertEquals(new com.cardpricer.cloud.catalog.CatalogPrintingLinks.Result(4, 2, 0), magic);
+        assertEquals(List.of("etched", "normal"), jdbc.queryForList(
+                "SELECT finish FROM catalog_printing_links WHERE card_id = ?::uuid ORDER BY finish", String.class, ragavan));
+
+        // A non-foil printing with both ids (other tests re-import some without the swu-db id, so pick one that has it).
+        var known = jdbc.queryForMap("""
+                SELECT swu_cid, tcgplayer_id FROM swu_cards WHERE swu_cid IS NOT NULL AND tcgplayer_id IS NOT NULL
+                  AND treatment NOT LIKE '%foil%' ORDER BY source_number LIMIT 1""");
+        // The swu-db card id finds it; the TCGplayer product alone falls back to it; an unknown product finds nothing.
+        var swu = catalogLinks.ingest("star-wars-unlimited", true, true, List.of(
+                catalogPrinting("cardprint:swu:a", "Normal", false, Map.of("swu-db:cid", known.get("swu_cid"))),
+                catalogPrinting("cardprint:swu:b", "Normal", false, Map.of("tcgplayer", known.get("tcgplayer_id"))),
+                catalogPrinting("cardprint:swu:c", "Foil", true, Map.of("tcgplayer", "999999999"))));
+        assertEquals(2, swu.linked());
+        assertEquals(List.of("swu-db", "tcgplayer"), jdbc.queryForList("""
+                SELECT matched_by FROM catalog_printing_links WHERE game = 'star-wars-unlimited' AND card_id IS NOT NULL
+                ORDER BY printing_id""", String.class));
+
+        // A later push that no longer carries a printing drops it on its last page.
+        var again = catalogLinks.ingest("magic-the-gathering", true, false, List.of(
+                catalogPrinting("cardprint:mtg:rag:normal", "Normal", false, Map.of("scryfall:id", ragavan))));
+        assertEquals(0, again.removed());
+        assertEquals(3, catalogLinks.ingest("magic-the-gathering", false, true, List.of()).removed());
+
+        String admin = platformOwner();
+        var coverage = call("GET", "/api/admin/catalog-links", admin, null);
+        assertEquals(200, coverage.status(), coverage.raw());
+        var m = coverage.body().path("magic-the-gathering");
+        assertEquals(1, m.path("printings").asInt(), coverage.raw());
+        assertEquals(1, m.path("byScryfall").asInt());
+        assertEquals(m.path("tradingCards").asInt() - 1, m.path("tradingCardsWithoutPrinting").asInt(),
+                "only Ragavan has a catalog printing");
+        var s = coverage.body().path("star-wars-unlimited");
+        assertEquals(1, s.path("unlinked").asInt(), coverage.raw());
+        assertEquals(1, s.path("bySwuDb").asInt());
+        assertEquals(401, call("GET", "/api/admin/catalog-links", null, null).status());
+
+        var off = call("POST", "/api/partner/club-sync/catalog-printings", null,
+                Map.of("segment_key", "magic-the-gathering", "printings", List.of()));
+        assertEquals(503, off.status(), "collection sync is switched off in this test, and the relay with it");
     }
 
     @Test
