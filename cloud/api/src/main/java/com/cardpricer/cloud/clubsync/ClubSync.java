@@ -26,7 +26,7 @@ public class ClubSync {
     public record Upsert(String itemId, Long version, String game, String scryfallId, String finish, Integer quantity,
                          String condition, String name, String setCode, String collectorNumber,
                          String storageId, String imageUrl, JsonNode details, String clubPrintingId, String treatment,
-                         String batchId, String batchName) {}
+                         String batchId, String batchName, JsonNode externalIds) {}
 
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     public record Removal(String itemId, Long version) {}
@@ -39,6 +39,7 @@ public class ClubSync {
 
     public static final int MAX_BATCH = 500;
     private static final String MAGIC = "magic-the-gathering";
+    private static final String SWU = "star-wars-unlimited";
     private static final String NOT_IN_LIST = "Not in Trading's card list yet";
     /**
      * Where a synced card sits, given {@code i} (club_link_items), {@code l} (its link), {@code s} (the spot Club sent)
@@ -139,6 +140,12 @@ public class ClubSync {
                     WHERE club_link_items.version < EXCLUDED.version
                        OR (club_link_items.version = EXCLUDED.version AND club_link_items.card_id IS NULL
                            AND EXCLUDED.card_id IS NOT NULL)
+                       -- A card filed under a bare Club stand-in moves to Trading's priced copy of the printing once
+                       -- Club sends the keys to find it (the nightly snapshot resends every card).
+                       OR (club_link_items.version = EXCLUDED.version AND EXCLUDED.card_id IS NOT NULL
+                           AND club_link_items.card_id IS DISTINCT FROM EXCLUDED.card_id
+                           AND EXISTS (SELECT 1 FROM club_cards cc WHERE cc.id = club_link_items.card_id)
+                           AND NOT EXISTS (SELECT 1 FROM club_cards cc WHERE cc.id = EXCLUDED.card_id))
                        -- So does the batch of a card sent before Club named batches, or of a renamed batch.
                        OR (club_link_items.version = EXCLUDED.version AND EXCLUDED.batch_id <> ''
                            AND (club_link_items.batch_id, club_link_items.batch_name) <> (EXCLUDED.batch_id, EXCLUDED.batch_name))""",
@@ -460,10 +467,57 @@ public class ClubSync {
     }
 
     /**
+     * The card a Club printing is in Trading's own priced, imaged catalogs, by the keys Club's catalog holds for it:
+     * an SWU printing by its swu-db card id (TCGplayer product as the fallback, on the finish), any game's TCGplayer
+     * product and subtype in tcg_products. Every other non-Magic printing goes in by Club's printing id, as
+     * {@link #byClubPrinting} does. Magic is matched by its Scryfall id alone.
+     */
+    public Match match(Upsert u) {
+        if (MAGIC.equals(u.game())) return byClubPrinting(u);
+        String cid = externalId(u, "swu-db:cid"), product = externalId(u, "tcgplayer"), subType = externalId(u, "tcgplayer:sub_type");
+        boolean foil = text(u.treatment()).toLowerCase().contains("foil")
+                || (subType != null && subType.toLowerCase().contains("foil"));
+        if (SWU.equals(u.game()) && (cid != null || product != null)) {
+            var swu = jdbc.query("""
+                    SELECT id FROM swu_cards
+                    WHERE (swu_cid = ? OR tcgplayer_id = ?) AND (treatment LIKE '%foil%') = ?
+                    ORDER BY (swu_cid IS NOT DISTINCT FROM ?) DESC LIMIT 1""",
+                    (rs, i) -> rs.getObject(1, UUID.class), cid, product, foil, cid);
+            if (!swu.isEmpty()) return new Match(swu.getFirst(), foil ? "foil" : "normal", null);
+        }
+        Integer productId = product == null ? null : parseInt(product);
+        if (productId != null) {
+            var tcg = jdbc.query("""
+                    SELECT id, sub_type ILIKE '%foil%' AS foil FROM tcg_products WHERE product_id = ?
+                    ORDER BY (sub_type IS NOT DISTINCT FROM ?) DESC, ((sub_type ILIKE '%foil%') = ?) DESC,
+                             (sub_type = 'Normal') DESC LIMIT 1""",
+                    (rs, i) -> new Match(rs.getObject("id", UUID.class), rs.getBoolean("foil") ? "foil" : "normal", null),
+                    productId, subType, foil);
+            if (!tcg.isEmpty()) return tcg.getFirst();
+        }
+        return byClubPrinting(u);
+    }
+
+    private static String externalId(Upsert u, String key) {
+        JsonNode v = u.externalIds() == null || !u.externalIds().isObject() ? null : u.externalIds().get(key);
+        if (v == null || !v.isValueNode()) return null;
+        String s = v.asText().trim();
+        return s.isEmpty() || s.length() > 100 ? null : s;
+    }
+
+    private static Integer parseInt(String s) {
+        try {
+            return Integer.valueOf(s);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
      * Magic goes in by its Scryfall id, so it prices from Trading's catalog. Any other game goes in by Club's printing
      * id, as Club describes it (see {@link #knownCards}). Whether Trading has a Magic card yet is checked apart.
      */
-    public static Match match(Upsert u) {
+    static Match byClubPrinting(Upsert u) {
         if (!MAGIC.equals(u.game())) {
             String printing = text(u.clubPrintingId()).trim();
             String reason = printing.isEmpty() ? "No Club printing id"
@@ -528,7 +582,8 @@ public class ClubSync {
             Match m = match(u);
             if (m.reason() != null) continue;
             ids.add(m.cardId());
-            if (!MAGIC.equals(u.game()))
+            // A card found in Trading's own catalogs needs no stand-in.
+            if (!MAGIC.equals(u.game()) && m.cardId().equals(clubCardId(text(u.clubPrintingId()))))
                 jdbc.update("""
                         INSERT INTO club_cards (id, club_printing_id, game, name, set_code, collector_number) VALUES (?, ?, ?, ?, ?, ?)
                         ON CONFLICT (id) DO UPDATE SET game = EXCLUDED.game, name = EXCLUDED.name, set_code = EXCLUDED.set_code,
