@@ -5,23 +5,69 @@ on:
     branches: [master, main]
 permissions:
   contents: read
+  pull-requests: read  # list a PR's changed files
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
+  # Whether the change can affect the desktop app. Cloud-only changes (cloud/, its workflow) and prose
+  # skip the Windows and macOS builds. The verify jobs are required checks, so they still run and pass
+  # with every step skipped; a job skipped as a whole would leave the required check waiting.
+  # A failed lookup builds the desktop app (safe).
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      desktop: ${{ steps.changes.outputs.desktop }}
+    steps:
+      - id: changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = pull_request ]; then
+            files=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
+              --jq '.[] | .filename, (.previous_filename // empty)') || files=""
+          else
+            files=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${BEFORE}...${GITHUB_SHA}" \
+              --jq 'select((.files | length) < 300) | .files[] | .filename, (.previous_filename // empty)') || files=""
+          fi
+          desktop=false
+          [ -n "${files}" ] || desktop=true
+          while IFS= read -r path; do
+            [ -n "${path}" ] || continue
+            case "${path}" in
+              cloud/* | docs/* | .github/workflows/cloud.yml) ;;
+              */*) desktop=true ;;
+              *.md) ;;
+              *) desktop=true ;;
+            esac
+          done <<<"${files}"
+          echo "desktop=${desktop}" | tee -a "${GITHUB_OUTPUT}"
   verify:
+    needs: changes
     strategy:
       matrix:
         os: [windows-2025, macos-15]
     runs-on: ${{ matrix.os }}
+    env:
+      DESKTOP: ${{ needs.changes.outputs.desktop }}
     steps:
+      - name: Skip, nothing the desktop app builds from changed
+        if: env.DESKTOP != 'true'
+        run: echo "Only cloud/ or prose changed."
       - uses: actions/checkout@v5
+        if: env.DESKTOP == 'true'
       - uses: actions/setup-java@v5
+        if: env.DESKTOP == 'true'
         with:
           distribution: temurin
           java-version: '25'
           cache: maven
       - name: Verify Windows
-        if: runner.os == 'Windows'
+        if: env.DESKTOP == 'true' && runner.os == 'Windows'
         shell: pwsh
         run: ./build.ps1
       - name: Verify macOS
-        if: runner.os == 'macOS'
+        if: env.DESKTOP == 'true' && runner.os == 'macOS'
         run: bash ./build.sh
