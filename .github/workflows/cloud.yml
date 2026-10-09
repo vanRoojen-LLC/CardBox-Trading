@@ -24,7 +24,17 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
+      # Docker Hub rate-limits anonymous pulls from shared GitHub-hosted runner IPs (429 on master, 2026-10-09),
+      # so the tests' PostgreSQL image comes from the public ECR mirror of the same official image, tagged
+      # with the name the tests ask for; Testcontainers then uses the local copy. Ryuk (its reaper, also on
+      # Docker Hub) is off: the runner is thrown away after the job anyway.
+      - name: Pull the test PostgreSQL image from the ECR mirror
+        run: |
+          docker pull public.ecr.aws/docker/library/postgres:17-alpine
+          docker tag public.ecr.aws/docker/library/postgres:17-alpine postgres:17-alpine
       - name: Test API (Testcontainers PostgreSQL)
+        env:
+          TESTCONTAINERS_RYUK_DISABLED: 'true'
         run: mvn -B -f cloud/api/pom.xml verify
   web:
     runs-on: ubuntu-24.04
