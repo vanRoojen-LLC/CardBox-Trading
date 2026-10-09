@@ -8,6 +8,8 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  pull-requests: read  # list a PR's changed files
+  actions: read  # find master's last passed run, where master's change guards start
 # A new push to a PR branch cancels that PR's older run. Master runs one at a time and never cancels a
 # running one, so a deploy already applying is never cut off; a newer merge replaces the master run
 # still waiting, so several quick merges end in one rollup deploy of the newest commit.
@@ -15,7 +17,62 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  # Only what a change touches runs (owner, 2026-10-09: never test what did not change). The API tests
+  # run for the API or the desktop classes it compiles (src/), the web build for the web app, the image
+  # build for what shapes the image (Dockerfile, pom, package files). Prose runs nothing. Master measures
+  # from its last passed run, not the parent, so a merge whose own run was replaced while it waited is
+  # still covered, and deploys only when something it ships changed. A failed lookup, or a run by hand,
+  # runs everything.
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      api: ${{ steps.changes.outputs.api }}
+      web: ${{ steps.changes.outputs.web }}
+      image: ${{ steps.changes.outputs.image }}
+      deploy: ${{ steps.changes.outputs.deploy }}
+    steps:
+      - id: changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          files=""
+          if [ "${GITHUB_EVENT_NAME}" = pull_request ]; then
+            files=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
+              --jq '.[] | .filename, (.previous_filename // empty)') || files=""
+          elif [ "${GITHUB_EVENT_NAME}" = push ]; then
+            base=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/cloud.yml/runs?branch=master&event=push&status=success&per_page=1" \
+              --jq '.workflow_runs[0].head_sha // empty' || true)
+            if [ -n "${base}" ]; then
+              files=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${base}...${GITHUB_SHA}" \
+                --jq 'select(.status == "ahead" or .status == "identical") | select((.files | length) < 300)
+                      | .files[] | .filename, (.previous_filename // empty)') || files=""
+              echo "Measured from ${base}"
+            fi
+          fi
+          api=false web=false image=false deploy=false
+          if [ -z "${files}" ]; then
+            [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ] || echo "::warning title=Change guards off::Could not list the changes; running everything."
+            api=true web=true image=true deploy=true
+          fi
+          while IFS= read -r path; do
+            [ -n "${path}" ] || continue
+            case "${path}" in
+              .github/workflows/cloud.yml) api=true web=true image=true deploy=true ;;
+              *.md) ;;
+              cloud/api/pom.xml) api=true image=true deploy=true ;;
+              cloud/api/* | src/*) api=true deploy=true ;;
+              cloud/web/package.json | cloud/web/package-lock.json) web=true image=true deploy=true ;;
+              cloud/web/*) web=true deploy=true ;;
+              cloud/Dockerfile | .dockerignore) image=true deploy=true ;;
+              cloud/deploy.sh | cloud/infra/*) deploy=true ;;
+            esac
+          done <<<"${files}"
+          printf '%s\n' "api=${api}" "web=${web}" "image=${image}" "deploy=${deploy}" | tee -a "${GITHUB_OUTPUT}"
+
   api:
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -47,6 +104,8 @@ jobs:
           TESTCONTAINERS_RYUK_DISABLED: 'true'
         run: mvn -B -f cloud/api/pom.xml verify
   web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -60,6 +119,8 @@ jobs:
       - run: npm run build
         working-directory: cloud/web
   image:
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -69,9 +130,13 @@ jobs:
   # Ships master to cardbox.trading once every check above is green, as the cardbox-trading-deployer service principal
   # (Contributor and RBAC Administrator on the occ-pricer resource group only). Pull requests never reach this job, so
   # forks never see the secrets. Run it by hand from the Actions tab to redeploy the current master.
+  # A check skipped because nothing it covers changed does not hold the deploy; a failed one does.
   deploy:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
-    needs: [api, web, image]
+    if: >-
+      always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+      && needs.changes.outputs.deploy == 'true'
+      && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    needs: [changes, api, web, image]
     runs-on: ubuntu-24.04
     environment: production
     concurrency:
