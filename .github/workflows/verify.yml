@@ -9,7 +9,7 @@ jobs:
   verify:
     strategy:
       matrix:
-        os: [blacksmith-4vcpu-windows-2025, blacksmith-6vcpu-macos-15]
+        os: [windows-2025, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
