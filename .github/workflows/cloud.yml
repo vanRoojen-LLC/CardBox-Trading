@@ -8,6 +8,12 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+# A new push to a PR branch cancels that PR's older run. Master runs one at a time and never cancels a
+# running one, so a deploy already applying is never cut off; a newer merge replaces the master run
+# still waiting, so several quick merges end in one rollup deploy of the newest commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   api:
     runs-on: ubuntu-24.04
@@ -38,7 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Build container image
-        run: docker build -f cloud/Dockerfile -t cardbox-trading:ci .
+        run: docker build --build-arg BASE_REGISTRY=public.ecr.aws/docker/library -f cloud/Dockerfile -t cardbox-trading:ci .
 
   # Ships master to cardbox.trading once every check above is green, as the cardbox-trading-deployer service principal
   # (Contributor and RBAC Administrator on the occ-pricer resource group only). Pull requests never reach this job, so
