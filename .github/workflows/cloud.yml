@@ -44,7 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Build container image
-        run: docker build -f cloud/Dockerfile -t cardbox-trading:ci .
+        run: docker build --build-arg BASE_REGISTRY=public.ecr.aws/docker/library -f cloud/Dockerfile -t cardbox-trading:ci .
 
   # Ships master to cardbox.trading once every check above is green, as the cardbox-trading-deployer service principal
   # (Contributor and RBAC Administrator on the occ-pricer resource group only). Pull requests never reach this job, so
