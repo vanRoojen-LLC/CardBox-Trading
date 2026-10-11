@@ -124,11 +124,19 @@ public class PriceEvidence {
     /** Another origin's latest price from price_history, such as Manapool's through TCG Tracking. */
     private record Recorded(String source, BigDecimal market, LocalDate day) {}
 
-    private record Extra(List<ClubMarketSummaries.Summary> club, List<Recorded> recorded, List<Sku> skus) {
-        static final Extra NONE = new Extra(List.of(), List.of(), List.of());
+    /**
+     * The CardBox catalog's value of the printing this card and finish link to (CardBox docs/printing-values.md),
+     * relayed by Club with each catalog push.
+     */
+    record CatalogValue(BigDecimal amount, BigDecimal low, BigDecimal high, String confidence, int sources,
+                        Instant newest) {}
+
+    private record Extra(List<ClubMarketSummaries.Summary> club, List<Recorded> recorded, List<Sku> skus,
+                         CatalogValue catalog) {
+        static final Extra NONE = new Extra(List.of(), List.of(), List.of(), null);
 
         Extra(List<ClubMarketSummaries.Summary> club, List<Recorded> recorded) {
-            this(club, recorded, new ArrayList<>());
+            this(club, recorded, new ArrayList<>(), null);
         }
     }
 
@@ -255,11 +263,23 @@ public class PriceEvidence {
         for (int i = 0; i < extraPoints.size(); i++) weighted.add(extraPoints.get(i).weighted(blend.weights().get("#" + i)));
         weighted.addAll(skuPoints);
         if (extra.club().stream().noneMatch(s -> s.valueKind().equals("realized"))) missing.add(NO_CLUB);
+        // The catalog's value already blends TCGplayer and Club's eBay prices, so it is shown beside them rather than
+        // blended in again; it becomes the trade value only when Trading has no price of its own.
+        CatalogValue catalog = extra.catalog();
+        if (catalog != null) weighted.add(new Point("CardBox catalog", "Catalog value from " + catalog.sources()
+                + " source" + (catalog.sources() == 1 ? "" : "s") + ", " + catalog.confidence() + " confidence",
+                catalog.amount(), "USD", catalog.newest(), false, null, null));
         inputs = new Confidence.Inputs(inputs.market(), inputs.observedAt(), inputs.otherSource(), inputs.other(),
                 inputs.low(), inputs.mid(), inputs.history(), checks);
         Confidence.Result result = Confidence.assess(inputs, now);
         List<Confidence.Reason> reasons = new ArrayList<>(result.reasons());
         BigDecimal value = blend.value() == null ? market : blend.value();
+        boolean fromCatalog = value == null && catalog != null;
+        if (fromCatalog) {
+            value = catalog.amount();
+            reasons.add(new Confidence.Reason(Confidence.Kind.info, "Trading has no price of its own for this card: the "
+                    + "trade value is CardBox's catalog value, " + money(value) + "."));
+        }
         if (market != null && nearMintListings != null && nearMintListings < THIN_LISTINGS)
             reasons.add(new Confidence.Reason(Confidence.Kind.warn, nearMintListings == 0
                     ? "No near-mint listings on TCGplayer: the price rests on past sales only."
@@ -270,7 +290,8 @@ public class PriceEvidence {
             reasons.add(new Confidence.Reason(Confidence.Kind.info, "Trade value " + money(value) + " blends " + sources
                     + " sources; TCGplayer alone says " + money(market) + "."));
         return new Evidence(id, game, finish, value, market, url == null ? null : "https://www.tcgplayer.com/product/" + url,
-                weighted, history, result.level(), reasons, missing, Math.max(sources, market == null ? 0 : 1));
+                weighted, history, result.level(), reasons, missing,
+                Math.max(sources, market == null ? (fromCatalog ? 1 : 0) : 1));
     }
 
     /**
@@ -356,6 +377,20 @@ public class PriceEvidence {
             int listings = rs.getInt(6);
             e.skus().add(new Sku(rs.getString(3), rs.getBigDecimal(4), rs.getBigDecimal(5), rs.wasNull() ? null : listings,
                     instant(rs.getTimestamp(7))));
+        });
+        jdbc.query(con -> {
+            var ps = con.prepareStatement("""
+                    SELECT DISTINCT ON (card_id, finish) card_id, finish, value_amount, value_low, value_high,
+                           value_confidence, value_sources, value_newest
+                    FROM catalog_printing_links WHERE card_id = ANY(?) AND value_amount IS NOT NULL
+                    ORDER BY card_id, finish, value_newest DESC NULLS LAST, printing_id""");
+            ps.setArray(1, con.createArrayOf("uuid", array));
+            return ps;
+        }, rs -> {
+            Key key = new Key(rs.getObject(1, UUID.class), rs.getString(2));
+            Extra e = out.getOrDefault(key, new Extra(List.of(), new ArrayList<>()));
+            out.put(key, new Extra(e.club(), e.recorded(), e.skus(), new CatalogValue(rs.getBigDecimal(3), rs.getBigDecimal(4), rs.getBigDecimal(5),
+                    rs.getString(6) == null ? "none" : rs.getString(6), rs.getInt(7), instant(rs.getTimestamp(8)))));
         });
         return out;
     }

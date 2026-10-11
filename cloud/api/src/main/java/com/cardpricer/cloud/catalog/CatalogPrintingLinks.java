@@ -6,6 +6,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,9 +24,21 @@ import java.util.Set;
 public class CatalogPrintingLinks {
     public static final Set<String> GAMES = Set.of(CatalogCardMatch.MAGIC, CatalogCardMatch.SWU);
 
-    /** What Club sends for one printing. */
+    /** What Club sends for one printing; {@code value} is the catalog's value of it, or null when it has none. */
     public record Printing(String printingId, String setCode, String collectorNumber, String treatment, String language,
-                           boolean foil, Map<String, Object> externalIds) {}
+                           boolean foil, Map<String, Object> externalIds, Value value) {
+        public Printing(String printingId, String setCode, String collectorNumber, String treatment, String language,
+                        boolean foil, Map<String, Object> externalIds) {
+            this(printingId, setCode, collectorNumber, treatment, language, foil, externalIds, null);
+        }
+    }
+
+    /**
+     * The catalog's value of one printing (CardBox docs/printing-values.md): a blend of every source CardBox collects,
+     * with its range, confidence, how many source families it rests on and its newest evidence.
+     */
+    public record Value(BigDecimal amount, BigDecimal low, BigDecimal high, String confidence, Integer sources,
+                        Instant newest) {}
 
     public record Result(int printings, int linked, int removed) {}
 
@@ -44,20 +59,29 @@ public class CatalogPrintingLinks {
         int linked = 0;
         for (Printing p : printings) {
             CatalogCardMatch.Match found = match.find(game, p.externalIds(), p.foil());
+            Value v = p.value() == null || p.value().amount() == null ? null : p.value();
             if (found != null) linked++;
             jdbc.update("""
                     INSERT INTO catalog_printing_links (printing_id, game, card_id, finish, matched_by, set_code,
-                                                        collector_number, treatment, language, external_ids, received_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, now())
+                                                        collector_number, treatment, language, external_ids, received_at,
+                                                        value_amount, value_low, value_high, value_confidence,
+                                                        value_sources, value_newest)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, now(), ?, ?, ?, ?, ?, ?)
                     ON CONFLICT (printing_id) DO UPDATE SET game = EXCLUDED.game, card_id = EXCLUDED.card_id,
                         finish = EXCLUDED.finish, matched_by = EXCLUDED.matched_by, set_code = EXCLUDED.set_code,
                         collector_number = EXCLUDED.collector_number, treatment = EXCLUDED.treatment,
                         language = EXCLUDED.language, external_ids = EXCLUDED.external_ids,
-                        received_at = EXCLUDED.received_at""",
+                        received_at = EXCLUDED.received_at, value_amount = EXCLUDED.value_amount,
+                        value_low = EXCLUDED.value_low, value_high = EXCLUDED.value_high,
+                        value_confidence = EXCLUDED.value_confidence, value_sources = EXCLUDED.value_sources,
+                        value_newest = EXCLUDED.value_newest""",
                     p.printingId(), game, found == null ? null : found.cardId(),
                     CatalogCardMatch.finish(p.treatment(), p.foil()), found == null ? null : found.matchedBy(),
                     nz(p.setCode()), nz(p.collectorNumber()), nz(p.treatment()),
-                    p.language() == null || p.language().isBlank() ? "en" : p.language(), ids(p.externalIds()));
+                    p.language() == null || p.language().isBlank() ? "en" : p.language(), ids(p.externalIds()),
+                    v == null ? null : v.amount(), v == null ? null : v.low(), v == null ? null : v.high(),
+                    v == null ? null : v.confidence(), v == null ? null : v.sources(),
+                    v == null || v.newest() == null ? null : Timestamp.from(v.newest()));
         }
         int removed = 0;
         if (lastPage) {
@@ -81,6 +105,7 @@ public class CatalogPrintingLinks {
                            count(*) FILTER (WHERE matched_by = 'scryfall') AS "byScryfall",
                            count(*) FILTER (WHERE matched_by = 'swu-db') AS "bySwuDb",
                            count(*) FILTER (WHERE matched_by = 'tcgplayer') AS "byTcgplayer",
+                           count(value_amount) AS "valued",
                            max(received_at) AS "receivedAt"
                     FROM catalog_printing_links WHERE game = ?""", game));
             String table = CatalogCardMatch.MAGIC.equals(game) ? "cards" : "swu_cards";

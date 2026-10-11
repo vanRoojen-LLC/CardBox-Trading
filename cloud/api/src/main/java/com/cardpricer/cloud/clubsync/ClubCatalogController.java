@@ -11,8 +11,13 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Where cardbox.club posts the catalog printings of the games Trading sells, with the same machine token as
@@ -23,7 +28,15 @@ import java.util.Map;
 public class ClubCatalogController {
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     public record PrintingBody(String printingId, String setCode, String collectorNumber, String treatment,
-                               String language, Boolean foil, Map<String, Object> externalIds) {}
+                               String language, Boolean foil, Map<String, Object> externalIds, ValueBody value) {}
+
+    /** The catalog's value of the printing (CardBox docs/printing-values.md); amounts arrive as decimal strings. */
+    @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
+    public record ValueBody(BigDecimal amount, BigDecimal low, BigDecimal high, String confidence, Integer sourceCount,
+                            String newest) {}
+
+    private static final Set<String> CONFIDENCE = Set.of("high", "medium", "low", "none");
+    private static final BigDecimal MAX_AMOUNT = new BigDecimal("1000000000");
 
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     public record PageBody(String segmentKey, Boolean firstPage, Boolean lastPage, List<PrintingBody> printings) {}
@@ -59,7 +72,27 @@ public class ClubCatalogController {
         if (p.externalIds() != null && p.externalIds().size() > 50)
             throw ApiException.badRequest("Too many external ids on one printing");
         return new CatalogPrintingLinks.Printing(p.printingId(), cap(p.setCode()), cap(p.collectorNumber()),
-                cap(p.treatment()), cap(p.language()), Boolean.TRUE.equals(p.foil()), p.externalIds());
+                cap(p.treatment()), cap(p.language()), Boolean.TRUE.equals(p.foil()), p.externalIds(), value(p.value()));
+    }
+
+    /** A value Trading can store, or null: a missing or out-of-range amount drops the value, never the printing. */
+    public static CatalogPrintingLinks.Value value(ValueBody v) {
+        if (v == null || !money(v.amount())) return null;
+        Instant newest = null;
+        if (v.newest() != null) {
+            try {
+                newest = OffsetDateTime.parse(v.newest()).toInstant();
+            } catch (DateTimeParseException ignored) {
+                // Undated: the value still counts.
+            }
+        }
+        return new CatalogPrintingLinks.Value(v.amount(), money(v.low()) ? v.low() : null, money(v.high()) ? v.high() : null,
+                v.confidence() != null && CONFIDENCE.contains(v.confidence()) ? v.confidence() : "none",
+                v.sourceCount() == null || v.sourceCount() < 0 ? 0 : Math.min(v.sourceCount(), 100), newest);
+    }
+
+    private static boolean money(BigDecimal amount) {
+        return amount != null && amount.signum() >= 0 && amount.compareTo(MAX_AMOUNT) < 0;
     }
 
     private static String cap(String s) {

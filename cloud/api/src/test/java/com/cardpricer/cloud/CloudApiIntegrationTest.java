@@ -1333,12 +1333,31 @@ class CloudApiIntegrationTest {
         String ragavan = "22222222-2222-2222-2222-222222222222";
         var magic = catalogLinks.ingest("magic-the-gathering", true, true, List.of(
                 catalogPrinting("cardprint:mtg:rag:normal", "Normal", false, Map.of("scryfall:id", ragavan)),
-                catalogPrinting("cardprint:mtg:rag:etched", "Etched Foil", true, Map.of("scryfall:id", ragavan)),
+                new com.cardpricer.cloud.catalog.CatalogPrintingLinks.Printing("cardprint:mtg:rag:etched", "SET", "1",
+                        "Etched Foil", "en", true, Map.of("scryfall:id", ragavan),
+                        com.cardpricer.cloud.clubsync.ClubCatalogController.value(
+                                new com.cardpricer.cloud.clubsync.ClubCatalogController.ValueBody(
+                                        new java.math.BigDecimal("75.50"), new java.math.BigDecimal("70.00"),
+                                        new java.math.BigDecimal("80.00"), "medium", 2, "2026-10-10T18:00:00+00:00"))),
                 catalogPrinting("cardprint:mtg:unknown", "Normal", false, Map.of("scryfall:id", UUID.randomUUID().toString())),
                 catalogPrinting("cardprint:mtg:noid", "Normal", false, Map.of())));
         assertEquals(new com.cardpricer.cloud.catalog.CatalogPrintingLinks.Result(4, 2, 0), magic);
         assertEquals(List.of("etched", "normal"), jdbc.queryForList(
                 "SELECT finish FROM catalog_printing_links WHERE card_id = ?::uuid ORDER BY finish", String.class, ragavan));
+
+        // The catalog's value is stored on the link. Scryfall has no etched price for Ragavan, so it is the trade value.
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM catalog_printing_links WHERE value_amount = 75.50"
+                + " AND value_confidence = 'medium' AND value_sources = 2", Integer.class));
+        var etched = call("GET", "/api/public/cards/" + ragavan + "/evidence?finish=etched", null, null);
+        assertEquals(200, etched.status(), etched.raw());
+        assertEquals(75.5, etched.body().path("market").asDouble(), 0.001, etched.raw());
+        assertTrue(java.util.stream.StreamSupport.stream(etched.body().path("points").spliterator(), false)
+                .anyMatch(p -> p.path("source").asText().equals("CardBox catalog") && !p.path("used").asBoolean()),
+                etched.raw());
+        // An out-of-range or missing amount drops the value, never the printing.
+        assertNull(com.cardpricer.cloud.clubsync.ClubCatalogController.value(
+                new com.cardpricer.cloud.clubsync.ClubCatalogController.ValueBody(new java.math.BigDecimal("-1"), null,
+                        null, "high", 1, null)));
 
         // A non-foil printing with both ids (other tests re-import some without the swu-db id, so pick one that has it).
         var known = jdbc.queryForMap("""
