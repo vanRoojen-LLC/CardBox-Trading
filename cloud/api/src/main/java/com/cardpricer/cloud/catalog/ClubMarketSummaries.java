@@ -21,7 +21,7 @@ import java.util.UUID;
  * one game at a time and in pages; the last page of a push drops the rows that push no longer carries.
  * <p>
  * Club's printings are matched to Trading's cards by CatalogCardMatch: Scryfall id (Magic) or swu-db card id, falling
- * back to the TCGplayer product (Star Wars: Unlimited). TCGplayer's own price, and copies of it, are left out: Trading already
+ * back to the TCGplayer product and then the printed set and number (Star Wars: Unlimited). TCGplayer's own price, and copies of it, are left out: Trading already
  * holds it, and counting it twice would make one source look like two.
  */
 @Repository
@@ -34,8 +34,8 @@ public class ClubMarketSummaries {
                           BigDecimal high, Instant newest) {}
 
     /** What Club sends for one printing. */
-    public record Printing(String printingId, Map<String, Object> externalIds, String treatment, boolean foil,
-                           List<Summary> summaries) {}
+    public record Printing(String printingId, Map<String, Object> externalIds, String setCode, String collectorNumber,
+                           String treatment, boolean foil, List<Summary> summaries) {}
 
     public record Result(int printings, int matched, int stored, int removed) {}
 
@@ -56,7 +56,8 @@ public class ClubMarketSummaries {
         for (Printing p : printings) {
             String finish = finish(p);
             List<Summary> kept = p.summaries().stream().filter(s -> !"tcgplayer".equals(s.source())).toList();
-            CatalogCardMatch.Match found = match.find(game, p.externalIds(), p.foil());
+            CatalogCardMatch.Match found = match.find(game, p.externalIds(), p.foil(), p.setCode(),
+                    p.collectorNumber(), p.treatment());
             if (found == null) continue;
             UUID card = found.cardId();
             matched++;

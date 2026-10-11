@@ -430,11 +430,11 @@ class CloudApiIntegrationTest {
         String owner = signup("Blend Store", "b-" + UUID.randomUUID() + "@example.com");
         try {
             var page = new com.cardpricer.cloud.catalog.ClubMarketSummaries.Printing("p-rag",
-                    Map.of("scryfall:id", ragavan), "Normal", false, List.of(
+                    Map.of("scryfall:id", ragavan), null, null, "Normal", false, List.of(
                     summary("ebay", "realized", 6, "40.00"), summary("pricecharting", "realized", 5, "41.00"),
                     summary("ebay", "asking", 10, "60.00"), summary("tcgplayer", "estimate", 3, "48.00")));
             var unknown = new com.cardpricer.cloud.catalog.ClubMarketSummaries.Printing("p-x",
-                    Map.of("scryfall:id", UUID.randomUUID().toString()), "Normal", false, List.of(summary("ebay", "realized", 4, "1.00")));
+                    Map.of("scryfall:id", UUID.randomUUID().toString()), null, null, "Normal", false, List.of(summary("ebay", "realized", 4, "1.00")));
             var result = clubMarket.ingest("magic-the-gathering", true, true, List.of(page, unknown));
             assertEquals(1, result.matched(), "a printing Trading doesn't carry is skipped");
             assertEquals(3, result.stored(), "TCGplayer's own price never comes back as a second source");
@@ -1363,13 +1363,22 @@ class CloudApiIntegrationTest {
         var known = jdbc.queryForMap("""
                 SELECT swu_cid, tcgplayer_id FROM swu_cards WHERE swu_cid IS NOT NULL AND tcgplayer_id IS NOT NULL
                   AND treatment NOT LIKE '%foil%' ORDER BY source_number LIMIT 1""");
-        // The swu-db card id finds it; the TCGplayer product alone falls back to it; an unknown product finds nothing.
+        jdbc.update("""
+                INSERT INTO swu_cards (set_code, source_number, set_name, collector_number, treatment, variant, name)
+                VALUES ('ZNM', '007F', 'Number Test', '007', 'foil', 'Foil', 'Number Han') ON CONFLICT DO NOTHING""");
+        UUID han = jdbc.queryForObject("SELECT id FROM swu_cards WHERE set_code = 'ZNM' AND source_number = '007F'", UUID.class);
+        // The swu-db card id finds it; the TCGplayer product alone falls back to it; an unknown product finds nothing;
+        // with only the official site's id (as the catalog holds most), the printed set, number and treatment find it.
         var swu = catalogLinks.ingest("star-wars-unlimited", true, true, List.of(
                 catalogPrinting("cardprint:swu:a", "Normal", false, Map.of("swu-db:cid", known.get("swu_cid"))),
                 catalogPrinting("cardprint:swu:b", "Normal", false, Map.of("tcgplayer", known.get("tcgplayer_id"))),
-                catalogPrinting("cardprint:swu:c", "Foil", true, Map.of("tcgplayer", "999999999"))));
-        assertEquals(2, swu.linked());
-        assertEquals(List.of("swu-db", "tcgplayer"), jdbc.queryForList("""
+                catalogPrinting("cardprint:swu:c", "Foil", true, Map.of("tcgplayer", "999999999")),
+                new com.cardpricer.cloud.catalog.CatalogPrintingLinks.Printing("cardprint:swu:d", "znm", "007/264",
+                        "Foil", "en", true, Map.of("starwarsunlimited.com", "starwarsunlimited.com:5191367506"))));
+        assertEquals(3, swu.linked());
+        assertEquals(han, jdbc.queryForObject("SELECT card_id FROM catalog_printing_links WHERE printing_id = 'cardprint:swu:d'",
+                UUID.class));
+        assertEquals(List.of("swu-db", "tcgplayer", "number"), jdbc.queryForList("""
                 SELECT matched_by FROM catalog_printing_links WHERE game = 'star-wars-unlimited' AND card_id IS NOT NULL
                 ORDER BY printing_id""", String.class));
 
@@ -1390,6 +1399,7 @@ class CloudApiIntegrationTest {
         var s = coverage.body().path("star-wars-unlimited");
         assertEquals(1, s.path("unlinked").asInt(), coverage.raw());
         assertEquals(1, s.path("bySwuDb").asInt());
+        assertEquals(1, s.path("byNumber").asInt());
         assertEquals(401, call("GET", "/api/admin/catalog-links", null, null).status());
 
         var off = call("POST", "/api/partner/club-sync/catalog-printings", null,

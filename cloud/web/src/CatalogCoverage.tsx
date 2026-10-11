@@ -3,7 +3,7 @@ import { api } from './api'
 
 interface GameCoverage {
   printings: number; linked: number; unlinked: number
-  byScryfall: number; bySwuDb: number; byTcgplayer: number; receivedAt: string | null
+  byScryfall: number; bySwuDb: number; byTcgplayer: number; byNumber: number; receivedAt: string | null
   tradingCards: number; tradingCardsWithoutPrinting: number
   lastPush: { startedAt: string; finishedAt: string | null } | null
 }
@@ -50,7 +50,7 @@ export default function CatalogCoverage() {
                     <td className="num">{n(g.printings)}<div className="muted small">{n(g.unlinked)} with no Trading card</div></td>
                     <td className="small">
                       {game === 'magic-the-gathering' ? `Scryfall ${n(g.byScryfall)}`
-                        : `swu-db ${n(g.bySwuDb)} · TCGplayer ${n(g.byTcgplayer)}`}
+                        : `swu-db ${n(g.bySwuDb)} · TCGplayer ${n(g.byTcgplayer)} · set and number ${n(g.byNumber)}`}
                     </td>
                     <td className="small">{g.lastPush
                       ? g.lastPush.finishedAt ? when(g.lastPush.finishedAt) : `Running since ${when(g.lastPush.startedAt)}`

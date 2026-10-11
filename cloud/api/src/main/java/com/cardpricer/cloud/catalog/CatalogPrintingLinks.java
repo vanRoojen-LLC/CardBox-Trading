@@ -58,7 +58,8 @@ public class CatalogPrintingLinks {
                 ON CONFLICT (game) DO UPDATE SET started_at = now(), finished_at = NULL""", game);
         int linked = 0;
         for (Printing p : printings) {
-            CatalogCardMatch.Match found = match.find(game, p.externalIds(), p.foil());
+            CatalogCardMatch.Match found = match.find(game, p.externalIds(), p.foil(), p.setCode(),
+                    p.collectorNumber(), p.treatment());
             Value v = p.value() == null || p.value().amount() == null ? null : p.value();
             if (found != null) linked++;
             jdbc.update("""
@@ -105,6 +106,7 @@ public class CatalogPrintingLinks {
                            count(*) FILTER (WHERE matched_by = 'scryfall') AS "byScryfall",
                            count(*) FILTER (WHERE matched_by = 'swu-db') AS "bySwuDb",
                            count(*) FILTER (WHERE matched_by = 'tcgplayer') AS "byTcgplayer",
+                           count(*) FILTER (WHERE matched_by = 'number') AS "byNumber",
                            count(value_amount) AS "valued",
                            max(received_at) AS "receivedAt"
                     FROM catalog_printing_links WHERE game = ?""", game));
