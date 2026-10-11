@@ -15,7 +15,7 @@ import java.util.List;
 /**
  * Manages autosave of in-progress trade sessions to disk for crash recovery.
  *
- * <p>Typed drafts live in {@code session/draft-v1.json} and the local ledger.
+ * <p>Typed drafts live in the local ledger, keyed by trade ID, including their edit-parent revision.
  * Edits debounce saves for two seconds; orderly close flushes the save queue.
  * The legacy autosave adapter retains a hash-named backup before recovery.
  */
@@ -53,56 +53,85 @@ public class TradeSessionService {
     // Public API
     // -------------------------------------------------------------------------
 
-    private static final java.util.concurrent.ExecutorService SAVES=java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
-        Thread thread=new Thread(r,"draft-save"); thread.setDaemon(true); return thread;
-    });
-    private static volatile RuntimeException saveFailure;
-    public static void queueDraft(com.cardpricer.model.TradeDraft draft) {
-        queueDraft(draft,null);
-    }
-    public static void queueDraft(com.cardpricer.model.TradeDraft draft, Long editingRevision) {
-        SAVES.submit(() -> { try { saveDraft(draft,editingRevision); saveFailure=null; } catch (RuntimeException e) { saveFailure=e; } });
-    }
-    public static void flush() {
-        try { SAVES.submit(() -> {}).get(10,java.util.concurrent.TimeUnit.SECONDS); }
-        catch (Exception e) { throw new IllegalStateException("Draft save did not finish",e); }
-        if (saveFailure!=null) throw saveFailure;
+    private static final DraftSaveQueue SAVES=new DraftSaveQueue(
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread thread=new Thread(r,"draft-save");thread.setDaemon(true);return thread;
+            }),32);
+
+    private static TradeRepository repository() {
+        try { return new TradeRepository(AppDataDirectory.root().toPath().resolve("ledger/trades.sqlite")); }
+        catch(Exception failure) { throw new IllegalStateException("Could not open draft storage",failure); }
     }
     private static Path draftPath() { return autosavePath().resolveSibling("draft-v1.json"); }
-    public static boolean hasTypedDraft() { return Files.exists(draftPath()); }
-    public static com.cardpricer.model.TradeDraft loadDraft() throws java.io.IOException {
-        return com.cardpricer.model.TradeDraft.fromJson(new JSONObject(Files.readString(draftPath())));
+    /** Import the old single-file recovery only after its transaction is durable. */
+    private static synchronized void migrate() {
+        if(!Files.exists(draftPath())) return;
+        try {
+            var json=new JSONObject(Files.readString(draftPath()));
+            var draft=com.cardpricer.model.TradeDraft.fromJson(json);
+            repository().saveRecoveryDraft(draft,json.has("editingRevision") ? json.getLong("editingRevision") : null);
+            Path backup=draftPath().resolveSibling("migrated-draft-"+draft.id()+"-"+draft.revision()+".json");
+            if(!Files.exists(backup)) com.cardpricer.util.AtomicFiles.write(backup,json.toString());
+            Files.delete(draftPath());
+        } catch(Exception failure) { throw new IllegalStateException("Could not migrate the saved draft; original file retained",failure); }
     }
-    public static void saveDraft(com.cardpricer.model.TradeDraft draft) {
-        saveDraft(draft,null);
+    public static java.util.List<TradeRepository.DraftSummary> drafts() {
+        migrate();
+        try { return repository().recoveryDrafts(); }
+        catch(Exception failure) { throw new IllegalStateException("Could not list drafts",failure); }
+    }
+    public static TradeRepository.RecoveryDraft load(java.util.UUID id) {
+        migrate();
+        try { return repository().recoveryDraft(id); }
+        catch(Exception failure) { throw new IllegalStateException("Could not read the draft",failure); }
+    }
+    public static TradeRepository.RecoveryDraft find(java.util.UUID id) {
+        migrate();
+        try { return repository().findRecoveryDraft(id); }
+        catch(Exception failure) { throw new IllegalStateException("Could not read the draft",failure); }
+    }
+    public static void queueDraft(com.cardpricer.model.TradeDraft draft) { queueDraft(draft,null); }
+    public static void queueDraft(com.cardpricer.model.TradeDraft draft,Long editingRevision) {
+        queueDraft(draft.id(),()->draft,editingRevision,ignored -> {});
+    }
+    public static void queueDraft(java.util.UUID id,java.util.function.Supplier<com.cardpricer.model.TradeDraft> capture,
+            Long editingRevision,java.util.function.Consumer<RuntimeException> completed) {
+        SAVES.submit(id,()->saveDraft(capture.get(),editingRevision),completed);
+    }
+    public static void flush() { SAVES.flush(java.time.Duration.ofSeconds(10)); }
+    public static boolean hasTypedDraft() { return Files.exists(draftPath()) || !drafts().isEmpty(); }
+    public static com.cardpricer.model.TradeDraft loadDraft() throws java.io.IOException {
+        var drafts=drafts();
+        if(drafts.isEmpty()) throw new java.io.IOException("No recovery draft");
+        return load(drafts.getFirst().id()).draft();
     }
     public static Long loadEditingRevision() throws java.io.IOException {
-        var json=new JSONObject(Files.readString(draftPath()));
-        return json.has("editingRevision") ? json.getLong("editingRevision") : null;
+        var drafts=drafts();
+        if(drafts.isEmpty()) throw new java.io.IOException("No recovery draft");
+        return drafts.getFirst().editingRevision();
     }
-    public static void saveDraft(com.cardpricer.model.TradeDraft draft, Long editingRevision) {
-        try {
-            com.cardpricer.util.AtomicFiles.write(draftPath(), draft.toJson().put("editingRevision",editingRevision).toString());
-            new TradeRepository(AppDataDirectory.root().toPath().resolve("ledger/trades.sqlite")).saveDraft(draft);
-        }
-        catch (java.io.IOException | java.sql.SQLException e) { throw new IllegalStateException("Could not save the draft",e); }
+    public static void saveDraft(com.cardpricer.model.TradeDraft draft) { saveDraft(draft,null); }
+    public static void saveDraft(com.cardpricer.model.TradeDraft draft,Long editingRevision) {
+        try { repository().saveRecoveryDraft(draft,editingRevision); }
+        catch(Exception failure) { throw new IllegalStateException("Could not save the draft",failure); }
     }
-    /** Returns {@code true} if an autosave file exists. */
-    public static boolean hasAutosave() {
-        return Files.exists(autosavePath());
+    public static boolean hasAutosave() { return Files.exists(autosavePath()); }
+    /** Delete only the named draft; other parked work must survive a save or discard. */
+    public static void discard(java.util.UUID id) {
+        SAVES.discardFailure(id,java.time.Duration.ofSeconds(10));
+        try { repository().deleteDraft(id); }
+        catch(Exception failure) { throw new IllegalStateException("Could not discard the draft",failure); }
     }
-
-    /** Deletes the autosave file if it exists. */
+    /** Compatibility cleanup for the previous single-session API. */
     public static void clearAutosave() {
         flush();
-        try {
-            if (Files.exists(draftPath())) {
-                var draft=loadDraft();
-                new TradeRepository(AppDataDirectory.root().toPath().resolve("ledger/trades.sqlite")).deleteDraft(draft.id());
-            }
-            Files.deleteIfExists(autosavePath());
-            Files.deleteIfExists(draftPath());
-        } catch (Exception failure) { throw new IllegalStateException("Could not clear recovery state",failure); }
+        var drafts=drafts();
+        if(!drafts.isEmpty()) discard(drafts.getFirst().id());
+        clearLegacyAutosave();
+    }
+    public static void clearLegacyAutosave() {
+        try { Files.deleteIfExists(autosavePath()); }
+        catch(Exception failure) { throw new IllegalStateException("Could not clear legacy recovery",failure); }
     }
 
     /**

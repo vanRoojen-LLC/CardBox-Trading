@@ -27,8 +27,8 @@ public final class TradeRepository {
         try (Connection connection = connect(); Statement s = connection.createStatement()) {
             int version;
             try (ResultSet rs = s.executeQuery("PRAGMA user_version")) { version = rs.getInt(1); }
-            if (version > 5) throw new SQLException("Ledger was created by a newer application");
-            if (version == 5) return;
+            if (version > 6) throw new SQLException("Ledger was created by a newer application");
+            if (version == 6) return;
             s.execute("PRAGMA journal_mode=WAL");
             s.execute("CREATE TABLE IF NOT EXISTS drafts(id TEXT PRIMARY KEY, revision INTEGER NOT NULL, snapshot TEXT NOT NULL)");
             s.execute("CREATE TABLE IF NOT EXISTS trades(id TEXT PRIMARY KEY, approved_at TEXT NOT NULL, snapshot TEXT NOT NULL)");
@@ -74,6 +74,15 @@ public final class TradeRepository {
                     TradeDeletionStore.create(connection);s.execute("PRAGMA user_version=5");connection.commit();
                 } catch(Exception failure) { connection.rollback();throw failure; }
             }
+            if(version<6) {
+                connection.setAutoCommit(false);
+                try {
+                    if(!hasColumn(connection,"drafts","editing_revision")) s.execute("ALTER TABLE drafts ADD COLUMN editing_revision INTEGER");
+                    if(!hasColumn(connection,"drafts","updated_at")) s.execute("ALTER TABLE drafts ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''");
+                    HistoryIndex.upgradeListing(connection);
+                    s.execute("PRAGMA user_version=6");connection.commit();
+                } catch(Exception failure) { connection.rollback();throw failure; }
+            }
         }
     }
     Connection connect() throws SQLException {
@@ -84,10 +93,56 @@ public final class TradeRepository {
         return connection;
     }
     public void saveDraft(TradeDraft draft) throws SQLException {
-        try (Connection c = connect(); PreparedStatement s = c.prepareStatement("INSERT INTO drafts SELECT ?,?,? WHERE NOT EXISTS (SELECT 1 FROM trades WHERE id=?) "
+        try (Connection c = connect(); PreparedStatement s = c.prepareStatement("INSERT INTO drafts(id,revision,snapshot) SELECT ?,?,? WHERE NOT EXISTS (SELECT 1 FROM trades WHERE id=?) "
                 + "ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,snapshot=excluded.snapshot WHERE excluded.revision>=drafts.revision")) {
             s.setString(1, draft.id().toString()); s.setLong(2, draft.revision()); s.setString(3, draft.toJson().toString());
             s.setString(4, draft.id().toString()); s.executeUpdate();
+        }
+    }
+    private static boolean hasColumn(Connection c,String table,String column) throws SQLException {
+        try(var s=c.createStatement();var rows=s.executeQuery("PRAGMA table_info("+table+")")) {
+            while(rows.next()) if(column.equals(rows.getString("name"))) return true;
+        }
+        return false;
+    }
+    public record DraftSummary(UUID id,long revision,Long editingRevision,String customer,int lines,String savedAt) {
+        @Override public String toString() {
+            return (customer.isBlank() ? "Unnamed customer" : customer)+" — "+lines+" lines"
+                    +(editingRevision==null ? "" : " — editing revision "+editingRevision)+" — "+savedAt;
+        }
+    }
+    public record RecoveryDraft(TradeDraft draft,Long editingRevision) {}
+    public void saveRecoveryDraft(TradeDraft draft,Long editingRevision) throws SQLException {
+        String snapshot=draft.toJson().toString();
+        try(var c=connect();var s=c.prepareStatement("INSERT INTO drafts(id,revision,snapshot,editing_revision,updated_at) "
+                +"SELECT ?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM trades WHERE id=? AND (? IS NULL OR snapshot=?)) "
+                +"ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,snapshot=excluded.snapshot,editing_revision=excluded.editing_revision,updated_at=excluded.updated_at "
+                +"WHERE excluded.revision>=drafts.revision")) {
+            s.setString(1,draft.id().toString());s.setLong(2,draft.revision());s.setString(3,snapshot);
+            s.setObject(4,editingRevision);s.setString(5,Instant.now().toString());s.setString(6,draft.id().toString());
+            s.setObject(7,editingRevision);s.setString(8,snapshot);s.executeUpdate();
+        }
+    }
+    public List<DraftSummary> recoveryDrafts() throws SQLException {
+        var result=new ArrayList<DraftSummary>();
+        try(var c=connect();var s=c.createStatement();var rows=s.executeQuery("SELECT id,revision,editing_revision,updated_at,"
+                +"json_extract(snapshot,'$.customer'),json_array_length(snapshot,'$.lines') FROM drafts ORDER BY updated_at DESC,id")) {
+            while(rows.next()) result.add(new DraftSummary(UUID.fromString(rows.getString(1)),rows.getLong(2),
+                    rows.getObject(3)==null ? null : rows.getLong(3),rows.getString(5),rows.getInt(6),rows.getString(4)));
+        }
+        return result;
+    }
+    public RecoveryDraft recoveryDraft(UUID id) throws SQLException {
+        var result=findRecoveryDraft(id);
+        if(result==null) throw new SQLException("This draft is no longer available");
+        return result;
+    }
+    public RecoveryDraft findRecoveryDraft(UUID id) throws SQLException {
+        try(var c=connect();var s=c.prepareStatement("SELECT snapshot,editing_revision FROM drafts WHERE id=?")) {
+            s.setString(1,id.toString());try(var rows=s.executeQuery()) {
+                if(!rows.next()) return null;
+                return new RecoveryDraft(TradeDraft.fromJson(new JSONObject(rows.getString(1))),rows.getObject(2)==null ? null : rows.getLong(2));
+            }
         }
     }
     public void deleteDraft(UUID id) throws SQLException {
@@ -246,8 +301,9 @@ public final class TradeRepository {
                             s.setString(4, AtomicFiles.hash(output.content().getBytes(StandardCharsets.UTF_8))); s.executeUpdate();
                         }
                     }
-                    try (PreparedStatement s = c.prepareStatement("DELETE FROM drafts WHERE id=?")) {
-                        s.setString(1, draft.id().toString()); s.executeUpdate();
+                    // An imported/competing revision must not discard different local edits.
+                    try (PreparedStatement s = c.prepareStatement("DELETE FROM drafts WHERE id=? AND snapshot=?")) {
+                        s.setString(1, draft.id().toString());s.setString(2,snapshot);s.executeUpdate();
                     }
                     indexHistory(c,draft);
                     boundary.accept("beforeCommit");

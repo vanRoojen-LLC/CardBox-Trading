@@ -21,7 +21,8 @@ class FileManagerHistoryTest {
             Files.writeString(local.resolve(date+".txt"),"Customer Name: Customer "+i+"\nPayment Method: Check\nTotal Value: $24.00\nTotal Cards: 3\n"+(i==0 ? "Black Lotus" : "Ordinary"));
         }
         var session=new TradeHistoryService.Session(local.toString(),"");
-        var snapshot=session.refresh();
+        session.refreshIndex();
+        var snapshot=session.page(new TradeHistoryService.Filter("","All",0),100,null,"");
         var holder=new AtomicReference<FileManagerPanel>();
         SwingUtilities.invokeAndWait(()->{
             var panel=new FileManagerPanel();holder.set(panel);
@@ -32,12 +33,14 @@ class FileManagerHistoryTest {
             assertEquals("Trades: 125",field(panel,"historyStatsTotalTrades",JLabel.class).getText());
             assertTrue(field(panel,"contentCache",Map.class).isEmpty(),"Listing must not load previews");
             field(panel,"historyLoadMore",JButton.class).doClick();
-            assertEquals(125,table.getRowCount());
-            assertFalse(field(panel,"historyLoadMore",JButton.class).isVisible());
-            field(panel,"historySearchField",JTextField.class).setText("Black Lotus");
         });
         var panel=holder.get();
         try {
+            awaitEdt(()->field(panel,"historyTable",JTable.class).getRowCount()==125);
+            SwingUtilities.invokeAndWait(()-> {
+                assertFalse(field(panel,"historyLoadMore",JButton.class).isVisible());
+                field(panel,"historySearchField",JTextField.class).setText("Black Lotus");
+            });
             awaitEdt(()->field(panel,"historyTable",JTable.class).getRowCount()==1);
             SwingUtilities.invokeAndWait(()->{
                 var table=field(panel,"historyTable",JTable.class);
@@ -47,7 +50,7 @@ class FileManagerHistoryTest {
                 table.setRowSelectionInterval(0,0);
             });
             awaitEdt(()->field(panel,"histPrintBtn",JButton.class).isEnabled());
-            var unchanged=session.cached();
+            var unchanged=session.page(new TradeHistoryService.Filter("black lotus","All",0),100,null,"");
             SwingUtilities.invokeAndWait(()->{
                 var preview=field(panel,"historyPreviewArea",JTextArea.class);
                 assertTrue(preview.getText().contains("Black Lotus"));
@@ -61,6 +64,10 @@ class FileManagerHistoryTest {
                 assertEquals(20,preview.getCaretPosition());
                 assertEquals(0,table.getSelectedRow());
                 field(panel,"historySearchField",JTextField.class).setText("");
+            });
+            awaitEdt(()->field(panel,"historyTable",JTable.class).getRowCount()==100);
+            SwingUtilities.invokeAndWait(()-> {
+                var table=field(panel,"historyTable",JTable.class);
                 assertEquals(100,table.getRowCount());
                 // Multiple changes on one EDT turn must never show an earlier worker's receipt.
                 table.setRowSelectionInterval(0,0);
@@ -94,10 +101,10 @@ class FileManagerHistoryTest {
         try { Field f=object.getClass().getDeclaredField(name);f.setAccessible(true);f.set(object,value); }
         catch(ReflectiveOperationException error) { throw new AssertionError(error); }
     }
-    private static void accept(FileManagerPanel panel,TradeHistoryService.Snapshot snapshot) {
+    private static void accept(FileManagerPanel panel,TradeHistoryService.Page snapshot) {
         try {
-            Method method=FileManagerPanel.class.getDeclaredMethod("acceptHistorySnapshot",TradeHistoryService.Snapshot.class);
-            method.setAccessible(true);method.invoke(panel,snapshot);
+            Method method=FileManagerPanel.class.getDeclaredMethod("acceptHistoryPage",TradeHistoryService.Page.class,boolean.class,String.class);
+            method.setAccessible(true);method.invoke(panel,snapshot,false,field(panel,"historySearchField",JTextField.class).getText().trim().toLowerCase(java.util.Locale.ROOT));
         } catch(ReflectiveOperationException error) { throw new AssertionError(error); }
     }
 }

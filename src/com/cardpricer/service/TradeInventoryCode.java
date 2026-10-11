@@ -17,6 +17,10 @@ final class TradeInventoryCode {
         var card = item.getCard();
         String set = SetList.fromScryfallCode(card.getSetCode());
         String number = card.getCollectorNumber();
+        // Scryfall identifies 40K surge printings with a star; the POS uses S.
+        // Keep the provider number on the card and translate only the exported code.
+        if ("40K".equals(set) && "S".equals(item.getFinishType()) && number.matches("\\d+★"))
+            number = number.substring(0, number.length() - 1);
         // Only P-prefixed versions of known base sets are set promos. PLST, PIP,
         // PCY and standalone promotional sets keep their existing identifiers.
         if (set.startsWith("P") && !SetList.isValidSetCode(set)) {

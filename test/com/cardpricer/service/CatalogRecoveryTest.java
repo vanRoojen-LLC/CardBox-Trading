@@ -28,12 +28,16 @@ class CatalogRecoveryTest {
         try {
             try(var gzip=new GZIPOutputStream(Files.newOutputStream(cache))) {gzip.write(content.getBytes(StandardCharsets.UTF_8));}
             assertEquals(2,catalog.loadFromDisk());
+            long generation=catalog.generation();
+            assertEquals(2,catalog.searchNames("ordinary","",50).total());
             assertEquals("one",catalog.lookup("TST","73").orElseThrow().getProviderId());
             assertEquals("two",catalog.lookup("TST","73★").orElseThrow().getProviderId());
             catalog.lookup("TST","73").orElseThrow().setPrice("99");
             assertEquals("10",catalog.lookup("TST","73").orElseThrow().getPrice());
             byte[] valid=Files.readAllBytes(cache);Files.write(cache,java.util.Arrays.copyOf(valid,valid.length-5));
             assertThrows(java.io.IOException.class,catalog::loadFromDisk);
+            assertEquals(generation,catalog.generation());
+            assertEquals(2,catalog.searchNames("ordinary","",50).total());
             assertEquals(2,catalog.getCardCount());assertTrue(catalog.lookup("TST","73★").isPresent());
             try(var gzip=new GZIPOutputStream(Files.newOutputStream(cache))) {gzip.write("{invalid}\n".getBytes(StandardCharsets.UTF_8));}
             assertThrows(java.io.IOException.class,catalog::loadFromDisk);assertEquals(2,catalog.getCardCount());

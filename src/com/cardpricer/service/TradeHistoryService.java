@@ -52,6 +52,11 @@ public class TradeHistoryService {
         public Snapshot { records=List.copyOf(records);sources=Map.copyOf(sources);tokens=Map.copyOf(tokens); }
         public String token(TradeRecord record) { return tokens.get(record.historyKey()); }
     }
+    public record Filter(String query,String payment,int inventory) {
+        public Filter { java.util.Objects.requireNonNull(query);java.util.Objects.requireNonNull(payment);if(inventory<0 || inventory>2) throw new IllegalArgumentException("Invalid inventory filter"); }
+    }
+    public record Cursor(String date,String key) {}
+    public record Page(Snapshot snapshot,long count,long cards,BigDecimal total,Cursor next) {}
 
     /** Reuse one repository per History panel. All methods that access storage run off the EDT. */
     public static final class Session {
@@ -68,7 +73,13 @@ public class TradeHistoryService {
 
         public Snapshot cached() throws Exception { return snapshot(""); }
 
-        public Snapshot refresh() throws Exception {
+        public Snapshot refresh() throws Exception { return snapshot(refreshIndex()); }
+
+        public Page page(Filter filter,int limit,Cursor after,String notice) throws Exception {
+            return HistoryPageQuery.load(repository,local,shared,filter,limit,after,notice);
+        }
+
+        public String refreshIndex() throws Exception {
             var deletionResult=new TradeDeletionService(repository,local,shared).sync();
             lastReadCount=0;
             lastReadCount+=index.scan(local,"receipt",repository.receiptNames(),false,file -> {
@@ -86,7 +97,7 @@ public class TradeHistoryService {
                     notice="Shared history unavailable; showing saved history. Refresh to retry.";
                 }
             }
-            return snapshot(notice);
+            return notice;
         }
 
         int lastReadCount() { return lastReadCount; }

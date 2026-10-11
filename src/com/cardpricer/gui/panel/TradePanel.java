@@ -59,7 +59,8 @@ import java.util.function.BiConsumer;
  *   <li>{@code TDM 3} — normal finish</li>
  *   <li>{@code TDM 3f} — foil finish</li>
  *   <li>{@code TDM 3e} — etched finish</li>
- *   <li>{@code TDM 3s} — surge foil finish</li>
+ *   <li>{@code PIP 882s} — surge foil finish</li>
+ *   <li>{@code PEOE 210sf} — foil of promo collector number 210s</li>
  *   <li>{@code PLST ARB 1} — The List reprint</li>
  *   <li>{@code misc} or {@code MTG misc} — manual entry with custom name and price</li>
  * </ul>
@@ -92,7 +93,10 @@ public class TradePanel extends JPanel {
         {"TDM 3",          "Normal finish (set code + number)"},
         {"TDM 3f",         "Foil finish"},
         {"TDM 3e",         "Etched finish"},
-        {"TDM 3s",         "Surge foil"},
+        {"PIP 882s",       "Surge foil — use the surge printing's collector number"},
+        {"40K 129s",       "40K surge foil (looks up collector 129★)"},
+        {"PEOE 219sf",     "Promo 219s, foil (also PEOE 219s F)"},
+        {"PEOE 219pf",     "Promo 219p, foil"},
         {"PLST ARB 1",     "The List card (PLST + original set + number)"},
         {"misc / MTG misc", "Manual entry — prompts for name & price"},
     };
@@ -103,14 +107,11 @@ public class TradePanel extends JPanel {
     private final BuyRateService buyRateService = new BuyRateService();
     private int lastKnownBuyRateGen = BuyRateService.getSaveGeneration();
 
-    /** Last tiered credit total computed by refreshSummary(); used by saveList(). */
-    private BigDecimal lastTierCreditTotal = BigDecimal.ZERO;
-    /** Last tiered check total computed by refreshSummary(); used by saveList(). */
-    private BigDecimal lastTierCheckTotal  = BigDecimal.ZERO;
-
     private java.util.UUID draftId = java.util.UUID.randomUUID();
     private long draftRevision;
     private Long editingRevision;
+    private long draftChangeGeneration;
+    private final JLabel draftSaveStatus = new JLabel("No active draft");
     private final java.util.Map<java.util.UUID, com.cardpricer.model.TradeLine> savedLines = new java.util.HashMap<>();
     private final JLabel editingLabel = new JLabel();
     private final JButton cancelEditButton = new JButton("Cancel edit");
@@ -348,7 +349,7 @@ public class TradePanel extends JPanel {
 
         // F5: offer crash-recovery restore, then start 60-second autosave timer
         SwingUtilities.invokeLater(this::offerSessionRestore);
-        autosaveTimer = new Timer(2_000, e -> performAutosave());
+        autosaveTimer = new Timer(2_000, e -> { try { performAutosave(); } catch(RuntimeException ignored) { /* Visible save status retains the error. */ } });
         autosaveTimer.setRepeats(false);
         autosaveTimer.start();
         syncTimer=new Timer(30_000,e -> {
@@ -358,13 +359,13 @@ public class TradePanel extends JPanel {
         });
         syncTimer.start();
         javax.swing.event.DocumentListener draftChanged=new javax.swing.event.DocumentListener() {
-            public void insertUpdate(javax.swing.event.DocumentEvent e) { autosaveTimer.restart(); }
-            public void removeUpdate(javax.swing.event.DocumentEvent e) { autosaveTimer.restart(); }
-            public void changedUpdate(javax.swing.event.DocumentEvent e) { autosaveTimer.restart(); }
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { markDraftChanged(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { markDraftChanged(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { markDraftChanged(); }
         };
         for (JTextField field: new JTextField[]{traderNameField,customerNameField,driversLicenseField,checkNumberField})
             field.getDocument().addDocumentListener(draftChanged);
-        paymentTypePanel.onPaymentEdited(() -> autosaveTimer.restart());
+        paymentTypePanel.onPaymentEdited(this::markDraftChanged);
 
         // Reload buy rates when this panel becomes visible (Preferences or shared file may have changed)
         addHierarchyListener(e -> {
@@ -377,6 +378,7 @@ public class TradePanel extends JPanel {
                 if (gen != lastKnownBuyRateGen) {
                     lastKnownBuyRateGen = gen;
                     buyRateService.refreshFromPublished();
+                    tableModel.invalidatePayouts();
                     refreshSummary();
                 }
             }
@@ -733,7 +735,7 @@ public class TradePanel extends JPanel {
 
         tableModel.addTableModelListener(e -> {
             if (e.getColumn() == 3 || e.getColumn() == 4 || e.getColumn() == 5) refreshSummary();
-            if (!isRefreshingSummary && autosaveTimer != null) autosaveTimer.restart();
+            if (!isRefreshingSummary && autosaveTimer != null && e.getColumn()!=0) markDraftChanged();
         });
 
         // Add right-click context menu
@@ -865,7 +867,17 @@ public class TradePanel extends JPanel {
         help.setToolTipText("Keyboard shortcuts (F1)"); help.getAccessibleContext().setAccessibleName("Keyboard shortcuts");
         help.setMargin(new Insets(7, 7, 7, 7));
         help.addActionListener(e -> ShortcutHelpDialog.show(SwingUtilities.getWindowAncestor(this), HELP_TITLE, HELP_COLS, HELP_ROWS));
-        tools.add(search); tools.add(paste); tools.add(undoBtn); tools.add(vintage); tools.add(help);
+        JButton drafts=AppTheme.secondaryButton("Drafts");
+        drafts.addActionListener(e -> {
+            if(!finishCellEdit()) return;
+            com.cardpricer.gui.panel.trade.TradeRecoveryPresenter.choose(this,draftId,this::performAutosave,this::resumeDraft);
+        });
+        JButton park=AppTheme.secondaryButton("Save for later");
+        park.addActionListener(e -> {
+            if(!hasUnsavedCards() || !finishCellEdit()) return;
+            com.cardpricer.gui.panel.trade.TradeRecoveryPresenter.park(this,this::performAutosave,()->resetTradeState(false));
+        });
+        tools.add(search); tools.add(paste); tools.add(undoBtn); tools.add(vintage); tools.add(help); tools.add(drafts); tools.add(park);
         actions.add(tools, BorderLayout.CENTER);
         JPanel approve = AppTheme.transparent(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         JButton clear = AppTheme.dangerButton("Clear"); clear.setToolTipText("Clear all cards"); clear.addActionListener(e -> clearAll());
@@ -880,7 +892,9 @@ public class TradePanel extends JPanel {
         });
         approve.add(cancelEditButton); approve.add(clear); approve.add(saveExportBtn); actions.add(approve, BorderLayout.EAST);
         editingLabel.setVisible(false);
-        panel.add(editingLabel,BorderLayout.SOUTH);
+        JPanel recoveryStatus=AppTheme.transparent(new BorderLayout(8,0));
+        recoveryStatus.add(editingLabel,BorderLayout.CENTER);recoveryStatus.add(draftSaveStatus,BorderLayout.EAST);
+        panel.add(recoveryStatus,BorderLayout.SOUTH);
         panel.add(actions, BorderLayout.CENTER);
         summaryPanel.update(BigDecimal.ZERO, 0, paymentTypePanel.getPaymentType(), BigDecimal.ZERO, BigDecimal.ZERO);
         return panel;
@@ -898,7 +912,7 @@ public class TradePanel extends JPanel {
             previewTimer.stop();
         }
 
-        previewTimer = new Timer(500, e -> fetchPreview());
+        previewTimer = new Timer(com.cardpricer.service.CardSearchService.TYPING_DELAY_MS, e -> fetchPreview());
         previewTimer.setRepeats(false);
         previewTimer.start();
     }
@@ -1543,86 +1557,16 @@ public class TradePanel extends JPanel {
     }
 
     private void refreshSummaryImpl() {
-        // Reload buy rates if Preferences or the shared buy_rates.json changed
-        int gen = BuyRateService.getSaveGeneration();
-        if (gen != lastKnownBuyRateGen) {
-            lastKnownBuyRateGen = gen;
+        int gen=BuyRateService.getSaveGeneration();
+        if(gen!=lastKnownBuyRateGen) {
+            lastKnownBuyRateGen=gen;
             buyRateService.refreshFromPublished();
+            tableModel.invalidatePayouts();
         }
-
-        BigDecimal total       = BigDecimal.ZERO;
-        BigDecimal totalCredit = BigDecimal.ZERO;
-        BigDecimal totalCheck  = BigDecimal.ZERO;
-        int totalQty = 0;
-
-        int rowCount = tableModel.getRowCount();
-
-        // Sync rowPayouts size to match current row count
-
-        for (int i = 0; i < rowCount; i++) {
-            // Parse unit price (Column 5)
-            BigDecimal unitPrice;
-            try {
-                String unitPriceStr = (String) tableModel.getValueAt(i, 5);
-                unitPrice = tableModel.priceAt(i);
-            } catch (Exception e) {
-                continue; // skip unparseable row
-            }
-
-            // Parse quantity (Column 4)
-            int qty;
-            try {
-                Object qtyObj = tableModel.getValueAt(i, 4);
-                qty = (qtyObj instanceof Integer) ? (Integer) qtyObj : Integer.parseInt(qtyObj.toString());
-            } catch (Exception e) {
-                qty = 1;
-            }
-
-            total = total.add(unitPrice.multiply(BigDecimal.valueOf(qty)));
-            totalQty += qty;
-
-            // Look up tiered payout for this card
-            String setCode   = null;
-            String collNum   = null;
-            String cardName  = null;
-            if (i < receivedCards.size()) {
-                com.cardpricer.model.Card card = receivedCards.get(i).getCard();
-                setCode  = card.getSetCode();
-                collNum  = card.getCollectorNumber();
-                cardName = card.getName();
-            }
-
-            BuyRateService.PayoutResult result = payoutFor(receivedCards.get(i),unitPrice);
-            totalCredit = totalCredit.add(result.creditPayout().multiply(BigDecimal.valueOf(qty)));
-            totalCheck  = totalCheck.add(result.checkPayout().multiply(BigDecimal.valueOf(qty)));
-
-            // Store result for bounty tint renderer and update Rate column (col 7)
-            rowPayouts.set(i, result);
-            String creditPct = String.format(java.util.Locale.ROOT, "%.0f",
-                    result.appliedCreditRate().multiply(new BigDecimal("100")));
-            String checkPct  = String.format(java.util.Locale.ROOT, "%.0f",
-                    result.appliedCheckRate().multiply(new BigDecimal("100")));
-            String rateStr   = (result.isBounty() ? "\u2605 " : "") + creditPct + "% / " + checkPct + "%";
-            tableModel.setValueAt(rateStr, i, 7);
-        }
-
-        // Scale accumulated payouts to 2 dp
-        totalCredit = totalCredit.setScale(2, RoundingMode.HALF_UP);
-        totalCheck  = totalCheck.setScale(2, RoundingMode.HALF_UP);
-
-        // Store for saveList() to pass to saveCardList()
-        lastTierCreditTotal = totalCredit;
-        lastTierCheckTotal  = totalCheck;
-
-        // Update PaymentTypePanel with tiered seeds for partial split
-        paymentTypePanel.setTotal(total, totalCredit, totalCheck);
-
-        // Update summary labels
-        summaryPanel.update(total, totalQty, paymentTypePanel.getPaymentType(), totalCredit, totalCheck);
-
-        // Repaint the whole table so the BountyAwareRenderer can apply gold tints
-        // to ALL columns (not just col 7 which gets a cell-update event each iteration).
-        if (cardTable != null) cardTable.repaint();
+        var totals=tableModel.summary(this::payoutFor);
+        paymentTypePanel.setTotal(totals.market(),totals.credit(),totals.check());
+        summaryPanel.update(totals.market(),totals.quantity(),paymentTypePanel.getPaymentType(),totals.credit(),totals.check());
+        if(cardTable!=null) cardTable.repaint();
     }
 
     // -------------------------------------------------------------------------
@@ -1641,17 +1585,19 @@ public class TradePanel extends JPanel {
 
         if (result == JOptionPane.YES_OPTION) {
             draftGeneration++; entryPresenter.cancel();
-            if (editingRevision==null) draftId=java.util.UUID.randomUUID();
+            if (editingRevision==null) { TradeSessionService.discard(draftId); draftId=java.util.UUID.randomUUID(); }
             tableModel.setRowCount(0);
             clearUndoState();
-            if (editingRevision==null) TradeSessionService.clearAutosave();
             refreshSummary();
             cardCodeField.requestFocusInWindow();
         }
     }
 
     /** Clears all trade state without prompting. Called after a successful save/export. */
-    private void clearTradeState() {
+    private void clearTradeState() { resetTradeState(true); }
+
+    private void resetTradeState(boolean discard) {
+        if(discard) TradeSessionService.discard(draftId);
         draftGeneration++; entryPresenter.cancel();
         draftId = java.util.UUID.randomUUID();
         draftRevision = 0;
@@ -1668,7 +1614,7 @@ public class TradePanel extends JPanel {
         customerNameField.setText("");
         driversLicenseField.setText("");
         checkNumberField.setText("");
-        TradeSessionService.clearAutosave();
+        draftSaveStatus.setText("No active draft");
         refreshSummary();
         cardCodeField.requestFocusInWindow();
     }
@@ -1700,6 +1646,8 @@ public class TradePanel extends JPanel {
         }
         if (!confirmProceedWithoutNames()) return;
         boolean correction=editingRevision!=null;
+        autosaveTimer.stop();
+        try {
         new com.cardpricer.gui.panel.trade.TradeFinalizationPresenter().approve(getParentWindow(),draft,ledgerPath(),
                 com.cardpricer.util.AppDataDirectory.trades().toPath(),editingRevision,pending -> {
             lastSavedTxtPath=com.cardpricer.util.AppDataDirectory.trades().toPath().resolve(
@@ -1708,31 +1656,21 @@ public class TradePanel extends JPanel {
             JOptionPane.showMessageDialog(getParentWindow(),pending==0 ? "Trade saved. Output files are ready."
                     : "Trade saved; export pending. Use Retry exports without another payment.");
         });
+        } finally { if(hasUnsavedCards()) autosaveTimer.restart(); }
     }
 
     private java.nio.file.Path ledgerPath() {
         return com.cardpricer.util.AppDataDirectory.root().toPath().resolve("ledger/trades.sqlite");
     }
 
-    private com.cardpricer.model.TradeDraft snapshotDraft() {
-        var lines = new ArrayList<com.cardpricer.model.TradeLine>();
-        for (int i = 0; i < tableModel.getRowCount(); i++) {
-            TradeItem item = receivedCards.get(i);
-            Card card = item.getCard();
-            BigDecimal value = tableModel.priceAt(i);
-            int qty = Integer.parseInt(tableModel.getValueAt(i, 4).toString());
-            var rate = payoutFor(item,value);
-            var savedLine=savedLines.get(item.getLineId());
-            lines.add(new com.cardpricer.model.TradeLine(item.getLineId(), card.identity(),
-                    savedLine==null ? com.cardpricer.service.ProviderCardMapper.toJson(card).toString() : savedLine.cardJson(),
-                    com.cardpricer.model.Finish.fromCode(item.getFinishType()),
-                    com.cardpricer.model.Condition.valueOf(tableModel.getValueAt(i, 3).toString()), qty,
-                    item.getUnitPrice(), value, rate.appliedCreditRate(), rate.appliedCheckRate(),item.getManualCondition(),item.getManualPrice()));
-        }
-        var quote=new com.cardpricer.model.Quote(java.time.Instant.now(),buyRateService.getRevision(),lines);
+    private java.util.function.Supplier<com.cardpricer.model.TradeDraft> captureDraft() {
+        refreshSummary();
         return new com.cardpricer.gui.panel.trade.TradeCustomerPresenter(traderNameField,customerNameField,
-                driversLicenseField,checkNumberField,paymentTypePanel).capture(draftId,++draftRevision,quote);
+                driversLicenseField,checkNumberField,paymentTypePanel).captureDeferred(draftId,++draftRevision,
+                tableModel.captureLines(savedLines),buyRateService.getRevision());
     }
+
+    private com.cardpricer.model.TradeDraft snapshotDraft() { return captureDraft().get(); }
 
     private BuyRateService.PayoutResult payoutFor(TradeItem item, BigDecimal value) {
         var saved=savedLines.get(item.getLineId());
@@ -1745,10 +1683,12 @@ public class TradePanel extends JPanel {
 
     /** Reuse the complete trade editor, including card lookup, condition, quantity and payment controls. */
     public boolean editSavedTrade(com.cardpricer.model.TradeDraft draft) {
-        if (hasUnsavedCards() && JOptionPane.showConfirmDialog(getParentWindow(),
-                "Replace the current unsaved work with this saved trade?", "Open saved trade",
-                JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION) return false;
-        clearTradeState();
+        if(!finishCellEdit()) return false;
+        if(hasUnsavedCards() && draft.id().equals(draftId)) return true;
+        if(hasUnsavedCards()) { performAutosave(); TradeSessionService.flush(); }
+        var recovery=TradeSessionService.find(draft.id());
+        if(recovery!=null) { resumeDraft(recovery);return true; }
+        resetTradeState(false);
         editingRevision=draft.revision();
         restoreDraft(draft);
         showEditingState();
@@ -2062,7 +2002,10 @@ public class TradePanel extends JPanel {
     // -------------------------------------------------------------------------
 
     /** Returns {@code true} if there are cards in the table that have not been saved. */
-    public void flushDraftOnClose() { performAutosave(); TradeSessionService.flush(); }
+    public void flushDraftOnClose() {
+        if(!finishCellEdit()) throw new IllegalStateException("Finish editing the current cell before closing.");
+        performAutosave(); TradeSessionService.flush();
+    }
     public void disposeResources() { if (previewTimer!=null) previewTimer.stop(); autosaveTimer.stop(); syncTimer.stop(); draftGeneration++; entryPresenter.cancel(); previewGeneration++; if (imagePopup!=null) imagePopup.dispose(); }
 
     public boolean hasUnsavedCards() {
@@ -2088,25 +2031,7 @@ public class TradePanel extends JPanel {
 
     /** Offers to restore a previously crashed session (called on first EDT tick). */
     private void offerSessionRestore() {
-        if (TradeSessionService.hasTypedDraft()) {
-            try {
-                var draft = TradeSessionService.loadDraft();
-                Long savedEditingRevision=TradeSessionService.loadEditingRevision();
-                var committed=new com.cardpricer.service.TradeRepository(ledgerPath()).committedDraft(draft.id());
-                if (committed!=null && (savedEditingRevision==null || committed.revision()>=draft.revision())) {
-                    TradeSessionService.clearAutosave(); retryPendingExports(); return;
-                }
-                if (JOptionPane.showConfirmDialog(getParentWindow(), "Restore the unsaved trade?", "Restore session",
-                        JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION) {
-                    editingRevision=savedEditingRevision;
-                    restoreDraft(draft);
-                    if (editingRevision!=null) showEditingState();
-                } else TradeSessionService.clearAutosave();
-            } catch (Exception e) {
-                JOptionPane.showMessageDialog(getParentWindow(), "Could not restore draft: " + e.getMessage());
-            }
-            return;
-        }
+        com.cardpricer.gui.panel.trade.TradeRecoveryPresenter.offer(this,this::resumeDraft,()->!hasUnsavedCards());
         if (!TradeSessionService.hasAutosave()) return;
         int choice = JOptionPane.showConfirmDialog(getParentWindow(),
                 "An unsaved trade session was found.\nWould you like to restore it?",
@@ -2117,7 +2042,7 @@ public class TradePanel extends JPanel {
             TradeSessionService.SavedSession session = TradeSessionService.load();
             if (session != null) restoreSession(session);
         } else {
-            TradeSessionService.clearAutosave();
+            TradeSessionService.clearLegacyAutosave();
         }
     }
 
@@ -2193,11 +2118,40 @@ public class TradePanel extends JPanel {
         }.execute();
     }
 
-    /** Writes current table contents to the autosave file. */
+    private boolean finishCellEdit() {
+        return !cardTable.isEditing() || cardTable.getCellEditor().stopCellEditing();
+    }
+
+    private void resumeDraft(com.cardpricer.service.TradeRepository.RecoveryDraft recovery) {
+        resetTradeState(false);
+        editingRevision=recovery.editingRevision();
+        restoreDraft(recovery.draft());
+        if(editingRevision!=null) showEditingState();
+        draftSaveStatus.setText("Draft restored");
+    }
+
+    private void markDraftChanged() {
+        draftChangeGeneration++;
+        draftSaveStatus.setText("Unsaved changes");
+        autosaveTimer.restart();
+    }
+
+    /** Capture Swing state now; encode, validate and persist on the bounded save worker. */
     private void performAutosave() {
-        if (tableModel.getRowCount() == 0 && editingRevision==null) { TradeSessionService.clearAutosave(); return; }
-        try { TradeSessionService.queueDraft(snapshotDraft(),editingRevision); }
-        catch (RuntimeException e) { summaryPanel.setToolTipText("Draft not saved: " + e.getMessage()); }
+        if(tableModel.getRowCount()==0 && editingRevision==null) return;
+        var id=draftId;long generation=draftChangeGeneration;
+        try {
+            var capture=captureDraft();
+            draftSaveStatus.setText("Saving draft…");
+            TradeSessionService.queueDraft(id,capture,editingRevision,failure -> SwingUtilities.invokeLater(()-> {
+                if(!id.equals(draftId) || generation!=draftChangeGeneration) return;
+                draftSaveStatus.setText(failure==null ? "Draft saved locally" : "Draft not saved — retry using Save for later");
+                draftSaveStatus.setToolTipText(failure==null ? null : failure.getMessage());
+            }));
+        } catch(RuntimeException failure) {
+            draftSaveStatus.setText("Draft not saved");draftSaveStatus.setToolTipText(failure.getMessage());
+            throw failure;
+        }
     }
 
     // -------------------------------------------------------------------------

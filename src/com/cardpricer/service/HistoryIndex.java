@@ -27,6 +27,14 @@ final class HistoryIndex {
             s.execute("CREATE TRIGGER IF NOT EXISTS history_delete AFTER DELETE ON history_entries BEGIN INSERT INTO history_search(history_search,rowid,search_text) VALUES('delete',old.rowid,old.search_text); END");
             s.execute("CREATE TRIGGER IF NOT EXISTS history_update AFTER UPDATE ON history_entries BEGIN INSERT INTO history_search(history_search,rowid,search_text) VALUES('delete',old.rowid,old.search_text); INSERT INTO history_search(rowid,search_text) VALUES(new.rowid,new.search_text); END");
         }
+        HistoryPageQuery.create(c);
+    }
+
+    static void upgradeListing(Connection c) throws SQLException {
+        HistoryPageQuery.create(c);
+        try(var s=c.createStatement();var rows=s.executeQuery("SELECT source,scope,kind,metadata FROM history_entries")) {
+            while(rows.next()) HistoryPageQuery.put(c,rows.getString(1),rows.getString(2),rows.getString(3),record(rows.getString(4)));
+        }
     }
 
     static JSONObject metadata(TradeRecord r) {
@@ -35,7 +43,7 @@ final class HistoryIndex {
                 .put("total",r.totalValue.toPlainString()).put("cards",r.totalCards)
                 .put("id",r.tradeId==null ? "" : r.tradeId.toString()).put("revision",r.revision).put("inventoried",r.inventoried);
     }
-    private static TradeRecord record(String text) {
+    static TradeRecord record(String text) {
         var j=new JSONObject(text);String id=j.getString("id");
         return new TradeRecord(j.getString("filename"),LocalDateTime.parse(j.getString("date")),j.getString("customer"),
                 j.getString("trader"),j.getString("payment"),new BigDecimal(j.getString("total")),j.getInt("cards"),
@@ -48,6 +56,7 @@ final class HistoryIndex {
             s.setString(1,source);s.setString(2,scope);s.setString(3,kind);s.setString(4,stamp);
             s.setString(5,metadata(r).toString());s.setString(6,loaded.body());s.setString(7,search);s.executeUpdate();
         }
+        HistoryPageQuery.put(c,source,scope,kind,r);
     }
     List<Entry> entries(String scope,String kind) throws SQLException {
         var result=new ArrayList<Entry>();
@@ -85,7 +94,11 @@ final class HistoryIndex {
     Scan scan(Path directory,String kind,Set<String> ignored,boolean keepOffline,Loader loader) throws Exception {
         var deleted=new TradeDeletionStore(repository).snapshot();
         String scope=scope(directory);
-        Map<String,Entry> old=new HashMap<>();for(var e:entries(scope,kind)) old.put(e.source(),e);
+        Map<String,String> old=new HashMap<>();
+        try(var c=repository.connect();var s=c.prepareStatement("SELECT source,stamp FROM history_entries WHERE scope=? AND kind=?")) {
+            s.setString(1,scope);s.setString(2,kind);
+            try(var rows=s.executeQuery()) { while(rows.next()) old.put(rows.getString(1),rows.getString(2)); }
+        }
         var changed=new LinkedHashMap<String,Loaded>();var stamps=new HashMap<String,String>();
         var present=new HashSet<String>();
         if (!Files.isDirectory(directory)) {
@@ -106,7 +119,7 @@ final class HistoryIndex {
                     catch (NoSuchFileException absent) { stamp+=":no-json"; }
                 }
                 var existing=old.get(source);
-                if (existing!=null && existing.stamp().equals(stamp)) continue;
+                if (existing!=null && existing.equals(stamp)) continue;
                 changed.put(source,loader.read(file));stamps.put(source,stamp);
             }
         }

@@ -58,6 +58,7 @@ class HistoryIndexTest {
         var restarted=new TradeHistoryService.Session(local.toString(),shared.toString());
         assertEquals(first.tokens(),restarted.cached().tokens());
         var offline=restarted.refresh();assertFalse(offline.notice().isEmpty());
+        assertEquals(1,restarted.page(new TradeHistoryService.Filter("Tropical","All",0),100,null,offline.notice()).count());
         assertEquals(1,restarted.search(offline,"Tropical").size());
         assertTrue(restarted.receipt(offline,offline.records().getFirst()).contains("Tropical Island"));
         Files.move(temp.resolve("offline"),shared);
@@ -118,6 +119,9 @@ class HistoryIndexTest {
         session.refresh();assertEquals(0,session.lastReadCount());
         var correction=corrected(original,"NewUniqueCustomer");sharedService.update(correction,original.revision());
         var updated=session.refresh();
+        assertEquals(0,session.page(new TradeHistoryService.Filter("OriginalUniqueCustomer","All",0),100,null,"").count());
+        var page=session.page(new TradeHistoryService.Filter("NewUniqueCustomer","All",0),100,null,"");
+        assertEquals(1,page.count());assertEquals(correction.revision(),page.snapshot().records().getFirst().revision);
         assertEquals(1,updated.records().size());assertEquals(correction.revision(),updated.records().getFirst().revision);
         assertTrue(session.search(updated,"OriginalUniqueCustomer").isEmpty(),"Superseded receipts must not match");
         assertEquals(1,session.search(updated,"NewUniqueCustomer").size());

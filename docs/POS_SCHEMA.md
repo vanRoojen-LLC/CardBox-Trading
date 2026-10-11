@@ -34,6 +34,8 @@ Provider identity stays unchanged internally. Existing COK/XED aliases map only 
 
 PLST composite identifiers omit the PLST prefix and replace hyphens with spaces: `PLST C17-149` → `C17 149`. A List reprint and its original printing may share that code when their card names, languages and finishes match. This exception does not allow two distinct provider identities within PLST or within the original set to share a code. Saved identities, valuations and acquisition costs remain separate.
 
+40K surge trade lines export with the POS `S` suffix: provider collector `129★` with Surge Foil selected becomes `40K 129S` in both receiving and quantity CSVs. Lookup and saved trade records retain `129★`. Ordinary `40K 129` stock remains separate; other sets' literal collector markers are preserved.
+
 Other supported schemas remain Import Utility (8 columns), Item Wizard (9 columns), and Item Wizard Change Qty (5 columns). The zero-quantity mode is the same for combined and individual exports. Inventory Change Qty is a snapshot, with blank old quantity and explicit new quantity; zero can reset stock.
 
 Trade-to-inventory Change Qty output combines quantities for lines sharing an inventory code, including promo/base and List/original aliases, so repeated rows cannot overwrite part of the count. Receiving exports keep separate rows to preserve approved costs.

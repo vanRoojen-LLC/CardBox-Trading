@@ -1,13 +1,11 @@
 package com.cardpricer.gui.dialog;
 
-import com.cardpricer.exception.ScryfallApiException;
 import com.cardpricer.gui.CardImagePopup;
 import com.cardpricer.model.Card;
 import com.cardpricer.service.ScryfallApiService;
-import com.cardpricer.util.CardCodeParser;
+import com.cardpricer.service.CardSearchService;
+import com.cardpricer.service.ScryfallCatalogService;
 import com.cardpricer.util.VintageUtil;
-import org.json.JSONArray;
-import org.json.JSONObject;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -16,17 +14,16 @@ import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Modal dialog for searching Magic cards by name when the collector number is unknown.
- * Results are fetched from the Scryfall search API and displayed in a scrollable list
+ * Results use the local catalog first, with Scryfall fallback, and appear in a scrollable list
  * with card art previews on hover.
  */
 public class CardSearchDialog extends JDialog {
 
-    private final ScryfallApiService apiService;
+    private final CardSearchPresenter presenter;
 
     private JTextField searchField;
     private JTextField setCodeField;
@@ -50,9 +47,17 @@ public class CardSearchDialog extends JDialog {
      */
     public CardSearchDialog(Window owner, ScryfallApiService apiService) {
         super(owner, "Search for Card", ModalityType.APPLICATION_MODAL);
-        this.apiService = apiService;
+        this.presenter = new CardSearchPresenter(apiService.interactiveSearch(ScryfallCatalogService.getInstance()));
 
         initializeUI();
+        javax.swing.event.DocumentListener changed=new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { scheduleSearch(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { scheduleSearch(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { scheduleSearch(); }
+        };
+        searchField.getDocument().addDocumentListener(changed);
+        setCodeField.getDocument().addDocumentListener(changed);
+        getRootPane().registerKeyboardAction(e->dispose(),KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE,0),JComponent.WHEN_IN_FOCUSED_WINDOW);
 
         setSize(650, 500);
         setLocationRelativeTo(owner);
@@ -89,27 +94,13 @@ public class CardSearchDialog extends JDialog {
         // Instruction label spanning full width
         gbc.gridx = 0; gbc.gridy = 0; gbc.gridwidth = 3;
         gbc.fill = GridBagConstraints.HORIZONTAL;
-        inputPanel.add(new JLabel("Type card name (partial names work):"), gbc);
+        inputPanel.add(new JLabel("Type a card name or set and collector code:"), gbc);
 
         // Name field (takes remaining width)
         gbc.gridy = 1; gbc.gridwidth = 1; gbc.weightx = 1.0;
         searchField = new JTextField();
         searchField.setFont(searchField.getFont().deriveFont(14f));
-        searchField.addKeyListener(new KeyAdapter() {
-            @Override
-            public void keyReleased(KeyEvent e) {
-                if (e.getKeyCode() == KeyEvent.VK_ESCAPE) {
-                    dispose();
-                } else if (e.getKeyCode() == KeyEvent.VK_ENTER) {
-                    if (searchTimer != null) {
-                        searchTimer.stop();
-                    }
-                    performSearch();
-                } else {
-                    scheduleSearch();
-                }
-            }
-        });
+        searchField.addActionListener(e -> performSearch(false));
         inputPanel.add(searchField, gbc);
 
         // Set label
@@ -120,15 +111,7 @@ public class CardSearchDialog extends JDialog {
         gbc.gridx = 2;
         setCodeField = new JTextField(10);
         setCodeField.setToolTipText("Enter set code or name — e.g. \"lea\", \"alpha\", \"arabian\"");
-        setCodeField.addKeyListener(new KeyAdapter() {
-            @Override
-            public void keyReleased(KeyEvent e) {
-                if (e.getKeyCode() == KeyEvent.VK_ENTER) {
-                    if (searchTimer != null) searchTimer.stop();
-                    performSearch();
-                }
-            }
-        });
+        setCodeField.addActionListener(e -> performSearch(false));
         // Resolve friendly name aliases visually when focus leaves the field
         setCodeField.addFocusListener(new java.awt.event.FocusAdapter() {
             @Override
@@ -213,7 +196,7 @@ public class CardSearchDialog extends JDialog {
         // Left: Finish selector
         JPanel finishPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
         finishPanel.add(new JLabel("Finish:"));
-        finishCombo = new JComboBox<>(new String[]{"Normal", "Foil", "Etched"});
+        finishCombo = new JComboBox<>(new String[]{"Normal", "Foil", "Etched", "Surge Foil"});
         finishPanel.add(finishCombo);
 
         panel.add(finishPanel, BorderLayout.WEST);
@@ -230,6 +213,10 @@ public class CardSearchDialog extends JDialog {
         cancelButton.putClientProperty("JButton.buttonType", "roundRect");
         cancelButton.addActionListener(e -> dispose());
 
+        JButton online=new JButton("Search online");
+        online.setToolTipText("Search Scryfall for more printings or cards missing from the downloaded catalog");
+        online.addActionListener(e->performSearch(true));
+        buttonPanel.add(online);
         buttonPanel.add(selectButton);
         buttonPanel.add(cancelButton);
 
@@ -244,95 +231,47 @@ public class CardSearchDialog extends JDialog {
     }
 
     private void scheduleSearch() {
-        if (searchTimer != null) {
-            searchTimer.stop();
+        presenter.cancel();
+        selectButton.setEnabled(false);resultList.setEnabled(false);
+        if(imagePopup!=null) imagePopup.hide();
+        if(searchTimer==null) {
+            searchTimer=new Timer(CardSearchService.TYPING_DELAY_MS,e->performSearch(false));searchTimer.setRepeats(false);
         }
-
-        searchTimer = new Timer(400, e -> performSearch());
-        searchTimer.setRepeats(false);
-        searchTimer.start();
+        searchTimer.stop();
+        if(searchField.getText().trim().length()<2) {
+            listModel.clear();statusLabel.setText("Enter at least 2 characters to search...");return;
+        }
+        statusLabel.setText("Searching...");
+        searchTimer.setInitialDelay(CardSearchService.advanced(searchField.getText()) ? 400 : CardSearchService.TYPING_DELAY_MS);
+        searchTimer.restart();
     }
 
-    private SwingWorker<?,?> activeSearch;
-    private long searchGeneration;
-
-    @Override public void dispose() { searchGeneration++; if (searchTimer!=null) searchTimer.stop(); if (activeSearch!=null) activeSearch.cancel(true); super.dispose(); }
-
-    private void performSearch() {
-        long generation=++searchGeneration;
-        if (activeSearch!=null) activeSearch.cancel(true);
-        String query = searchField.getText().trim();
-
-        if (query.isEmpty() || query.length() < 2) {
-            listModel.clear();
-            statusLabel.setText("Enter at least 2 characters to search...");
-            selectButton.setEnabled(false);
-            return;
-        }
-
-        statusLabel.setText("Searching for \"" + query + "\"...");
-        selectButton.setEnabled(false);
-
-        final String setFilter=setCodeField.getText().trim();
-        SwingWorker<List<CardSearchResult>, Void> worker = new SwingWorker<>() {
-            @Override
-            protected List<CardSearchResult> doInBackground() throws Exception {
-                return searchCards(setFilter.isEmpty() ? query : query+" set:"+VintageUtil.resolveSetAlias(setFilter));
-            }
-
-            @Override
-            protected void done() {
-                if (generation!=searchGeneration || isCancelled() || !isDisplayable()) return;
-                try {
-                    List<CardSearchResult> results = get();
-                    displayResults(results);
-                } catch (Exception e) {
-                    statusLabel.setText("Search failed: " + e.getMessage());
-                    listModel.clear();
-                }
-            }
-        };
-
-        activeSearch=worker;
-        com.cardpricer.service.TaskCoordinator.execute(worker);
+    @Override public void dispose() {
+        presenter.close();if(searchTimer!=null) searchTimer.stop();
+        if(imagePopup!=null) imagePopup.dispose();super.dispose();
     }
 
-    private List<CardSearchResult> searchCards(String query) throws Exception {
-        List<CardSearchResult> results = new ArrayList<>();
-
-        // Use Scryfall's search API with fuzzy name matching
-        String encodedQuery = java.net.URLEncoder.encode(query, "UTF-8");
-        String url = "https://api.scryfall.com/cards/search?q=" + encodedQuery + "&unique=prints";
-
-        try {
-            JSONObject response = apiService.makeApiCall(url);
-
-            if (!response.has("data")) {
-                return results;
-            }
-
-            JSONArray data = response.getJSONArray("data");
-            int limit = Math.min(50, data.length()); // Limit to 50 results
-
-            for (int i = 0; i < limit; i++) {
-                JSONObject cardJson = data.getJSONObject(i);
-                Card card = apiService.parseCardFromJson(cardJson);
-                results.add(new CardSearchResult(card));
-            }
-
-        } catch (ScryfallApiException e) {
-            // Try fuzzy named search as fallback
-            try {
-                url = "https://api.scryfall.com/cards/named?fuzzy=" + encodedQuery;
-                JSONObject cardJson = apiService.makeApiCall(url);
-                Card card = apiService.parseCardFromJson(cardJson);
-                results.add(new CardSearchResult(card));
-            } catch (Exception ignored) {
-                // No results found
-            }
-        }
-
-        return results;
+    private void performSearch(boolean online) {
+        if(searchTimer!=null) searchTimer.stop();
+        String query=searchField.getText().trim();
+        if(query.length()<2) { scheduleSearch();return; }
+        selectButton.setEnabled(false);resultList.setEnabled(false);
+        statusLabel.setText(online || CardSearchService.advanced(query) ? "Searching Scryfall..." : "Searching cards...");
+        presenter.search(query,setCodeField.getText(),online,result -> {
+            if(!isDisplayable()) return;
+            var cards=result.cards().stream().map(card->new CardSearchResult(card.toCard())).toList();
+            displayResults(cards);
+            String source=result.online() ? "Scryfall" : "Downloaded catalog";
+            statusLabel.setText(cards.isEmpty() ? "No cards found matching \""+query+"\""
+                    : source+" · "+cards.size()+" of "+result.total()+" printings"+(result.total()>cards.size() ? " · Narrow the name or set" : ""));
+            if(result.suggestedFinish()!=null) finishCombo.setSelectedItem(switch(result.suggestedFinish()) {
+                case "F"->"Foil";case "E"->"Etched";case "S"->"Surge Foil";default->"Normal";
+            });
+        },failure -> {
+            if(!isDisplayable()) return;
+            listModel.clear();selectButton.setEnabled(false);
+            statusLabel.setText("Search failed: "+failure.getMessage());
+        });
     }
 
     private void displayResults(List<CardSearchResult> results) {
@@ -343,9 +282,8 @@ public class CardSearchDialog extends JDialog {
             return;
         }
 
-        for (CardSearchResult result : results) {
-            listModel.addElement(result);
-        }
+        listModel.addAll(results);
+        resultList.setEnabled(true);
 
         statusLabel.setText("Found " + results.size() + " card(s)");
         resultList.setSelectedIndex(0);
@@ -353,6 +291,7 @@ public class CardSearchDialog extends JDialog {
     }
 
     private void selectAndClose() {
+        if(!selectButton.isEnabled()) return;
         CardSearchResult selected = resultList.getSelectedValue();
         if (selected != null) {
             selectedCard = selected.card;
@@ -362,6 +301,8 @@ public class CardSearchDialog extends JDialog {
                 selectedFinish = "F";
             } else if ("Etched".equals(finish)) {
                 selectedFinish = "E";
+            } else if ("Surge Foil".equals(finish)) {
+                selectedFinish = "S";
             } else {
                 selectedFinish = "";
             }

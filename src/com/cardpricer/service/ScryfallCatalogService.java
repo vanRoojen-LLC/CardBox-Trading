@@ -25,13 +25,13 @@ import java.util.zip.GZIPOutputStream;
  * reloaded on subsequent launches without another network call.
  *
  * <p><b>Index key format:</b> {@code "SETCODE:COLLNUM"} — both components are
- * upper-case; special characters (★) are stripped from the collector number;
+ * upper-case; special characters (★) are preserved in the collector number;
  * hyphens are preserved (required for PLST composites, e.g. {@code "PLST:ARB-1"}).
  * Vintage set aliases (e.g. {@code "alpha"} → {@code "lea"}) are resolved via
  * {@link VintageUtil#resolveSetAlias(String)} so that user input always maps to
  * the canonical Scryfall set code.
  */
-public class ScryfallCatalogService implements CardRepository {
+public class ScryfallCatalogService implements SearchableCardRepository {
 
     // ── Public interface ──────────────────────────────────────────────────────
 
@@ -70,10 +70,11 @@ public class ScryfallCatalogService implements CardRepository {
     // ── State ─────────────────────────────────────────────────────────────────
 
     /** Populated after a successful load or build; {@code null} when not loaded. */
-    private volatile Map<String, com.cardpricer.model.ProviderPrinting> index;
-    private volatile int cardCount;
-    private volatile int ambiguousLegacyKeys;
-    public int getAmbiguousLegacyKeys() { return ambiguousLegacyKeys; }
+    private record Snapshot(Map<String,com.cardpricer.model.ProviderPrinting> codes,CardNameIndex names,int ambiguous,long generation) {}
+    private volatile Snapshot index;
+    private final java.util.concurrent.atomic.AtomicLong generations=new java.util.concurrent.atomic.AtomicLong();
+    public int getAmbiguousLegacyKeys() { var snapshot=index;return snapshot==null ? 0 : snapshot.ambiguous(); }
+    @Override public long generation() { var snapshot=index;return snapshot==null ? generations.get() : snapshot.generation(); }
 
     // ── Public accessors ──────────────────────────────────────────────────────
 
@@ -90,16 +91,15 @@ public class ScryfallCatalogService implements CardRepository {
     }
 
     /** Returns the number of cards in the currently loaded index, or 0 if not loaded. */
-    public int getCardCount() { return cardCount; }
+    public int getCardCount() { var snapshot=index;return snapshot==null ? 0 : snapshot.codes().size(); }
 
     /** Returns {@code true} if the index is loaded into memory and ready for lookup. */
     public boolean isLoaded() { return index != null; }
 
     /** Clears the in-memory index without deleting the cache file. */
     public void invalidate() {
+        generations.incrementAndGet();
         index = null;
-        cardCount = 0;
-        ambiguousLegacyKeys = 0;
     }
 
     /**
@@ -109,13 +109,17 @@ public class ScryfallCatalogService implements CardRepository {
      * lookup, so {@code "alpha"} and {@code "lea"} both find Alpha cards.
      *
      * @param setCode         Scryfall or user-facing set code (any case)
-     * @param collectorNumber collector number, possibly with finish markers (e.g. {@code "73★"})
+     * @param collectorNumber exact provider collector number, including markers (e.g. {@code "73★"})
      * @return the matching {@link Card}, or {@link Optional#empty()} if not in the catalog
      */
     public Optional<Card> lookup(String setCode, String collectorNumber) {
-        Map<String, com.cardpricer.model.ProviderPrinting> snapshot = index;
+        var snapshot = index;
         if (snapshot == null) return Optional.empty();
-        return Optional.ofNullable(snapshot.get(buildKey(setCode, collectorNumber))).map(com.cardpricer.model.ProviderPrinting::toCard);
+        return Optional.ofNullable(snapshot.codes().get(buildKey(setCode, collectorNumber))).map(com.cardpricer.model.ProviderPrinting::toCard);
+    }
+    public CardNameIndex.Matches searchNames(String query,String set,int limit) {
+        var snapshot=index;
+        return snapshot==null ? new CardNameIndex.Matches(List.of(),0) : snapshot.names().search(query,set,limit);
     }
 
     // ── Key normalisation ─────────────────────────────────────────────────────
@@ -187,10 +191,9 @@ public class ScryfallCatalogService implements CardRepository {
         }
 
         if (newIndex.isEmpty()) throw new IOException("Catalog is empty; previous cache retained");
-        this.index     = Collections.unmodifiableMap(newIndex);
-        this.cardCount = newIndex.size();
-        this.ambiguousLegacyKeys = ambiguous.size();
-        return cardCount;
+        var names=new CardNameIndex(newIndex.values());
+        this.index=new Snapshot(Collections.unmodifiableMap(newIndex),names,ambiguous.size(),generations.incrementAndGet());
+        return getCardCount();
     }
 
     /** Deserialises a {@link Card} from a compact cache-line JSON object. */
@@ -240,7 +243,7 @@ public class ScryfallCatalogService implements CardRepository {
             if (Thread.currentThread().isInterrupted() || (progress != null && progress.isCancelled()))
                 throw new InterruptedException("Catalog refresh cancelled");
             if (lastRefreshCompleted >= requestedAt) {
-                if (progress != null) progress.onUpdate(cardCount, "Catalog already refreshed");
+                if (progress != null) progress.onUpdate(getCardCount(), "Catalog already refreshed");
                 return;
             }
             downloadAndBuildSingle(progress);
@@ -316,15 +319,15 @@ public class ScryfallCatalogService implements CardRepository {
             while ((record=verify.readLine())!=null) { ProviderCardMapper.fromJson(new JSONObject(record)); verified++; }
         }
         if (verified!=newIndex.size()) throw new IOException("Catalog count mismatch; previous cache retained");
+        var names=new CardNameIndex(newIndex.values());
+        if(Thread.currentThread().isInterrupted() || (progress!=null && progress.isCancelled())) throw new InterruptedException("Catalog refresh cancelled");
         com.cardpricer.util.AtomicFiles.replace(tmpFile.toPath(), cacheFile.toPath());
 
-        this.index     = Collections.unmodifiableMap(newIndex);
-        this.cardCount = newIndex.size();
-        this.ambiguousLegacyKeys = 0;
+        this.index=new Snapshot(Collections.unmodifiableMap(newIndex),names,0,generations.incrementAndGet());
 
         if (progress != null) {
-            progress.onUpdate(this.cardCount,
-                    "Done \u2014 " + this.cardCount + " cards indexed.");
+            progress.onUpdate(getCardCount(),
+                    "Done \u2014 " + getCardCount() + " cards indexed.");
         }
         } finally {
             java.nio.file.Files.deleteIfExists(tmpFile.toPath());

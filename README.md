@@ -35,12 +35,18 @@ Packages stage only the shaded application JAR and third-party notices. Each pac
 
 ## Trade behavior
 
+**F2 / Ctrl+F** searches the downloaded catalog first, including partial names, accents/punctuation and optional set filters. Exact names rank first; every printing keeps its own identity. Names and collector codes such as `40K 129s`, `PEOE 219pf` and `PEOE 219sf` use the same dialog, with the code's finish selected automatically. Use **Search online** for more printings or newer cards. Missing local matches and advanced Scryfall expressions automatically use the API; provider errors remain visible.
+
+Local name search and trade-code previews wait 125 ms after typing stops; Enter searches immediately. Recent results and identical pending requests are reused. Catalog refreshes replace both indexes together and invalidate old query results. Local searches have their own workers, separate from network calls and background downloads. Download/update the catalog through **Preferences → Catalog**; an existing catalog loads automatically at startup. See [search measurements](docs/DESKTOP_SCALABILITY.md#card-search-measurements) for the tested catalog and limits.
+
 The **Overview** homepage includes a standalone **Price check** area. Enter a set/collector code (including finish suffixes such as `TDM 3f` or `PLST ARB 1e`), or press **F2 / Ctrl+F** to use the same name-search dialog as trade entry. Entering a name and pressing **Enter** also opens name search. Selecting a card shows its NM market price, condition-adjusted store price, store-credit offer and check offer. Finish and condition selectors use the same pricing and buy-rate rules as Trades; unavailable finish prices display **N/A**. Price checking does not create or modify a trade.
 
 - Each newly loaded homepage price-check card starts at NM. The previous card's condition and prices remain visible until the next result loads.
 - In Trades, `misc` and `MTG misc` open the same manual name/price entry dialog. Vintage cards show art on hover; entering their codes no longer opens a persistent floating image. The high-value confirmation focuses **Add to Trade**, so Enter confirms it.
 - The table owns typed rows with stable line IDs. Quantities, condition and prices feed the same quote and settlement paths. Sorting changes presentation only.
 - Provider set/collector IDs, language, finishes and original names survive lookup and recovery. POS aliases are applied at the output boundary.
+- Code entry separates collector suffixes from finishes: `PEOE 219sf` (or `PEOE 219s F`) looks up promo `219s` in foil; `PEOE 219pf` looks up foil promo `219p`. A bare `PEOE 219s` keeps the prerelease collector number. `40K 129s` looks up the separate surge printing `129★`; `PIP 882s` uses collector `882` without a star. Literal collector markers and promo identities are preserved, including in pasted deck exports.
+- Trade receiving and quantity CSVs export that 40K surge printing as `40K 129S`, using the POS finish suffix without the provider's star. The saved trade keeps the exact `129★` printing and its price.
 - Default offers remain 50% credit / 40% check. Configured tiers and bounties override these defaults.
 - Prices use the existing rarity floor and rounding policy. NM preserves the adjusted base. Worn conditions round after multiplying the base, stay at or below that base, and preserve at least the smaller of the base and $0.10. The existing $9.50-to-$10 rounding exception remains.
 - A manual price override belongs to the condition where it was entered. Changing condition uses the original base; returning to the overridden condition restores the override. Duplication preserves both.
@@ -77,7 +83,8 @@ Windows stores data under `%APPDATA%\OCC_Trade_Pricer`; other systems use `~/.oc
 
 | Location | Purpose |
 |---|---|
-| `session/draft-v1.json` | Atomic recoverable draft with identity, base, overrides, customer fields and payment selection |
+| `ledger/trades.sqlite` draft records | Separate recoverable drafts with identity, base, overrides, customer fields, payment selection and the original edited revision |
+| `session/migrated-draft-*.json` | Retained backup of a previous single-file draft after successful migration |
 | `ledger/trades.sqlite` | Local approved snapshots, previous revisions, POS completion status, exact settlements, output jobs, legacy receipt attachments and sync jobs |
 | `trades/YYYY-MM-DD_HH-mm-ss - Customer - Employee - <short ID>.*` | Matching receipt, structured JSON and stock CSV, named with the local date/time and saved names |
 | `trades/YYYY-MM-DD_HH-mm-ss - Customer - Employee - <short ID>_rev<N>.*` | Revised outputs; History shows the current revision once |
@@ -85,7 +92,11 @@ Windows stores data under `%APPDATA%\OCC_Trade_Pricer`; other systems use `~/.oc
 | `cache/catalog.ndjson.gz` | Last usable catalog snapshot |
 | `bulk-runs/<UUID>/` | One bulk generation, its files and manifest |
 
-Edits debounce draft saves for two seconds; orderly exit flushes them. Approval commits the snapshot, exact allocation and output jobs together. A failed file write reports **saved, export pending**. Use **Retry exports** to retry saved jobs without another payment. A crash after approval cannot turn the committed draft into another payment request.
+Edits debounce draft saves for two seconds; orderly exit flushes them. **Save for later** saves the active draft and starts a fresh trade. **Drafts** resumes or deletes parked drafts. Editing a different saved trade parks current work first; reopening that trade resumes its retained edits. The draft status shows when local persistence finishes or fails. Saving or discarding one draft leaves the others intact. Existing `session/draft-v1.json` files migrate automatically, including the original revision for an edited trade.
+
+Approval commits the snapshot, exact allocation and output jobs together. A failed file write reports **saved, export pending**. Use **Retry exports** to retry saved jobs without another payment. A crash after approval cannot turn the committed draft into another payment request. Conflicting local edits remain recoverable; to discard them and start from a newer saved revision, use **Cancel edit**, then reopen the trade from History.
+
+History filters and fetches pages in SQLite, decodes only the returned summaries, and reads receipt bodies when selected. Changed rows drive trade totals; immutable captures are encoded on the save worker, which coalesces pending writes. See [desktop scalability measurements](docs/DESKTOP_SCALABILITY.md) for the synthetic workload and its limits.
 
 The SQLite ledger must stay on the workstation. The configured shared folder receives documents, never the live database. Copy jobs persist across restart, compare SHA-256 hashes and retain conflicts. Fix a conflicting destination and use **Retry exports** to retry it. Sync state appears above the trade action buttons. Local pricing continues when the share is unavailable.
 

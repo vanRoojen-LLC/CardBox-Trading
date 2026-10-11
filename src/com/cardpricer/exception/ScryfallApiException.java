@@ -5,6 +5,9 @@ package com.cardpricer.exception;
  * is not found (HTTP 404) or when the network request encounters an error.
  */
 public class ScryfallApiException extends Exception {
+    private final int statusCode;
+    public int statusCode() { return statusCode; }
+    public ScryfallApiException(int statusCode,String message) { super(message);this.statusCode=statusCode; }
 
     /**
      * Constructs a new exception with the given detail message.
@@ -13,6 +16,7 @@ public class ScryfallApiException extends Exception {
      */
     public ScryfallApiException(String message) {
         super(message);
+        statusCode=0;
     }
 
     /**
@@ -23,5 +27,6 @@ public class ScryfallApiException extends Exception {
      */
     public ScryfallApiException(String message, Throwable cause) {
         super(message, cause);
+        statusCode=0;
     }
 }

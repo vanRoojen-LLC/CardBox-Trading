@@ -7,7 +7,6 @@ import com.cardpricer.service.ScryfallCatalogService;
 import com.cardpricer.util.AppTheme;
 import com.cardpricer.util.CardCodeParser;
 import com.cardpricer.util.CardConstants;
-import com.cardpricer.util.SetList;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -346,11 +345,8 @@ public class PasteImportDialog extends JDialog {
      * <p>Conversion rules:
      * <ul>
      *   <li>PLST collector numbers (e.g. {@code M19-128}) are passed through as-is.</li>
-     *   <li>When a P-prefixed set code (e.g. {@code PM19}) is paired with a collector
-     *       number that ends in {@code s} or {@code p} (e.g. {@code 128s}), both the
-     *       P-prefix and the suffix are stripped ({@code M19 128}).  This handles the
-     *       common Moxfield promo encoding without touching standalone promo sets like
-     *       {@code PLG21} whose collector numbers carry no such suffix.</li>
+     *   <li>Promo sets and collector suffixes are retained for exact printing lookup
+     *       (e.g. {@code PEOE 210s}). POS aliases apply only when exporting the trade.</li>
      *   <li>{@code *F*} → foil, {@code *E*} → etched, {@code *S*} → surge foil.</li>
      * </ul>
      *
@@ -363,40 +359,14 @@ public class PasteImportDialog extends JDialog {
 
         int qty        = Integer.parseInt(m.group(1));
         // group 2 = card name (not used for lookup)
-        String rawSet  = m.group(3).toUpperCase();
+        String rawSet  = m.group(3).toUpperCase(java.util.Locale.ROOT);
         String rawColl = m.group(4);
         String finishChar = m.group(5); // null if no *X* tag
 
-        String finish = finishChar == null ? "" : finishChar.toUpperCase();
-        String setCode;
-        String collNum;
+        String finish = finishChar == null ? "" : finishChar.toUpperCase(java.util.Locale.ROOT);
+        String collNum = rawColl.toLowerCase(java.util.Locale.ROOT);
 
-        if ("PLST".equals(rawSet)) {
-            // PLST: collector number is already "SET-NUM" (e.g. M19-128)
-            setCode = "plst";
-            collNum = rawColl.toLowerCase();
-        } else {
-            // Strip P-promo prefix only when collector number carries an s/p suffix.
-            // This preserves standalone promo sets (PLG21, PRCQ, PUMA, …) whose
-            // collector numbers don't use these Moxfield promo markers.
-            String rawCollLower = rawColl.toLowerCase();
-            boolean isPromoEncoding = rawSet.length() > 2
-                    && rawSet.startsWith("P")
-                    && (rawCollLower.endsWith("s") || rawCollLower.endsWith("p"));
-
-            if (isPromoEncoding) {
-                setCode = SetList.toScryfallCode(rawSet.substring(1)); // strip P
-                collNum = rawCollLower.substring(0, rawCollLower.length() - 1); // strip suffix
-            } else {
-                setCode = SetList.toScryfallCode(rawSet);
-                collNum = rawCollLower;
-            }
-        }
-
-        // Surge foil requires ★ suffix on the collector number for Scryfall
-        if ("S".equals(finish)) collNum += "\u2605";
-
-        ParsedCode parsed = new ParsedCode(setCode, collNum, finish);
+        ParsedCode parsed = CardCodeParser.forLookup(rawSet, collNum, finish);
         return Collections.nCopies(qty, parsed);
     }
 

@@ -21,6 +21,11 @@ import java.util.List;
  * for running them off the EDT.
  */
 public class ScryfallApiService {
+    private CardSearchService interactiveSearch;
+    public synchronized CardSearchService interactiveSearch(CardRepository catalog) {
+        if(interactiveSearch==null || !interactiveSearch.serves(catalog)) interactiveSearch=new CardSearchService(catalog,this);
+        return interactiveSearch;
+    }
     private static final String SEARCH_API = "https://api.scryfall.com/cards/search";
     private static final String CARD_API = "https://api.scryfall.com/cards";
     /** Conservative application spacing in addition to the shared request limiter. */
@@ -83,7 +88,7 @@ public class ScryfallApiService {
             String scryfallSetCode = VintageUtil.resolveSetAlias(theSetCode);
 
             // Use the multi-arg URI constructor so that any special characters in the
-            // collector number (e.g. ★ for surge foils) are correctly percent-encoded
+            // collector number (e.g. a literal ★ in a provider identifier) are correctly percent-encoded
             // in the path (★ = U+2605 → %E2%98%85).  toASCIIString() returns the
             // fully-encoded URL safe to pass to makeApiCall().
             java.net.URI uri = new java.net.URI(
@@ -122,7 +127,7 @@ public class ScryfallApiService {
 
             if (responseCode == 429) {
                 if (isRetry) {
-                    throw new ScryfallApiException("Rate limited by Scryfall (HTTP 429) even after backoff — aborting");
+                    throw new ScryfallApiException(429,"Rate limited by Scryfall (HTTP 429) even after backoff — aborting");
                 }
                 System.err.println("[ScryfallApiService] HTTP 429 — backing off " + RATE_LIMITED_BACKOFF_MS / 1000 + "s before retry");
                 conn.disconnect();
@@ -132,9 +137,9 @@ public class ScryfallApiService {
 
             // Handle different response codes
             if (responseCode == 404) {
-                throw new ScryfallApiException("Card or set not found");
+                throw new ScryfallApiException(404,"Card or set not found");
             } else if (responseCode != 200) {
-                throw new ScryfallApiException(
+                throw new ScryfallApiException(responseCode,
                         "API call failed with response code: " + responseCode);
             }
 

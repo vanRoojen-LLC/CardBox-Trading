@@ -13,6 +13,10 @@ public final class TradeTableModel extends DefaultTableModel {
     private static final String[] COLUMNS = {"", "Code", "Card Name", "Condition", "Qty", "Unit Price", "Total", "Rate"};
     private final List<Row> rows = new ArrayList<>();
     private final PricingService pricing = new PricingService();
+    private final Set<Row> dirty = new LinkedHashSet<>();
+    private BigDecimal market=BigDecimal.ZERO, credit=BigDecimal.ZERO, check=BigDecimal.ZERO;
+    private int quantity;
+    public record Summary(BigDecimal market, BigDecimal credit, BigDecimal check, int quantity) {}
     private static final class Row {
         final TradeItem item;
         Condition condition;
@@ -20,11 +24,46 @@ public final class TradeTableModel extends DefaultTableModel {
         boolean selected;
         String rate = "";
         BuyRateService.PayoutResult payout;
+        BigDecimal marketTotal=BigDecimal.ZERO, creditTotal=BigDecimal.ZERO, checkTotal=BigDecimal.ZERO;
+        int countedQuantity;
+        TradeLineCapture capture;
         Row(TradeItem item, Condition condition, BigDecimal value) { this.item=item; this.condition=condition; this.value=value; }
     }
     public void addTrade(TradeItem item, String condition, BigDecimal value) {
         Row row = new Row(item, Condition.valueOf(condition), money(value));
-        rows.add(row); fireTableRowsInserted(rows.size()-1, rows.size()-1);
+        rows.add(row); dirty.add(row); fireTableRowsInserted(rows.size()-1, rows.size()-1);
+    }
+    public void invalidatePayouts() { dirty.addAll(rows); }
+    public Summary summary(java.util.function.BiFunction<TradeItem,BigDecimal,BuyRateService.PayoutResult> rates) {
+        for(var row:dirty) {
+            subtract(row);
+            row.payout=rates.apply(row.item,row.value);
+            row.countedQuantity=row.item.getQuantity();
+            var count=BigDecimal.valueOf(row.countedQuantity);
+            row.marketTotal=row.value.multiply(count);
+            row.creditTotal=row.payout.creditPayout().multiply(count);
+            row.checkTotal=row.payout.checkPayout().multiply(count);
+            market=market.add(row.marketTotal); credit=credit.add(row.creditTotal); check=check.add(row.checkTotal);
+            quantity+=row.countedQuantity;
+            row.rate=String.format(Locale.ROOT,"%.0f%% / %.0f%%%s",row.payout.appliedCreditRate().multiply(BigDecimal.valueOf(100)),
+                    row.payout.appliedCheckRate().multiply(BigDecimal.valueOf(100)),row.payout.isBounty() ? " ★" : "");
+            row.capture=null;
+        }
+        dirty.clear();
+        return new Summary(market,credit.setScale(2,RoundingMode.HALF_UP),check.setScale(2,RoundingMode.HALF_UP),quantity);
+    }
+    /** Captures references to unchanged immutable rows; only edited rows need copying. */
+    public List<TradeLineCapture> captureLines(Map<UUID,TradeLine> saved) {
+        var result=new ArrayList<TradeLineCapture>(rows.size());
+        for(var row:rows) {
+            if(row.capture==null) row.capture=new TradeLineCapture(row.item,row.condition,row.value,row.payout,saved.get(row.item.getLineId()));
+            result.add(row.capture);
+        }
+        return List.copyOf(result);
+    }
+    private void subtract(Row row) {
+        market=market.subtract(row.marketTotal); credit=credit.subtract(row.creditTotal); check=check.subtract(row.checkTotal);
+        quantity-=row.countedQuantity;
     }
     public BigDecimal priceAt(int row) { return rows.get(row).value; }
     public BigDecimal totalAt(int row) { return priceAt(row).multiply(BigDecimal.valueOf(rows.get(row).item.getQuantity())); }
@@ -38,7 +77,7 @@ public final class TradeTableModel extends DefaultTableModel {
     }; }
     public List<String> conditions() { return new AbstractList<>() {
         public String get(int i) { return rows.get(i).condition.name(); } public int size() { return rows.size(); }
-        public String set(int i, String condition) { String old=get(i); rows.get(i).condition=Condition.valueOf(condition); return old; }
+        public String set(int i, String condition) { String old=get(i); rows.get(i).condition=Condition.valueOf(condition); dirty.add(rows.get(i)); return old; }
     }; }
     public List<BuyRateService.PayoutResult> payouts() { return new AbstractList<>() {
         public BuyRateService.PayoutResult get(int i) { return rows.get(i).payout; } public int size() { return rows.size(); }
@@ -86,16 +125,17 @@ public final class TradeTableModel extends DefaultTableModel {
             case 7 -> row.rate=Objects.toString(value, "");
             default -> throw new IllegalArgumentException("Read-only column");
         }
+        if(column==3 || column==4 || column==5) dirty.add(row);
         fireTableCellUpdated(index,column);
         if (column==3 || column==4 || column==5) {
             fireTableCellUpdated(index,6);
         }
     }
-    @Override public void removeRow(int index) { rows.remove(index); fireTableRowsDeleted(index,index); }
+    @Override public void removeRow(int index) { var row=rows.remove(index); dirty.remove(row); subtract(row); fireTableRowsDeleted(index,index); }
     @Override public void setRowCount(int count) {
         if (rows==null) return;
         if (count!=0) throw new IllegalArgumentException("Use addTrade");
-        rows.clear(); fireTableDataChanged();
+        rows.clear(); dirty.clear(); market=credit=check=BigDecimal.ZERO; quantity=0; fireTableDataChanged();
     }
     private static BigDecimal money(BigDecimal value) {
         if (value.signum()<0) throw new IllegalArgumentException("Price must be non-negative");

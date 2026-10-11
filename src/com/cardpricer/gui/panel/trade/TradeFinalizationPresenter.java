@@ -20,8 +20,11 @@ public final class TradeFinalizationPresenter {
         progress.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);progress.pack();progress.setLocationRelativeTo(owner);
         SwingWorker<Integer,Void> worker=new SwingWorker<>() {
             protected Integer doInBackground() throws Exception {
+                TradeSessionService.flush();
                 String shared=com.cardpricer.gui.panel.PreferencesPanel.getSharedTradesFolder();
-                var service=new TradeApplicationService(new TradeRepository(ledger),output,shared.isBlank() ? null : Path.of(shared));
+                var repository=new TradeRepository(ledger);
+                repository.saveRecoveryDraft(draft,editingRevision);
+                var service=new TradeApplicationService(repository,output,shared.isBlank() ? null : Path.of(shared));
                 return editingRevision==null ? service.finalizeTrade(draft) : service.updateTrade(draft,editingRevision);
             }
             protected void done() {

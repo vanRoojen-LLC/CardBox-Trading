@@ -140,10 +140,14 @@ class CsvExportTest {
             "PLST, ARB-73★, E, ARB 73★E",
             "PCY, 12, F, PCY 12F",
             "PIP, 12, S, PIP 12S",
+            "40K, 129★, S, 40K 129S",
+            "40k, 129, S, 40K 129S",
+            "40K, 129, '', 40K 129",
+            "TST, 73★, S, TST 73★S",
             "PRM, 12, F, PRM 12F",
             "PEOE, 210a, F, PEOE 210aF"
     })
-    void tradeExportsMapSetPromosToBaseFoilsWithoutChangingTheTrade(String set,String number,String finish,String code) throws Exception {
+    void tradeExportsMapInventoryCodesWithoutChangingTheTrade(String set,String number,String finish,String code) throws Exception {
         Card card=card("Example card","Artist");card.setSetCode(set);card.setCollectorNumber(number);
         var item=new TradeItem(card,!finish.isEmpty(),2,finish);
         var identity=item.getCard().identity();var originalPrice=item.getUnitPrice();
@@ -154,6 +158,7 @@ class CsvExportTest {
         assertEquals(code,row.get(4));assertEquals("2",row.get(9));
         assertEquals("6.17",row.get(13));assertEquals("12.34",row.get(16));assertEquals("12.34",row.get(18));
         if (code.endsWith("F")) assertEquals("Example card (Foil)",row.get(7));
+        if (finish.equals("S")) assertEquals("Example card (Surge Foil)",row.get(7));
         String inventory=service.exportToInventoryFormat(List.of(item),List.of("NM"),List.of(2));
         assertEquals(List.of(code,"Example card","Artist","","2"),
                 parse(Files.readString(Path.of(inventory))).getFirst().toList());

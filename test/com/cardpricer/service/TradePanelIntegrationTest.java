@@ -8,6 +8,25 @@ import java.math.BigDecimal;
 import static org.junit.jupiter.api.Assertions.*;
 
 class TradePanelIntegrationTest {
+    @Test void switchingTradesParksEditsAndReopeningResumesThemWithoutDiscardingAnotherDraft() throws Exception {
+        SwingUtilities.invokeAndWait(()-> {
+            var panel=new TradePanel();var first=TradeRepositoryTest.draft("TST");var second=TradeRepositoryTest.draft("PLST");
+            try {
+                assertTrue(panel.editSavedTrade(first));
+                var field=TradePanel.class.getDeclaredField("tableModel");field.setAccessible(true);var model=(TradeTableModel)field.get(panel);
+                model.setValueAt(7,0,4);
+                assertTrue(panel.editSavedTrade(second));
+                assertEquals(7,TradeSessionService.find(first.id()).draft().lines().getFirst().quantity());
+                model.setValueAt(9,0,4);
+                assertTrue(panel.editSavedTrade(first));assertEquals(7,model.getValueAt(0,4));
+                var clear=TradePanel.class.getDeclaredMethod("clearTradeState");clear.setAccessible(true);clear.invoke(panel);
+                assertNull(TradeSessionService.find(first.id()));
+                assertEquals(9,TradeSessionService.find(second.id()).draft().lines().getFirst().quantity());
+                assertEquals(second.revision(),TradeSessionService.find(second.id()).editingRevision());
+            } catch(Exception failure) { throw new IllegalStateException(failure); }
+            finally { panel.disposeResources();TradeSessionService.discard(first.id());TradeSessionService.discard(second.id()); }
+        });
+    }
     @Test void highlightedAndCheckedTradeRowsDeleteOnceInSortedOrder() throws Exception {
         SwingUtilities.invokeAndWait(()->{
             TradePanel panel=new TradePanel();

@@ -16,4 +16,12 @@ public final class TradeCustomerPresenter {
                 partial ? payment.getPartialCheckPayout() : java.math.BigDecimal.ZERO,
                 quote.lines(),quote.quotedAt().toString(),quote.rateRevision());
     }
+    /** Read Swing fields now; materialize the detached lines on the save worker. */
+    public java.util.function.Supplier<TradeDraft> captureDeferred(UUID id,long revision,
+            java.util.List<TradeLineCapture> lines,String rateRevision) {
+        var fields=capture(id,revision,new Quote(java.time.Instant.now(),rateRevision,java.util.List.of()));
+        return () -> new TradeDraft(fields.id(),fields.revision(),fields.trader(),fields.customer(),fields.identification(),
+                fields.checkNumber(),fields.payment(),fields.credit(),fields.check(),lines.stream().map(TradeLineCapture::encode).toList(),
+                fields.quotedAt(),fields.rateRevision());
+    }
 }
