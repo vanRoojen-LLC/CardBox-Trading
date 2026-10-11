@@ -323,6 +323,21 @@ class ClubSyncIntegrationTest {
     }
 
     @Test
+    void anSwuCardWithoutSwuDbKeysGoesInByItsPrintedSetNumberAndTreatment() throws Exception {
+        link();
+        jdbc.update("""
+                INSERT INTO swu_cards (set_code, source_number, set_name, collector_number, treatment, variant, name, market)
+                VALUES ('ZKV', '011', 'Key Test', '011', 'hyperspace', 'Hyperspace', 'Key Chewie', 4.00) ON CONFLICT DO NOTHING""");
+        UUID chewie = jdbc.queryForObject("SELECT id FROM swu_cards WHERE set_code = 'ZKV' AND source_number = '011'", UUID.class);
+        var item = Map.<String, Object>of("item_id", "k4", "version", 1, "game", "star-wars-unlimited",
+                "club_printing_id", "swu-zkv-011-h", "treatment", "Hyperspace", "quantity", 1, "name", "Key Chewie",
+                "set_code", "ZKV", "collector_number", "011/264",
+                "external_ids", Map.of("starwarsunlimited.com", "starwarsunlimited.com:1234"));
+        assertEquals(1, club("POST", "/items", Map.of("upserts", List.of(item))).body().path("applied").asInt());
+        assertEquals(Map.of(chewie + "/normal", 1), synced());
+    }
+
+    @Test
     void aCardThatCouldNotGoInBeforeGoesInWhenResentAtTheSameVersion() throws Exception {
         link();
         Map<String, Object> before = Map.of("item_id", "s1", "version", 7, "game", "star-wars-unlimited", "quantity", 1,

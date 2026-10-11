@@ -30,8 +30,8 @@ public class ClubMarketController {
                               String high, String newest) {}
 
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
-    public record PrintingBody(String printingId, Map<String, Object> externalIds, String treatment, Boolean foil,
-                               List<SummaryBody> summaries) {}
+    public record PrintingBody(String printingId, Map<String, Object> externalIds, String setCode,
+                               String collectorNumber, String treatment, Boolean foil, List<SummaryBody> summaries) {}
 
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     public record PageBody(String segmentKey, Boolean firstPage, Boolean lastPage, List<PrintingBody> printings) {}
@@ -67,8 +67,12 @@ public class ClubMarketController {
         List<SummaryBody> raw = p.summaries() == null ? List.of() : p.summaries();
         if (raw.size() > 50) throw ApiException.badRequest("Too many summaries on one printing");
         var list = raw.stream().map(ClubMarketController::summary).toList();
-        return new ClubMarketSummaries.Printing(p.printingId(), p.externalIds(), p.treatment(),
-                Boolean.TRUE.equals(p.foil()), list);
+        return new ClubMarketSummaries.Printing(p.printingId(), p.externalIds(), cap(p.setCode()),
+                cap(p.collectorNumber()), p.treatment(), Boolean.TRUE.equals(p.foil()), list);
+    }
+
+    private static String cap(String s) {
+        return s == null ? null : s.length() > 100 ? s.substring(0, 100) : s;
     }
 
     private static ClubMarketSummaries.Summary summary(SummaryBody s) {

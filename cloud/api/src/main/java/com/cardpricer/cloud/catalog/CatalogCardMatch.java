@@ -3,13 +3,17 @@ package com.cardpricer.cloud.catalog;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
 /**
  * Finds Trading's own card for a catalog printing: by Scryfall id for Magic, by swu-db card id for Star Wars:
- * Unlimited with the TCGplayer product as the fallback, matched on the finish. Club's market evidence and the
- * catalog printing links both match this way, so a printing always lands on the same card.
+ * Unlimited with the TCGplayer product as the fallback, matched on the finish. When the catalog holds neither id for an
+ * SWU printing (its starwarsunlimited.com id is not swu-db's), the printed set, number and treatment find it, if exactly
+ * one of Trading's cards has them. Club's market evidence, the catalog printing links and collection sync all match
+ * this way, so a printing always lands on the same card.
  */
 @Component
 public class CatalogCardMatch {
@@ -33,7 +37,44 @@ public class CatalogCardMatch {
 
     /** Trading's card for this printing, or null when Trading doesn't carry it. */
     public Match find(String game, Map<String, Object> externalIds, boolean foil) {
-        return MAGIC.equals(game) ? magic(externalIds) : swu(externalIds, foil);
+        return find(game, externalIds, foil, null, null, null);
+    }
+
+    /** As {@link #find(String, Map, boolean)}, with the printed set, number and treatment as the last SWU fallback. */
+    public Match find(String game, Map<String, Object> externalIds, boolean foil, String setCode, String collectorNumber,
+                      String treatment) {
+        if (MAGIC.equals(game)) return magic(externalIds);
+        Match byId = swu(externalIds, foil);
+        if (byId != null) return byId;
+        UUID byNumber = swuByNumber(jdbc, setCode, collectorNumber, treatment);
+        return byNumber == null ? null : new Match(byNumber, "number");
+    }
+
+    /**
+     * The one SWU card with this set, printed number and treatment, or null when none or several have them. The
+     * catalog prints the number as "001/267"; Trading keeps "001". Treatments compare as slugs ("Hyperspace Foil" is
+     * hyperspace_foil), so an absent treatment matches nothing.
+     */
+    public static UUID swuByNumber(JdbcTemplate jdbc, String setCode, String collectorNumber, String treatment) {
+        String set = setCode == null ? "" : setCode.trim().toUpperCase(Locale.ROOT);
+        String number = printedNumber(collectorNumber), slug = slug(treatment);
+        if (set.isEmpty() || number.isEmpty() || slug.isEmpty()) return null;
+        List<UUID> found = jdbc.query("""
+                SELECT id FROM swu_cards WHERE upper(set_code) = ? AND upper(collector_number) = ? AND treatment = ?
+                LIMIT 2""", (rs, i) -> rs.getObject(1, UUID.class), set, number, slug);
+        return found.size() == 1 ? found.getFirst() : null;
+    }
+
+    static String printedNumber(String collectorNumber) {
+        String n = collectorNumber == null ? "" : collectorNumber.trim().toUpperCase(Locale.ROOT);
+        int slash = n.indexOf('/');
+        if (slash >= 0) n = n.substring(0, slash).trim();
+        return n.matches("\\d{1,2}") ? "0".repeat(3 - n.length()) + n : n;
+    }
+
+    static String slug(String treatment) {
+        return treatment == null ? ""
+                : treatment.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "_").replaceAll("^_+|_+$", "");
     }
 
     private Match magic(Map<String, Object> ids) {

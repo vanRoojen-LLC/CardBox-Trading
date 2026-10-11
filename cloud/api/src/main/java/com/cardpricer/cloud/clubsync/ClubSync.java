@@ -1,5 +1,6 @@
 package com.cardpricer.cloud.clubsync;
 
+import com.cardpricer.cloud.catalog.CatalogCardMatch;
 import com.cardpricer.cloud.inventory.InventoryRepository;
 import com.cardpricer.cloud.web.ApiException;
 import com.cardpricer.util.CardConstants;
@@ -468,7 +469,8 @@ public class ClubSync {
 
     /**
      * The card a Club printing is in Trading's own priced, imaged catalogs, by the keys Club's catalog holds for it:
-     * an SWU printing by its swu-db card id (TCGplayer product as the fallback, on the finish), any game's TCGplayer
+     * an SWU printing by its swu-db card id (TCGplayer product as the fallback, on the finish, then the printed set,
+     * number and treatment), any game's TCGplayer
      * product and subtype in tcg_products. Every other non-Magic printing goes in by Club's printing id, as
      * {@link #byClubPrinting} does. Magic is matched by its Scryfall id alone.
      */
@@ -484,6 +486,10 @@ public class ClubSync {
                     ORDER BY (swu_cid IS NOT DISTINCT FROM ?) DESC LIMIT 1""",
                     (rs, i) -> rs.getObject(1, UUID.class), cid, product, foil, cid);
             if (!swu.isEmpty()) return new Match(swu.getFirst(), foil ? "foil" : "normal", null);
+        }
+        if (SWU.equals(u.game())) {
+            UUID byNumber = CatalogCardMatch.swuByNumber(jdbc, u.setCode(), u.collectorNumber(), u.treatment());
+            if (byNumber != null) return new Match(byNumber, foil ? "foil" : "normal", null);
         }
         Integer productId = product == null ? null : parseInt(product);
         if (productId != null) {
