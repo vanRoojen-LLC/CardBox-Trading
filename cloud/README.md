@@ -28,8 +28,6 @@ so web and desktop produce the same offers and cent allocations.
 | `api/` | Spring Boot 3.5 on Java 21, JDBC + Flyway (`api/src/main/resources/db/migration`) |
 | `web/` | React + Vite client |
 | `Dockerfile` | Builds both into one image; build from the repo root |
-| `infra/main.bicep` | Azure resources |
-| `deploy.sh` | Deploys to Azure with the Azure CLI |
 
 ## Run locally
 
@@ -87,25 +85,24 @@ Club at each sign-in and whenever the Admin tab reads roles (`cardbox_tokens.pre
 Setting `tcg_games.preview = false` puts a game on the free price check (`GET /api/public/games`) and in every store's
 search; `enabled = false` stops syncing and searching it.
 
-## Azure
+## Hosting
 
-Everything lives in one resource group. The Azure resources, the jar (`occ-pricer-cloud.jar`), the image repository (`occ-pricer`) and the Java packages keep their original OCC Pricer names on purpose: renaming them is a redeploy, not a label change.
+cardbox.trading runs on CardBox's Rackspace Spot Kubernetes Cloudspace (`cardbox-hosting-dfw`, namespace `trading`) since
+2026-10-10 11:52 PM PT; it left Azure (resource group `occ-pricer`) that night. The manifests, secrets handling, database
+copy and runbook live in the CardBox repository under `deploy/spot-trading/` (its README), applied by CardBox's
+`spot-trading.yml` workflow. The jar (`occ-pricer-cloud.jar`), the database (`occ`, owner `occadmin`) and the Java
+packages keep their original OCC Pricer names on purpose.
 
-| Resource | SKU | Purpose |
-|---|---|---|
-| Container App `occpricer-app` | Consumption, 0.5 vCPU / 1 GiB, one replica always on | Web client + API |
-| Container Apps Job `occpricer-catalog-import` | Consumption, daily 15:00 UTC | Scryfall, swu-db and TCGTracking imports |
-| PostgreSQL Flexible Server | Burstable B1ms, 32 GB | Data |
-| Container Registry | Basic | Images, built with `az acr build` |
-| Key Vault | Standard | Database password and session signing key |
-| Log Analytics | Pay as you go, 0.5 GB/day cap | Logs |
+| Piece | What |
+|---|---|
+| Deployment `trading-web` | Web client + API, one replica always on, image `ghcr.io/vanroojen-llc/cardbox-trading` |
+| CronJob `trading-catalog-import` | Scryfall, swu-db and TCGTracking imports, daily 15:00 UTC |
+| CloudNativePG cluster `trading-pg` | PostgreSQL, nightly backups to Cloudflare R2 |
+| Deployment `trading-tunnel` | Cloudflare tunnel `cardbox-trading`, the only way in |
 
-Deploy or update (idempotent):
-
-```sh
-az login --use-device-code --tenant b5a8b81b-a80c-4aaa-b3cc-2e54736c0fe4
-cloud/deploy.sh
-```
+Every green push to `master` publishes the image to GHCR (the `publish` job in `.github/workflows/cloud.yml`, `:master`
+and `:sha-<commit>`), and the cluster's `trading-follow` job moves the app and the import to the new digest within five
+minutes. This repository holds no cluster or cloud credential.
 
 ### Sign-in (Auth0)
 
@@ -134,24 +131,17 @@ How the app treats a sign-in (`api/.../auth/AuthController.java`):
 - The platform owner is the verified `OWNER_EMAIL` (`toby@vanroojen.com`), reported as `admin` by `/api/auth/me`.
   It is separate from owning a store.
 
-Settings: `AUTH0_DOMAIN` and `AUTH0_CLIENT_ID` are Bicep parameters (`auth0Domain`, `auth0ClientId`); the client secret
-is the Key Vault secret `auth0-client-secret`, which `deploy.sh` requires and never generates:
+Settings: `AUTH0_DOMAIN` and `AUTH0_CLIENT_ID` are set in CardBox `deploy/spot-trading/render.py`; the client secret
+is the `auth0-client-secret` key of the cluster Secret `trading-app`.
 
-```sh
-auth0 apps show <client id> --reveal-secrets --json | jq -r .client_secret \
-  | az keyvault secret set --vault-name <vault> -n auth0-client-secret --file /dev/stdin -o none
-```
-
-If Universal Login later moves to a shared custom domain such as `login.cardbox.club`, set `auth0Domain` to it here
+If Universal Login later moves to a shared custom domain such as `login.cardbox.club`, set `AUTH0_DOMAIN` to it here
 and on cardbox.club, and signing in on one site signs you in on the other.
 
-### People, stores and roles from CardBox (switched off)
+### People, stores and roles from CardBox
 
 cardbox.club holds the one copy of people, stores and role assignments (`platform_owner`, `store_manager`,
 `store_employee`), and both sites read and write it. Trading keeps only its own business data (plan, locations,
-inventory, rates, trades) for each CardBox store. This is built but off until CardBox confirms its side is live.
-It is the `cardboxEnabled` Bicep parameter (`CARDBOX_ENABLED`, default `false`); `CARDBOX_ENABLED=true cloud/deploy.sh`
-turns it on.
+inventory, rates, trades) for each CardBox store. It is `CARDBOX_ENABLED` (default `false` in the app, always `true` in production).
 
 With it on:
 
@@ -188,7 +178,7 @@ and each Trading store with data should have a matching store on CardBox with it
 the Admin tab lists any Trading store that didn't tie itself by name, to tie by hand.
 
 
-### CardBox collections in store inventory (switched off)
+### CardBox collections in store inventory
 
 A store manager or employee can mark a collection on cardbox.club "Sync to store", and its cards show up in
 that store's inventory here, kept in step. cardbox.club pushes them server to server (`/api/partner/club-sync/*`,
@@ -200,19 +190,18 @@ put synced lines away like any other (whole lines), and that spot is kept across
 (`club_link_items.placed_storage_id`) until a scan on Club sends a new one. An owner picks where each collection's
 unplaced cards land and what happens to them when a link ends, from the Inventory page.
 
-It is off until Club's side is ready: `CLUB_SYNC_ENABLED=true cloud/deploy.sh` (Bicep `clubSyncEnabled`). Auth0 is set
+It is `CLUB_SYNC_ENABLED` (default `false` in the app, always `true` in production). Auth0 is set
 up: the "CardBox Trading" API (`https://cardbox.trading/api`, permission `inventory:sync`) is granted to CardBox's
-machine-to-machine application, client id `WB4mbh9ky62gjPZHFOHBQCXhYytIie7K`, which is the default allow list (`clubSyncClientIds`,
-`CLUB_SYNC_CLIENT_IDS`).
+machine-to-machine application, client id `WB4mbh9ky62gjPZHFOHBQCXhYytIie7K`, which is the allow list (`CLUB_SYNC_CLIENT_IDS`).
 The contract Club builds against is [CLUB_SYNC.md](CLUB_SYNC.md).
 
 With the same machine token, Club's health dashboard reads `GET /api/partner/club-sync/metrics`
 (`clubsync/ClubMetricsController.java`): trades in the last 7 days, synced Club items, stores active in the last 30
 days (a trade or inventory change), free price checks in the last 7 days (counted per UTC day in
 `public_price_checks`; searches answered from a browser or CDN cache are not counted) and the resource group's
-month-to-date Azure cost. The cost is asked of Cost Management as the app's managed identity (Bicep grants it Cost
-Management Reader on the resource group and sets `AZURE_CLIENT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`)
-and kept for an hour; when it cannot be read, `azureMonthToDateUsd` is null and `azureCostError` says why. Any figure
+month-to-date Azure cost. The cost is asked of Cost Management as an Azure managed identity (`AZURE_CLIENT_ID`,
+`AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`) and kept for an hour; when it cannot be read, as on Rackspace Spot,
+`azureMonthToDateUsd` is null and `azureCostError` says why. Any figure
 that fails comes back null without failing the rest.
 
 ### Help & feedback reports (GitHub filing off until a token is set)
@@ -234,50 +223,23 @@ refuses the labels, the issue is filed without them. Without a token, reports ar
 
 | Setting | Default | What |
 |---|---|---|
-| `GITHUB_ISSUES_TOKEN` | empty (off) | A **fine-grained** personal access token for vanRoojen-LLC/CardBox only, with **Issues: read and write** and nothing else. Vault secret `github-issues-token`. |
-| `GITHUB_ISSUES_REPO` | `vanRoojen-LLC/CardBox` | Where issues are filed (Bicep `githubIssuesRepo`). |
+| `GITHUB_ISSUES_TOKEN` | empty (off) | A **fine-grained** personal access token for vanRoojen-LLC/CardBox only, with **Issues: read and write** and nothing else. Key `github-issues-token` of the cluster Secret `trading-app`. |
+| `GITHUB_ISSUES_REPO` | `vanRoojen-LLC/CardBox` | Where issues are filed. |
 
-To switch filing on, put the token in the vault once (or run `GITHUB_ISSUES_TOKEN=... cloud/deploy.sh`, which stores
-it there), then deploy; `deploy.sh` turns on Bicep `githubIssues` whenever the vault has the secret:
+To switch filing on, add the token to `trading-app` and restart `trading-web`.
 
-```sh
-read -rs TOKEN && printf '%s' "$TOKEN" \
-  | az keyvault secret set --vault-name <vault> -n github-issues-token --file /dev/stdin -o none
-cloud/deploy.sh
-```
-
-To switch it off again, delete the secret and redeploy. Reports filed while it was on keep their issue links.
+To switch it off again, remove the key and restart `trading-web`. Reports filed while it was on keep their issue links.
 
 ### Domain
 
-`cardbox.trading` is registered at Cloudflare and its DNS is hosted there. Both `cardbox.trading` and
-`www.cardbox.trading` are bound to the Container App with free Azure-managed certificates, which Azure renews on its
-own; `customDomains` in `infra/main.bicep` keeps the bindings on every deploy. The records, all set to
-**DNS only** (grey cloud) because Azure cannot issue or renew the certificates through Cloudflare's proxy:
+`cardbox.trading` is registered at Cloudflare (Toby's account) and its DNS is hosted there. `cardbox.trading`,
+`www.cardbox.trading` and the spare `spot.cardbox.trading` are proxied CNAMEs to the `cardbox-trading` tunnel
+(`<tunnel id>.cfargotunnel.com`), whose ingress sends all three to `trading-web` in the cluster. Cloudflare issues
+and renews the certificates. The app reads the visitor's address from `CF-Connecting-IP` (`web/ClientIp.java`).
 
-| Type | Name | Value |
-|---|---|---|
-| A | `@` | the environment's static IP (`az containerapp env show -g occ-pricer -n occpricer-env --query properties.staticIp`) |
-| TXT | `asuid` | the app's verification id (`az containerapp show -g occ-pricer -n occpricer-app --query properties.customDomainVerificationId`) |
-| CNAME | `www` | the app's default hostname (`az containerapp show -g occ-pricer -n occpricer-app --query properties.configuration.ingress.fqdn`) |
-| TXT | `asuid.www` | the same verification id |
-
-A managed certificate can only be issued after its hostname is on the app, so on a brand-new environment (which also
-gets a new IP) deploy once with `customDomains=[]`, update the DNS records, then bind each hostname before redeploying
-normally:
-
-```sh
-az containerapp hostname add -g occ-pricer -n occpricer-app --hostname cardbox.trading
-az containerapp env certificate create -g occ-pricer -n occpricer-env --hostname cardbox.trading \
-  --certificate-name cardbox-trading --validation-method HTTP
-az containerapp hostname bind -g occ-pricer -n occpricer-app --hostname cardbox.trading \
-  --environment occpricer-env --certificate cardbox-trading
-# Repeat for www.cardbox.trading with --certificate-name www-cardbox-trading --validation-method CNAME.
-```
-
-The certificate names must stay `<hostname with dots as dashes>`, which is what the Bicep expects.
-
-The app keeps one replica running at all times. It used to scale to zero, and the first request after five idle minutes then waited about 30 seconds (scheduling, image pull, JVM start), which visitors saw as a hang and the CardBox status monitor reported as outages. An idle always-on replica is billed at the Container Apps idle rate.
+The app keeps one replica running at all times. It used to scale to zero on Azure, and the first request after five
+idle minutes then waited about 30 seconds, which visitors saw as a hang and the CardBox status monitor reported as
+outages.
 
 ## Not in the MVP yet
 

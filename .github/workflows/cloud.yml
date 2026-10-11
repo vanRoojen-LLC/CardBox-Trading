@@ -11,8 +11,8 @@ permissions:
   pull-requests: read  # list a PR's changed files
   actions: read  # find master's last passed run, where master's change guards start
 # A new push to a PR branch cancels that PR's older run. Master runs one at a time and never cancels a
-# running one, so a deploy already applying is never cut off; a newer merge replaces the master run
-# still waiting, so several quick merges end in one rollup deploy of the newest commit.
+# running one, so a publish already pushing is never cut off; a newer merge replaces the master run
+# still waiting, so several quick merges end in one rollup publish of the newest commit.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -21,7 +21,7 @@ jobs:
   # run for the API or the desktop classes it compiles (src/), the web build for the web app, the image
   # build for what shapes the image (Dockerfile, pom, package files). Prose runs nothing. Master measures
   # from its last passed run, not the parent, so a merge whose own run was replaced while it waited is
-  # still covered, and deploys only when something it ships changed. A failed lookup, or a run by hand,
+  # still covered, and publishes only when something it ships changed. A failed lookup, or a run by hand,
   # runs everything.
   changes:
     runs-on: ubuntu-24.04
@@ -65,7 +65,6 @@ jobs:
               cloud/web/package.json | cloud/web/package-lock.json) web=true image=true deploy=true ;;
               cloud/web/*) web=true deploy=true ;;
               cloud/Dockerfile | .dockerignore) image=true deploy=true ;;
-              cloud/deploy.sh | cloud/infra/*) deploy=true ;;
             esac
           done <<<"${files}"
           printf '%s\n' "api=${api}" "web=${web}" "image=${image}" "deploy=${deploy}" | tee -a "${GITHUB_OUTPUT}"
@@ -156,44 +155,3 @@ jobs:
           docker push "$image:sha-${GITHUB_SHA}"
           docker push "$image:master"
           echo "Published $(docker inspect --format '{{index .RepoDigests 0}}' "$image:master")"
-
-  # Ships master to cardbox.trading once every check above is green, as the cardbox-trading-deployer service principal
-  # (Contributor and RBAC Administrator on the occ-pricer resource group only). Pull requests never reach this job, so
-  # forks never see the secrets. Run it by hand from the Actions tab to redeploy the current master.
-  # A check skipped because nothing it covers changed does not hold the deploy; a failed one does.
-  deploy:
-    if: >-
-      always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
-      && needs.changes.outputs.deploy == 'true'
-      && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
-    needs: [changes, api, web, image]
-    runs-on: ubuntu-24.04
-    environment: production
-    concurrency:
-      group: deploy-production
-      cancel-in-progress: false
-    env:
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-      DEPLOYER_OBJECT_ID: ${{ secrets.DEPLOYER_OBJECT_ID }}
-      CARDBOX_ENABLED: 'true'
-      CLUB_SYNC_ENABLED: 'true'
-      SKIP_IMPORT: '1'
-    steps:
-      - uses: actions/checkout@v5
-      - name: Check the deployer secrets are set
-        run: |
-          for name in AZURE_CLIENT_ID AZURE_CLIENT_SECRET DEPLOYER_OBJECT_ID; do
-            [ -n "${!name}" ] || { echo "::error::Add the $name secret to the production environment (Settings > Environments)"; exit 1; }
-          done
-      - name: Install the Azure CLI if the runner lacks it
-        run: command -v az >/dev/null || curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-      - name: Deploy
-        run: bash cloud/deploy.sh
-      - name: Check cardbox.trading answers
-        run: |
-          for i in 1 2 3 4 5 6; do
-            curl -fsS -o /dev/null https://cardbox.trading/ && exit 0
-            sleep 20
-          done
-          echo "::error::cardbox.trading did not answer after the deploy"; exit 1

@@ -9,10 +9,10 @@ Only what is specific to this repository belongs below. Values that change (the 
 migration, image tags) are read from the repository, never written here.
 
 - Default branch is `master`. Every pull request targets it; never stack.
-- Every green push to `master` deploys cardbox.trading through the `deploy` job in
-  `.github/workflows/cloud.yml`. Never deploy by hand. Never run `cloud/deploy.sh` without
-  `CARDBOX_ENABLED=true CLUB_SYNC_ENABLED=true`; it defaults both to false and silently turns off the
-  CardBox link and the Club inventory sync.
+- cardbox.trading runs on CardBox's Rackspace Spot Cloudspace; its manifests and runbook are CardBox
+  `deploy/spot-trading/`. Every green push to `master` publishes the image to GHCR through the `publish`
+  job in `.github/workflows/cloud.yml`, and the cluster moves to it within five minutes. Never deploy by
+  hand. Production keeps `CARDBOX_ENABLED` and `CLUB_SYNC_ENABLED` true; the app defaults both to false.
 - Flyway migrations are in `cloud/api/src/main/resources/db/migration`. Claim the next version in the
   PR title after checking `master` and the open PRs; two PRs with the same version break `master`.
 - This repository is public: never open issues here. Trading problems are filed in CardBox with the
