@@ -1501,7 +1501,10 @@ class CloudApiIntegrationTest {
         serveSwuFromTcgTracking();
         FAILING.clear();
         FAILING.add("/v1/79/sets/23405/pricing");
-        serve("/last-updated.txt", "2026-10-07T20:05:41+0000");
+        // Recent, as TCGCSV's own file always is: a TCGplayer price over 3 days older than swu-db's is not shown
+        // (SwuCatalogRepository), so a fixed date made this test fail once it was 3 days old (2026-10-10).
+        serve("/last-updated.txt", java.time.OffsetDateTime.parse(RECENT)
+                .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssxx")));
         serve("/tcgplayer/79/groups", "{\"results\":[{\"groupId\":23405,\"abbreviation\":\"SOR\"}]}");
         serve("/tcgplayer/79/23405/prices", """
                 {"results":[{"productId":540208,"lowPrice":5.00,"marketPrice":7.00,"subTypeName":"Normal"}]}""");
