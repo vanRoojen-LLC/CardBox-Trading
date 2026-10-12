@@ -5,6 +5,10 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0a1117" />
+    <script>
+      // The saved Light or Dark choice, before the first paint (src/theme.ts); System leaves it to the device.
+      try { var t = localStorage.getItem("cardbox.theme"); if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t); } catch (e) {}
+    </script>
     <title>CardBox Trading</title>
   </head>
   <body>

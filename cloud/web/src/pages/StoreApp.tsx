@@ -14,6 +14,7 @@ import Store from './Store'
 import Admin from './Admin'
 import HelpFeedback from '../HelpFeedback'
 import AppSwitcher from '../AppSwitcher'
+import { readTheme, saveTheme, type ThemeChoice } from '../theme'
 
 /**
  * Where /app opens, by role: platform owners on the admin home, store owners (managers) on Inventory, staff on New trade.
@@ -74,6 +75,7 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [menuOpen])
+  const [theme, setTheme] = useState<ThemeChoice>(readTheme)
   const secondary = ['/app/rates', '/app/staff', '/app/store', '/app/admin'].some(p => pathname.startsWith(p))
   const account = (
     <>
@@ -91,6 +93,12 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
       )}
       <span className="who-name">{me.name}</span>
       {me.admin && <NavLink to="/app/admin" className="admin-link" title="Platform owner tools"><ShieldIcon />Admin</NavLink>}
+      <select className="register" aria-label="Appearance" title="Light, dark, or match this device" value={theme}
+        onChange={e => { const next = e.target.value as ThemeChoice; saveTheme(next); setTheme(next) }}>
+        <option value="system">Match device</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
       <HelpFeedback />
       <button className="small ghost" onClick={signOut}>Sign out</button>
     </>
