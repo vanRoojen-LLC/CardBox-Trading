@@ -70,6 +70,7 @@ function LinkRow({ link, owner, locations, spots, onTarget, onEnd }: {
             {link.cards} card{link.cards === 1 ? '' : 's'} in {where} · linked by {link.linkedBy || link.linkedByEmail}
             {link.lastSyncedAt && <> · updated {new Date(link.lastSyncedAt).toLocaleString()}</>}
           </div>
+          <div className="muted small">cardbox.club counts every card in the collection; cards it still holds for review arrive here once they are published.</div>
           {link.notMatched > 0 && (
             <div className="muted small">
               {link.notMatched} card{link.notMatched === 1 ? '' : 's'} couldn't go into inventory.{' '}

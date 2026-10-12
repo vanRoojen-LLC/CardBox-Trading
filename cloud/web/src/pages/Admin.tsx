@@ -24,7 +24,7 @@ export default function Admin({ me, onChange }: { me: { email: string; cardbox: 
   if (me.cardbox) return (
     <section>
       <h1>Platform admin</h1>
-      <p className="lede">Every store on CardBox, with its CardBox Trading plan. Stores are created and renamed on CardBox for both sites.</p>
+      <p className="lede">Every store on CardBox, with its CardBox Trading plan and trial.</p>
       <CardBoxStores />
       <p className="muted small" style={{ marginTop: 20 }}>Each store's team is on its Team page. Platform owner roles and everyone's
         CardBox accounts are managed on <a href="https://cardbox.club/roles" target="_blank" rel="noreferrer">cardbox.club</a>.</p>

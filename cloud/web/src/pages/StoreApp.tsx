@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { Link, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { api, registerLocation, setRegisterLocation, type Me, type StoreInfo } from '../api'
 import { useSignOut } from '../App'
 import { Mark, Wordmark } from '../Brand'
@@ -13,6 +13,21 @@ import Staff from './Staff'
 import Store from './Store'
 import Admin from './Admin'
 import HelpFeedback from '../HelpFeedback'
+import AppSwitcher from '../AppSwitcher'
+
+/**
+ * Where /app opens, by role: platform owners on the admin home, store owners (managers) on Inventory, staff on New trade.
+ * Every link into the app that names no page (the brand, a store switch, cardbox.club's Trading link) lands here.
+ */
+export function landing(me: Me): string {
+  if (me.admin) return '/app/admin'
+  return me.entitled && me.role === 'owner' ? '/app/inventory' : '/app/trade'
+}
+
+const ShieldIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
+    <path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6l8-3z" /></svg>
+)
 
 export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => Promise<void> }) {
   const signOut = useSignOut(onSignOut)
@@ -42,7 +57,7 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
     try {
       await api('/api/auth/switch', { method: 'POST', body: { tenantId } })
       // Everything on screen belongs to the old store, so start the new one fresh.
-      window.location.assign('/app/trade')
+      window.location.assign('/app')
     } catch (e) {
       // The picker is tied to the store signed in now, so it springs back on its own.
       setSwitchError(`Couldn’t switch store: ${(e as Error).message}`)
@@ -75,15 +90,19 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
         </select>
       )}
       <span className="who-name">{me.name}</span>
+      {me.admin && <NavLink to="/app/admin" className="admin-link" title="Platform owner tools"><ShieldIcon />Admin</NavLink>}
       <HelpFeedback />
       <button className="small ghost" onClick={signOut}>Sign out</button>
     </>
   )
+  // /app on its own opens the page this person starts their day on.
+  if (pathname === '/app' || pathname === '/app/') return <Navigate to={landing(me)} replace />
+  const adminMode = pathname.startsWith('/app/admin') && me.admin
   const trialDays = Math.max(0, Math.ceil((new Date(me.trialEndsAt).getTime() - Date.now()) / 86_400_000))
   return (
     <>
-      <header className="topbar app">
-        <NavLink to="/app/trade" className="brand"><Mark /><Wordmark /></NavLink>
+      <header className={`topbar app${adminMode ? ' admin-mode' : ''}`}>
+        <div className="topbar-left"><AppSwitcher /><Link to="/app" className="brand"><Mark /><Wordmark /></Link></div>
         <span className="topbar-store">{me.stores.find(s => s.current)?.name ?? me.store}
           {open.length > 1 && locationId && <span className="muted"> · {open.find(l => l.id === locationId)?.name}</span>}</span>
         {/* On phones the four counter pages stay as tabs and everything else lives under More. */}
@@ -95,7 +114,6 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
           <NavLink to="/app/rates" className="wide-only">Buy rates</NavLink>
           <NavLink to="/app/staff" className="wide-only">Team</NavLink>
           <NavLink to="/app/store" className="wide-only">Store</NavLink>
-          {me.admin && <NavLink to="/app/admin" className="wide-only">Admin</NavLink>}
           <button type="button" className={`more-tab${secondary || menuOpen ? ' active' : ''}`} aria-expanded={menuOpen} aria-controls="app-menu"
             onClick={() => setMenuOpen(!menuOpen)}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
@@ -112,7 +130,6 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
               <NavLink to="/app/rates">Buy rates</NavLink>
               <NavLink to="/app/staff">Team</NavLink>
               <NavLink to="/app/store">Store</NavLink>
-              {me.admin && <NavLink to="/app/admin">Admin</NavLink>}
             </nav>
             <div className="app-menu-account">
               <span className="muted small">Signed in as {me.name}</span>
@@ -121,6 +138,7 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
           </div>
         </>
       )}
+      {adminMode && <div className="admin-bar" role="note"><ShieldIcon /><span><strong>Admin</strong> · Platform owner tools for every store. Store staff never see this page.</span></div>}
       {switchError && <div className="banner error" role="alert">{switchError}</div>}
       {me.planStatus === 'trial' && me.entitled && <div className="banner">Free trial: {trialDays} days left.</div>}
       <main className={pathname.startsWith('/app/trade') || pathname.startsWith('/app/history') || pathname.startsWith('/app/inventory') || pathname.startsWith('/app/admin') ? 'page wide' : 'page'}>

@@ -799,5 +799,47 @@ button.confidence.low:hover, button.confidence.none:hover { background: var(--ba
 label.inline { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-weight: 500; }
 label.inline input { min-height: 0; width: 20px; height: 20px; }
 .result .meta button.link { font-size: inherit; }
-.game-switch select { width: auto; min-width: 0; color: var(--text-2); }
-.game-switch select.chosen { background: var(--sel); color: var(--sel-text); border-color: var(--sel); }
+.game-picker { position: relative; }
+.game-picker > button { display: flex; align-items: center; gap: 6px; }
+.preview-tag { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 999px; background: var(--copper-soft); color: var(--copper-text); }
+.game-picker-panel { position: absolute; z-index: 40; top: calc(100% + 4px); left: 0; width: min(320px, 90vw); padding: 8px;
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius); box-shadow: 0 8px 24px rgb(0 0 0 / 18%); }
+.game-picker-panel input { width: 100%; }
+.game-picker-panel ul { list-style: none; margin: 8px 0 0; padding: 0; max-height: 320px; overflow-y: auto; }
+.game-picker-panel li[role="option"] { display: flex; align-items: center; min-height: 40px; padding: 0 10px; border-radius: 8px; cursor: pointer; color: var(--text-2); }
+.game-picker-panel li.active { background: var(--row-hl); color: var(--text); }
+.game-picker-panel li[aria-selected="true"] { font-weight: 600; }
+.game-picker-panel li.group { padding: 10px 10px 4px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.game-picker-panel li.none { padding: 10px; color: var(--muted); }
+
+/* App switcher (top left, same on cardbox.club): the two CardBox sites. */
+.app-switcher { position: relative; display: flex; align-items: center; }
+.app-switcher-button { display: flex; align-items: center; justify-content: center; width: 40px; min-width: 40px; min-height: 40px; padding: 0;
+  background: transparent; color: var(--chrome-muted); border: 1px solid transparent; border-radius: var(--radius); }
+.app-switcher-button:hover, .app-switcher-button[aria-expanded="true"] { background: #17222c; color: var(--chrome-text); border-color: #384553; }
+.app-switcher-menu { position: absolute; z-index: 90; top: calc(100% + 6px); left: 0; width: 280px; padding: 6px; display: grid; gap: 4px;
+  background: var(--chrome); border: 1px solid #2a3540; border-radius: var(--radius-panel); box-shadow: 0 10px 30px rgb(0 0 0 / 35%); }
+.app-switcher-menu a { display: grid; gap: 2px; padding: 10px 12px; border-radius: var(--radius); text-decoration: none; color: var(--chrome-text); }
+.app-switcher-menu a:hover { background: #17222c; }
+.app-switcher-menu a[aria-current="page"] { background: #142036; box-shadow: inset 3px 0 0 #4f86ff; }
+.app-switcher-menu a span { font-size: 13px; color: var(--chrome-muted); }
+.topbar-left { display: flex; align-items: center; gap: 8px; flex: none; }
+
+/* Admin mode: platform-owner pages carry an amber chip and a thin amber bar, so the context is plain in screenshots. */
+.admin-link { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; border-radius: 999px; text-decoration: none;
+  color: var(--chrome-text); border: 1px solid #384553; font-size: 14px; }
+.admin-link:hover { border-color: #e5a63b; }
+.admin-link.active { background: #e5a63b; border-color: #e5a63b; color: #1a1205; font-weight: 600; }
+.topbar.admin-mode { border-bottom: 3px solid #e5a63b; }
+.admin-bar { display: flex; align-items: center; gap: 10px; padding: .5rem 20px; background: #2e2112; color: #f5d3a3; font-size: .9rem; }
+.admin-bar strong { color: #e5a63b; }
+.open-store { display: inline-flex; flex-direction: column; align-items: flex-start; justify-content: center; line-height: 1.15; }
+.open-store small { font-size: 11px; font-weight: 500; opacity: .8; }
+@media (max-width: 760px) { .app-menu-links .admin-link { border-radius: var(--radius); min-height: 48px; } }
+
+/* Buy rates: one save bar for the whole page, pinned to the bottom while anything is unsaved. */
+.save-bar { position: sticky; bottom: 0; z-index: 30; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 24px;
+  padding: 12px 16px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius-panel);
+  box-shadow: 0 -6px 20px rgb(0 0 0 / 10%); }
+.save-bar .ok { color: var(--ok-text); }
+.save-bar-actions { margin-left: auto; display: flex; gap: 8px; }

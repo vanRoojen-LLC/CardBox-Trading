@@ -383,7 +383,7 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
 
       <div className="inv-summary">
         {page ? <span>{page.cards.toLocaleString()} card{page.cards === 1 ? '' : 's'} in {page.lines.toLocaleString()} line{page.lines === 1 ? '' : 's'}
-          {Number(page.value) > 0 && <> · {money(page.value)} market</>}</span> : <span className="muted">Loading…</span>}
+          {Number(page.value) > 0 && <> · <span title="Trade value: the weighted median of every price source (TCGplayer, Manapool and others), refreshed hourly. cardbox.club values a collection by the price its cards had when scanned, so the two can differ.">{money(page.value)} blended market value</span></>}</span> : <span className="muted">Loading…</span>}
         <span className="hints"><span><span className="kbd">Shift</span>-click selects a run</span><span><span className="kbd">M</span> moves</span></span>
       </div>
 

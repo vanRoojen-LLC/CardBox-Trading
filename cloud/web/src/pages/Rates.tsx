@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import { api, type Me } from '../api'
 
 /** `id` only keys the row on screen, so removing one row never shifts another's typing into it. */
@@ -14,12 +14,42 @@ type Game = typeof GAMES[number][0]
 const gameName = (game: Game) => GAMES.find(([key]) => key === game)![1]
 const query = (game: Game) => game ? `?game=${game}` : ''
 
+/** What each part of the page hands the one save bar: check its boxes, save if changed, or put back what is saved. */
+interface Part { check: () => string | null; save: () => Promise<boolean>; discard: () => void }
+
 export default function Rates({ me }: { me: Me }) {
   const [game, setGame] = useState<Game>('')
   const [dirtyParts, setDirtyParts] = useState({ rates: false, trust: false })
+  const ratesPart = useRef<Part>(null), trustPart = useRef<Part>(null)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+  const dirty = dirtyParts.rates || dirtyParts.trust
+  useEffect(() => { if (dirty) setMessage('') }, [dirty])
+  // Leaving or reloading the page with unsaved changes asks first.
+  useEffect(() => {
+    if (!dirty) return
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault() }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirty])
+  /** One save for the whole page: every box is checked first, so nothing half-saves. */
+  async function saveAll() {
+    if (saving) return
+    const parts = [dirtyParts.rates && ratesPart.current, dirtyParts.trust && trustPart.current].filter(Boolean) as Part[]
+    const problem = parts.map(p => p.check()).find(Boolean)
+    if (problem) { setError(problem); setMessage(''); return }
+    setSaving(true); setError('')
+    try {
+      let ok = true
+      for (const part of parts) ok = (await part.save()) && ok
+      if (ok) setMessage('Changes saved.')
+    } finally { setSaving(false) }
+  }
+  const discard = () => { ratesPart.current?.discard(); trustPart.current?.discard(); setError('') }
   const pick = (next: Game) => {
     if (next === game) return
-    if ((dirtyParts.rates || dirtyParts.trust) && !window.confirm('Leave without saving your changes?')) return
+    if (dirty && !window.confirm('Leave without saving your changes?')) return
     setGame(next)
   }
   const owner = me.role === 'owner'
@@ -34,14 +64,24 @@ export default function Rates({ me }: { me: Me }) {
       <p className="muted small" style={{ marginTop: 8 }}>{game
         ? `${gameName(game)} cards use these rates and confidence rules. Until you save its own, it uses the ones under Every game.`
         : 'The store’s default rates and confidence rules. A game can have its own; pick it above.'}</p>
-      <BuyRates key={`rates${game}`} owner={owner} game={game} onDirty={d => setDirtyParts(p => ({ ...p, rates: d }))} />
-      <ConfidenceRules key={`trust${game}`} owner={owner} game={game} onDirty={d => setDirtyParts(p => ({ ...p, trust: d }))} />
+      <BuyRates key={`rates${game}`} ref={ratesPart} owner={owner} game={game} onDirty={d => setDirtyParts(p => ({ ...p, rates: d }))} />
+      <ConfidenceRules key={`trust${game}`} ref={trustPart} owner={owner} game={game} onDirty={d => setDirtyParts(p => ({ ...p, trust: d }))} />
+      {owner && (dirty || saving || message || error) && (
+        <div className="save-bar" role="region" aria-label="Save changes">
+          {error ? <span className="error" role="alert">{error}</span>
+            : message && !dirty ? <span className="ok" role="status">{message}</span>
+            : <span role="status">Unsaved changes{dirtyParts.rates && dirtyParts.trust ? ' to rates and confidence rules' : dirtyParts.rates ? ' to rates' : ' to confidence rules'}</span>}
+          {dirty && <span className="save-bar-actions">
+            <button type="button" className="secondary" disabled={saving} onClick={discard}>Discard</button>
+            <button type="button" disabled={saving} onClick={saveAll}>{saving ? 'Saving…' : 'Save changes'}</button></span>}
+        </div>
+      )}
     </section>
   )
 }
 
 /** One game's buy-rate tiers, or the store's default. */
-function BuyRates({ owner, game, onDirty }: { owner: boolean; game: Game; onDirty: (dirty: boolean) => void }) {
+function BuyRates({ owner, game, onDirty, ref }: { owner: boolean; game: Game; onDirty: (dirty: boolean) => void; ref: Ref<Part> }) {
   const [rules, setRules] = useState<Rule[] | null>(null)
   const [own, setOwn] = useState(true)
   // What the server has, to tell whether anything on screen is unsaved.
@@ -58,38 +98,36 @@ function BuyRates({ owner, game, onDirty }: { owner: boolean; game: Game; onDirt
   useEffect(() => { onDirty(dirty) }, [dirty])
   const update = (id: number, change: Partial<Rule>) => { setRules(rules!.map(r => r.id === id ? { ...r, ...change } : r)); setMessage('') }
 
-  // Leaving or reloading the page with unsaved rates asks first.
-  useEffect(() => {
-    if (!dirty) return
-    const warn = (e: BeforeUnloadEvent) => { e.preventDefault() }
-    window.addEventListener('beforeunload', warn)
-    return () => window.removeEventListener('beforeunload', warn)
-  }, [dirty])
-
-  async function save(e: React.FormEvent) {
-    e.preventDefault()
-    if (!rules || saving) return
-    const fail = (text: string) => { setError(text); setMessage('') }
-    // Number('') is 0, so a box left empty would quietly become a $0 or 0% tier.
+  /** Why the rates can't be saved as typed, or null. Number('') is 0, so a box left empty would quietly become a $0 or 0% tier. */
+  function check(): string | null {
+    if (!rules) return null
     const blank = rules.findIndex(r => [r.thresholdMin, r.creditRate, r.checkRate].some(v => v.trim() === ''))
-    if (blank >= 0) return fail(`Row ${blank + 1} has an empty box. Fill it in or remove the row.`)
+    if (blank >= 0) return `Buy rates, row ${blank + 1} has an empty box. Fill it in or remove the row.`
     const negative = rules.findIndex(r => Number(r.thresholdMin) < 0)
-    if (negative >= 0) return fail(`Row ${negative + 1}: the card value can't be below $0.`)
+    if (negative >= 0) return `Buy rates, row ${negative + 1}: the card value can't be below $0.`
     const outOfRange = rules.findIndex(r => [r.creditRate, r.checkRate].some(v => Number(v) < 1 || Number(v) > 100))
-    if (outOfRange >= 0) return fail(`Row ${outOfRange + 1}: rates must be between 1% and 100%.`)
+    if (outOfRange >= 0) return `Buy rates, row ${outOfRange + 1}: rates must be between 1% and 100%.`
     const thresholds = rules.map(r => Number(r.thresholdMin))
     const twice = thresholds.findIndex((t, i) => thresholds.indexOf(t) !== i)
-    if (twice >= 0) return fail(`Two rows start at $${thresholds[twice].toFixed(2)}. Each tier needs its own card value.`)
+    if (twice >= 0) return `Buy rates: two rows start at $${thresholds[twice].toFixed(2)}. Each tier needs its own card value.`
+    return null
+  }
+  async function save(): Promise<boolean> {
+    if (!rules) return true
     setSaving(true)
     try {
       // Saved lowest tier first, the order the offer reads them in.
       const sorted = [...rules].sort((a, b) => Number(a.thresholdMin) - Number(b.thresholdMin))
       load(await api<{ rules: ServerRule[]; own: boolean }>(`/api/app/rates${query(game)}`, { method: 'PUT', body: { rules: sorted.map(r => ({
         thresholdMin: Number(r.thresholdMin), creditRate: Number(r.creditRate) / 100, checkRate: Number(r.checkRate) / 100 })) } }))
-      setMessage('Rates saved.'); setError('')
-    } catch (err) { fail((err as Error).message) }
+      setError(''); return true
+    } catch (err) { setError(`Rates not saved: ${(err as Error).message}`); setMessage(''); return false }
     finally { setSaving(false) }
   }
+  useImperativeHandle(ref, () => ({
+    check, save,
+    discard: () => { setRules(JSON.parse(saved).map(([thresholdMin, creditRate, checkRate]: string[]) => ({ id: nextId++, thresholdMin, creditRate, checkRate }))); setError('') },
+  }))
 
   async function reset() {
     if (saving) return
@@ -106,7 +144,7 @@ function BuyRates({ owner, game, onDirty }: { owner: boolean; game: Game; onDirt
       <p className="lede">A card's offer uses the row with the highest threshold below its value. Keep a $0 row for everything else.</p>
       {game && !own && <p className="notice">Showing the default rates. Change them here and save to give {gameName(game)} its own.</p>}
       {rules === null ? <p className="muted">Loading…</p> : (
-        <form onSubmit={save}>
+        <div>
           <div className="table-wrap"><table className="grid">
             <thead><tr><th scope="col">Card value over</th><th scope="col">Store credit %</th><th scope="col">Check %</th><th><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>
@@ -127,11 +165,9 @@ function BuyRates({ owner, game, onDirty }: { owner: boolean; game: Game; onDirt
           {owner ? (
             <p className="actions"><button type="button" className="secondary"
               onClick={() => setRules([...rules, { id: nextId++, thresholdMin: '', creditRate: '50', checkRate: '40' }])}>Add tier</button>{' '}
-              <button type="submit" disabled={saving || !dirty}>{saving ? 'Saving…' : 'Save rates'}</button>
-              {game && own && <button type="button" className="secondary" disabled={saving} onClick={reset}>Use the default rates</button>}
-              {dirty && !saving && <span className="muted small" role="status" style={{ alignSelf: 'center' }}>Unsaved changes</span>}</p>
+              {game && own && <button type="button" className="secondary" disabled={saving} onClick={reset}>Use the default rates</button>}</p>
           ) : <p className="muted">Only the store owner can change rates.</p>}
-        </form>
+        </div>
       )}
       {message && <p className="notice">{message}</p>}
       {error && <p className="error" role="alert">{error}</p>}
@@ -151,7 +187,7 @@ const LEVELS: { level: Level; label: string; help: string }[] = [
  * What the offer does by how far a card's price can be trusted. Offer % scales the buy-rate offer; "Hold for review"
  * keeps the trade from saving until staff tick that they checked the flagged prices.
  */
-function ConfidenceRules({ owner, game, onDirty }: { owner: boolean; game: Game; onDirty: (dirty: boolean) => void }) {
+function ConfidenceRules({ owner, game, onDirty, ref }: { owner: boolean; game: Game; onDirty: (dirty: boolean) => void; ref: Ref<Part> }) {
   const [rules, setRules] = useState<TrustRule[] | null>(null)
   const [own, setOwn] = useState(true)
   const [saved, setSaved] = useState('')
@@ -178,18 +214,20 @@ function ConfidenceRules({ owner, game, onDirty }: { owner: boolean; game: Game;
   }
   const update = (level: Level, change: Partial<TrustRule>) => { setRules(rules!.map(r => r.level === level ? { ...r, ...change } : r)); setMessage('') }
 
-  async function save(e: React.FormEvent) {
-    e.preventDefault()
-    if (!rules || saving) return
-    const bad = rules.find(r => r.adjust.trim() === '' || Number(r.adjust) < 1 || Number(r.adjust) > 100)
-    if (bad) { setError(`${bad.level[0].toUpperCase() + bad.level.slice(1)}: the offer must be between 1% and 100%.`); setMessage(''); return }
+  function check(): string | null {
+    const bad = rules?.find(r => r.adjust.trim() === '' || Number(r.adjust) < 1 || Number(r.adjust) > 100)
+    return bad ? `Price confidence, ${bad.level}: the offer must be between 1% and 100%.` : null
+  }
+  async function save(): Promise<boolean> {
+    if (!rules) return true
     setSaving(true)
     try {
       load(await api<Saved>(`/api/app/confidence-rules${query(game)}`, { method: 'PUT', body: { rules: rules.map(r => ({ level: r.level, adjust: Number(r.adjust) / 100, review: r.review })) } }))
-      setMessage('Confidence rules saved.'); setError('')
-    } catch (err) { setError((err as Error).message); setMessage('') }
+      setError(''); return true
+    } catch (err) { setError(`Confidence rules not saved: ${(err as Error).message}`); setMessage(''); return false }
     finally { setSaving(false) }
   }
+  useImperativeHandle(ref, () => ({ check, save, discard: () => { setRules(JSON.parse(saved)); setError('') } }))
 
   return (
     <>
@@ -198,7 +236,7 @@ function ConfidenceRules({ owner, game, onDirty }: { owner: boolean; game: Game;
         Choose what each level does to the offer. 100% and no hold leave offers as the buy rates set them.</p>
       {game && !own && <p className="notice">Showing the default rules. Change them here and save to give {gameName(game)} its own.</p>}
       {rules === null ? (!error && <p className="muted">Loading…</p>) : (
-        <form onSubmit={save}>
+        <div>
           <div className="table-wrap"><table className="grid">
             <thead><tr><th scope="col">Confidence</th><th scope="col">Offer</th><th scope="col">Hold for review</th></tr></thead>
             <tbody>
@@ -217,11 +255,9 @@ function ConfidenceRules({ owner, game, onDirty }: { owner: boolean; game: Game;
             </tbody>
           </table></div>
           {owner ? (
-            <p className="actions"><button type="submit" disabled={saving || !dirty}>{saving ? 'Saving…' : 'Save confidence rules'}</button>
-              {game && own && <button type="button" className="secondary" disabled={saving} onClick={reset}>Use the default rules</button>}
-              {dirty && !saving && <span className="muted small" role="status" style={{ alignSelf: 'center' }}>Unsaved changes</span>}</p>
+            game && own ? <p className="actions"><button type="button" className="secondary" disabled={saving} onClick={reset}>Use the default rules</button></p> : null
           ) : <p className="muted">Only the store owner can change these.</p>}
-        </form>
+        </div>
       )}
       {message && <p className="notice">{message}</p>}
       {error && <p className="error" role="alert">{error}</p>}

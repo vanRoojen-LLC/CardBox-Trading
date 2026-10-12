@@ -11,7 +11,7 @@ type PriceCard = Card & { variant?: string | null; url?: string | null; cardId?:
 
 /** The finish a row's price is for: its normal price when it has one, else foil, else etched. */
 const finishOf = (card: PriceCard) => card.usd != null ? 'normal' : card.usdFoil != null ? 'foil' : 'etched'
-interface SearchResult { cards: PriceCard[]; pricesUpdatedAt: string | null }
+interface SearchResult { cards: PriceCard[]; pricesUpdatedAt: string | null; source?: string }
 
 /** Magic and SWU have their own wording; every other game reads "<name> price check". */
 const COPY: Record<string, { title: string; example: string }> = {
@@ -118,7 +118,7 @@ export default function PriceCheck() {
               ))}
             </div>
           )}
-          {result.pricesUpdatedAt && <p className="muted small">Prices updated {new Date(result.pricesUpdatedAt).toLocaleString()}.
+          {result.pricesUpdatedAt && <p className="muted small">{result.source ? `${result.source} prices` : 'Prices'} updated {new Date(result.pricesUpdatedAt).toLocaleString()}.
             {Date.now() - Date.parse(result.pricesUpdatedAt) > STALE_MS && <> <b>Prices may be out of date.</b></>}</p>}
         </>
       )}

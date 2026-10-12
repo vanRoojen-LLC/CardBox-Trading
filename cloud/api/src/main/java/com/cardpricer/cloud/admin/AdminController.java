@@ -65,7 +65,9 @@ public class AdminController {
                        (SELECT count(*) FROM locations l WHERE l.tenant_id = t.id AND l.archived_at IS NULL) AS locations,
                        (SELECT count(*) FROM trades tr WHERE tr.tenant_id = t.id) AS trades,
                        (SELECT max(tr.created_at) FROM trades tr WHERE tr.tenant_id = t.id) AS "lastTradeAt",
-                       (SELECT coalesce(sum(i.quantity), 0) FROM inventory_items i WHERE i.tenant_id = t.id) AS cards
+                       (SELECT coalesce(sum(i.quantity), 0) FROM inventory_items i WHERE i.tenant_id = t.id) AS cards,
+                       (SELECT coalesce(sum(i.quantity), 0) FROM inventory_items i
+                        WHERE i.tenant_id = t.id AND i.club_link_id IS NOT NULL) AS "syncedCards"
                 FROM tenants t ORDER BY t.created_at DESC""");
     }
 

@@ -10,10 +10,13 @@ import { confirmPlan, planLabel, PLANS } from '../plans'
  * Each store's team is managed on the Team page (TeamAdmin.tsx).
  */
 
+/** The one place stores are created and renamed, for both sites. */
+const CLUB_STORES = 'https://cardbox.club/roles?tab=stores'
+
 interface CardBoxStore { id: string; name: string; slug?: string }
 
 interface TradingStore { id: string; name: string; planStatus: string; trialEndsAt: string; entitled: boolean; cardboxStoreId: string | null
-  people: number; trades: number; cards: number }
+  people: number; trades: number; cards: number; syncedCards: number }
 
 /**
  * The platform owner's store list with the link on: CardBox's stores (created and renamed there), each with the
@@ -23,7 +26,6 @@ export function CardBoxStores() {
   const [stores, setStores] = useState<CardBoxStore[] | null>(null)
   const [trading, setTrading] = useState<TradingStore[]>([])
   const [busy, setBusy] = useState(false)
-  const [newName, setNewName] = useState('')
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const load = useCallback(() => Promise.all([
@@ -56,14 +58,8 @@ export function CardBoxStores() {
         <thead><tr><th>Store</th><th>Plan</th><th>Trial ends</th><th className="r">Trades</th><th className="r">Cards</th></tr></thead>
         <tbody>{stores.map(s => <CardBoxStoreRow key={`${s.id}:${s.name}`} store={s} trading={byCardBox.get(s.id)} run={run} busy={busy} />)}</tbody>
       </table></div>
-      <form className="inline-form" onSubmit={async e => {
-        e.preventDefault()
-        // Cleared only once CardBox has the store, so a failed create keeps the name to retry.
-        if (await run(() => api('/api/cardbox/stores', { method: 'POST', body: { name: newName.trim() } }), `${newName.trim()} created.`)) setNewName('')
-      }}>
-        <label>New store<input required maxLength={120} value={newName} onChange={e => setNewName(e.target.value)} /></label>
-        <button type="submit" className="small" disabled={busy}>Create on CardBox</button>
-      </form>
+      <p className="muted small">Stores are created and renamed in one place, <a href={CLUB_STORES} target="_blank" rel="noreferrer">Trading stores on
+        cardbox.club</a>, and show here at once. Each store's staff are on its Team page.</p>
       {unlinked.length > 0 && (
         <>
           <h2>Trading stores not yet tied to CardBox</h2>
@@ -88,14 +84,10 @@ export function CardBoxStores() {
 function CardBoxStoreRow({ store: s, trading: t, run, busy }: {
   store: CardBoxStore; trading?: TradingStore; run: (r: () => Promise<unknown>, done: string) => Promise<boolean>; busy: boolean
 }) {
-  const [name, setName] = useState(s.name)
   return (
     <tr>
       <td>
-        <form className="inline-form" onSubmit={e => { e.preventDefault(); run(() => api(`/api/cardbox/stores/${encodeURIComponent(s.id)}`, { method: 'PATCH', body: { name: name.trim() } }), `Renamed to ${name.trim()}.`) }}>
-          <input aria-label={`Name of ${s.name}`} required maxLength={120} value={name} onChange={e => setName(e.target.value)} />
-          {name.trim() !== s.name && <button type="submit" className="small secondary" disabled={busy}>Rename</button>}
-        </form>
+        <strong>{s.name}</strong>{' '}
         <Link className="small" to={`/app/staff?store=${encodeURIComponent(s.id)}`}>Team</Link>
         {!t && <div className="muted small">No one has used it on Trading yet</div>}
         {t && !t.entitled && <div className="error small">Locked</div>}
@@ -106,7 +98,7 @@ function CardBoxStoreRow({ store: s, trading: t, run, busy }: {
       </select>}</td>
       <td>{t && <DateField label={`Trial end for ${s.name}`} value={t.trialEndsAt.slice(0, 10)} disabled={busy}
         onSave={day => run(() => api(`/api/admin/stores/${t.id}`, { method: 'PUT', body: { trialEndsAt: day } }), `${s.name}'s trial now ends ${day}.`)} />}</td>
-      <td className="r">{t?.trades ?? '—'}</td><td className="r">{t?.cards ?? '—'}</td>
+      <td className="r">{t?.trades ?? '—'}</td><td className="r">{t ? <>{t.cards.toLocaleString()}{t.syncedCards > 0 && <div className="muted small">{t.syncedCards === t.cards ? 'all' : t.syncedCards.toLocaleString()} from cardbox.club</div>}</> : '—'}</td>
     </tr>
   )
 }
