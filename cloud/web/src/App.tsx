@@ -6,6 +6,7 @@ import { Login, Signup } from './pages/Auth'
 import { safeReturnTo } from './returnTo'
 import StoreApp from './pages/StoreApp'
 import { Mark, Wordmark } from './Brand'
+import AppSwitcher from './AppSwitcher'
 
 export default function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined)
@@ -29,7 +30,7 @@ export default function App() {
       <Route path="/signup" element={me ? <Navigate to="/app" replace /> : <Public me={me}><Signup onDone={refresh} /></Public>} />
       <Route path="/app/*" element={
         me === undefined ? <p className="page muted">Loading…</p>
-          : me === null ? <Navigate to={signInUrl(expired)} replace />
+          : me === null ? <SignIn expired={expired} />
           : <StoreApp me={me} onSignOut={refresh} />
       } />
       <Route path="*" element={<Navigate to="/" replace />} />
@@ -41,10 +42,10 @@ function Public({ me, children }: { me: Me | null | undefined; children: React.R
   return (
     <>
       <header className="topbar">
-        <Link to="/" className="brand"><Mark /><Wordmark /></Link>
+        <div className="topbar-left"><AppSwitcher /><Link to="/" className="brand"><Mark /><Wordmark /></Link></div>
         <nav className="who">
           {me
-            ? <Link to="/app/trade" className="button small">Open {me.store}</Link>
+            ? <Link to="/app" className="button small open-store" title={`Open ${me.store}`}>Open store<small>{me.store}</small></Link>
             : <><a href="/api/auth/login" className="button small ghost">Store sign in</a><Link to="/signup" className="button small">Start free trial</Link></>}
         </nav>
       </header>
@@ -71,6 +72,26 @@ export function useSignOut(onSignOut: () => Promise<void>) {
     await onSignOut()
     navigate('/')
   }
+}
+
+/**
+ * Someone arriving at a store page signed out (often from cardbox.club's Trading link) goes straight through CardBox
+ * sign-in: the shared Auth0 session answers without asking, so they land on the page signed in. A session that ended
+ * mid-work, or a second try within a minute (the first came back without a session), shows the sign-in page instead,
+ * so a sign-in that cannot stick never loops.
+ */
+const SILENT_TRY = 'cardbox.silentSignIn'
+function SignIn({ expired }: { expired: boolean }) {
+  const here = window.location.pathname + window.location.search
+  let recent = false
+  try { recent = Date.now() - Number(sessionStorage.getItem(SILENT_TRY) ?? 0) < 60_000 } catch { recent = true }
+  const silent = !expired && !recent
+  useEffect(() => {
+    if (!silent) return
+    try { sessionStorage.setItem(SILENT_TRY, String(Date.now())) } catch { /* guarded above */ }
+    window.location.replace(`/api/auth/login?returnTo=${encodeURIComponent(here)}`)
+  }, [silent, here])
+  return silent ? <p className="page muted">Signing you in…</p> : <Navigate to={signInUrl(expired)} replace />
 }
 
 /** The sign-in page, coming back to the page the person asked for once they are in. */
