@@ -89,10 +89,11 @@ h2 { font-size: 1.05rem; font-weight: 650; margin: 0; }
 .topbar .who strong { color: var(--chrome-text); font-weight: 500; }
 .topbar .ghost { background: transparent; color: var(--chrome-text); border: 1px solid var(--chrome-border); }
 .topbar .ghost:hover { border-color: var(--chrome-border-hover); background: var(--chrome-field); }
-.topbar-store, .more-tab, .tabs .short, .app-menu, .menu-scrim { display: none; }
+.topbar-store, .brand-menu, .tabs .short, .app-menu, .menu-scrim { display: none; }
 /*
- * Phones: one slim row with the brand and the open store, then the four counter pages as even tabs with More beside
- * them. More opens a sheet with Buy rates, Team, Store, Admin, the store and register pickers, help and sign out.
+ * Phones: one slim row with the brand and the open store, then the four counter pages as even tabs. The CardBox logo
+ * is the menu button: it opens a sheet with Buy rates, Team, Store, Admin, the store and register pickers, help and
+ * sign out.
  */
 @media (max-width: 760px) {
   .topbar { gap: 0 12px; padding: 0 12px; min-height: 0; }
@@ -104,14 +105,16 @@ h2 { font-size: 1.05rem; font-weight: 650; margin: 0; }
     font-size: 14px; font-weight: 600; color: var(--chrome-text); }
   .topbar-store .muted { color: var(--chrome-muted); font-weight: 500; }
   .tabs { order: 3; width: calc(100% + 24px); margin: 0 -12px; border-top: 1px solid var(--chrome-line); overflow: visible; }
-  .tabs a, .tabs .more-tab { flex: 1 1 0; justify-content: center; min-width: 0; min-height: 48px; padding: 0 4px; font-size: 14px; }
+  .tabs a { flex: 1 1 0; justify-content: center; min-width: 0; min-height: 48px; padding: 0 4px; font-size: 14px; }
   .tabs .wide-only { display: none; }
   .tabs .long { display: none; }
   .tabs .short { display: inline; }
-  .tabs .more-tab { display: flex; align-items: center; gap: 5px; border-radius: 0; background: transparent; color: var(--chrome-muted);
-    border: 0; border-bottom: 3px solid transparent; font-weight: 500; }
-  .tabs .more-tab:hover { background: transparent; color: var(--chrome-text); }
-  .tabs .more-tab.active { color: var(--chrome-text); border-bottom-color: var(--chrome-accent); }
+  .topbar .brand-link { display: none; }
+  .topbar .brand-menu { display: flex; min-height: 52px; padding: 0 6px; margin-left: -6px; border: 0; border-radius: var(--radius);
+    background: transparent; color: var(--chrome-text); cursor: pointer; }
+  .topbar .brand-menu:hover { background: transparent; }
+  .topbar .brand-caret { color: var(--chrome-muted); margin-left: -4px; }
+  .topbar .brand-menu[aria-expanded="true"], .topbar .brand-menu.active { background: var(--chrome-active); }
   .menu-scrim { display: block; position: fixed; inset: 0; z-index: 70; background: rgb(10 17 23 / 50%); }
   .app-menu { display: flex; flex-direction: column; gap: 14px; position: absolute; z-index: 75; left: 0; right: 0;
     padding: 8px 16px 18px; background: var(--chrome); color: var(--chrome-text); border-bottom: 1px solid var(--chrome-line);

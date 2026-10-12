@@ -110,10 +110,15 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
   return (
     <>
       <header className={`topbar app${adminMode ? ' admin-mode' : ''}`}>
-        <div className="topbar-left"><AppSwitcher /><Link to="/app" className="brand"><Mark /><Wordmark /></Link></div>
+        {/* On a phone the CardBox logo is the menu button (Toby, 2026-10-11); on wider screens it links home. */}
+        <div className="topbar-left"><AppSwitcher /><Link to="/app" className="brand brand-link"><Mark /><Wordmark /></Link>
+          <button type="button" className={`brand brand-menu${secondary || menuOpen ? ' active' : ''}`} aria-expanded={menuOpen} aria-controls="app-menu"
+            aria-label={menuOpen ? 'Close the menu' : 'Open the menu'} onClick={() => setMenuOpen(!menuOpen)}><Mark /><Wordmark />
+            <svg className="brand-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+              <path d={menuOpen ? 'M6 15l6-6 6 6' : 'M6 9l6 6 6-6'} /></svg></button></div>
         <span className="topbar-store">{me.stores.find(s => s.current)?.name ?? me.store}
           {open.length > 1 && locationId && <span className="muted"> · {open.find(l => l.id === locationId)?.name}</span>}</span>
-        {/* On phones the four counter pages stay as tabs and everything else lives under More. */}
+        {/* On phones the four counter pages stay as tabs and everything else opens from the logo. */}
         <nav className="tabs" aria-label="Main">
           <NavLink to="/app/trade"><span className="long">New trade</span><span className="short">Trade</span></NavLink>
           <NavLink to="/app/price"><span className="long">Price check</span><span className="short">Prices</span></NavLink>
@@ -122,18 +127,13 @@ export default function StoreApp({ me, onSignOut }: { me: Me; onSignOut: () => P
           <NavLink to="/app/rates" className="wide-only">Buy rates</NavLink>
           <NavLink to="/app/staff" className="wide-only">Team</NavLink>
           <NavLink to="/app/store" className="wide-only">Store</NavLink>
-          <button type="button" className={`more-tab${secondary || menuOpen ? ' active' : ''}`} aria-expanded={menuOpen} aria-controls="app-menu"
-            onClick={() => setMenuOpen(!menuOpen)}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-              {menuOpen ? <path d="M6 6l12 12M18 6L6 18" /> : <path d="M4 7h16M4 12h16M4 17h16" />}
-            </svg>More</button>
         </nav>
         <div className="who">{account}</div>
       </header>
       {menuOpen && (
         <>
           <div className="menu-scrim" onClick={() => setMenuOpen(false)} />
-          <div className="app-menu" id="app-menu" role="dialog" aria-label="More">
+          <div className="app-menu" id="app-menu" role="dialog" aria-label="Menu">
             <nav className="app-menu-links" aria-label="More pages">
               <NavLink to="/app/rates">Buy rates</NavLink>
               <NavLink to="/app/staff">Team</NavLink>
