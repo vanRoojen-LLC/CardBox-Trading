@@ -850,11 +850,11 @@ label.inline input { min-height: 0; width: 20px; height: 20px; }
 /* Admin mode: platform-owner pages carry an amber chip and a thin amber bar, so the context is plain in screenshots. */
 .admin-link { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; border-radius: 999px; text-decoration: none;
   color: var(--chrome-text); border: 1px solid var(--chrome-border); font-size: 14px; }
-.admin-link:hover { border-color: #e5a63b; }
-.admin-link.active { background: #e5a63b; border-color: #e5a63b; color: #1a1205; font-weight: 600; }
-.topbar.admin-mode { border-bottom: 3px solid #e5a63b; }
-.admin-bar { display: flex; align-items: center; gap: 10px; padding: .5rem 20px; background: #2e2112; color: #f5d3a3; font-size: .9rem; }
-.admin-bar strong { color: #e5a63b; }
+.admin-link:hover { border-color: var(--warning); }
+.admin-link.active { background: var(--warning); border-color: var(--warning); color: #1a1205; font-weight: 600; }
+.topbar.admin-mode { border-bottom: 3px solid var(--warning); }
+.admin-bar { display: flex; align-items: center; gap: 10px; padding: .5rem 20px; background: var(--banner); color: var(--banner-text); font-size: .9rem; }
+.admin-bar strong { color: var(--banner-text); }
 .open-store { display: inline-flex; flex-direction: column; align-items: flex-start; justify-content: center; line-height: 1.15; }
 .open-store small { font-size: 11px; font-weight: 500; opacity: .8; }
 @media (max-width: 760px) { .app-menu-links .admin-link { border-radius: var(--radius); min-height: 48px; } }
