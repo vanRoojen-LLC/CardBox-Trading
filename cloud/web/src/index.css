@@ -1,19 +1,21 @@
 /*
- * CardBox Trading. A light "counter" theme by default (bright stores, screen glare) and a night theme that reuses
- * CardBox's own dark tokens. Cobalt is the only action color; copper marks money going out (offers, payouts).
+ * CardBox Trading. A light "counter" theme by default (bright stores, screen glare) and a night theme, both with
+ * cardbox.club's own token values. Cobalt is the only action color; copper marks money going out (offers, payouts).
  */
 :root {
-  --bg: #f3f5f8; --surface: #ffffff; --surface-2: #f8fafc;
-  --line: #d5dce4; --line-soft: #e4e9ef; --line-strong: #b8c3cf;
-  --text: #0a1117; --text-2: #25313d; --muted: #4a5868;
-  --accent: #2f65df; --accent-border: #2457c9; --link: #2457c9; --accent-soft: #e8effd; --accent-soft-text: #1b44a0;
+  /* Page, surface, line, text and cobalt values are cardbox.club's own (CardBox frontend/src/styles.css), so the
+     two sites read as one product (Toby, 2026-10-12). Copper and the counter's status colours are Trading's. */
+  --bg: #f7f8fa; --surface: #ffffff; --surface-2: #f3f5f7;
+  --line: #e3e6ea; --line-soft: #eceef1; --line-strong: #c9ced5;
+  --text: #14171a; --text-2: #2c3238; --muted: #5b636d;
+  --accent: #2563eb; --accent-border: #1d4fd8; --link: #1d5bd8; --accent-soft: #e6eefc; --accent-soft-text: #1b44a0;
   --copper: #f5a640; --copper-soft: #fef3e2; --copper-text: #8a4f06;
-  --sel: #0a1117; --sel-text: #ffffff; --row-hl: #f4f8ff;
-  --ok-bg: #eaf7ef; --ok-text: #14532d; --error: #b3261e; --banner: #fef3e2; --banner-text: #5c3504;
-  --bad-bg: #fdecea; --bad-text: #8c1d18; --ok-dot: #1f9d55; --warn-dot: #d98a1c; --bad-dot: #d93025;
-  --chrome: #0a1117; --chrome-line: #0a1117; --chrome-text: #f4f7fb; --chrome-muted: #aab4c0;
-  /* The top bar is ink in both themes, so its controls keep one set of values. */
-  --chrome-line-soft: #2a3540; --chrome-field: #17222c; --chrome-border: #384553; --chrome-border-hover: #56718d; --chrome-accent: #4f86ff; --chrome-active: #142036;
+  --sel: #14171a; --sel-text: #ffffff; --row-hl: #f2f6fe;
+  --ok-bg: #eaf7ef; --ok-text: #14532d; --error: #c42f2f; --banner: #fef3e2; --banner-text: #5c3504;
+  --bad-bg: #fdecea; --bad-text: #8c1d18; --ok-dot: #177a49; --warn-dot: #d98a1c; --bad-dot: #d93025;
+  /* The top bar is cardbox.club's: white in Light, near-black in Dark, with the same hairline under it. */
+  --chrome: #ffffff; --chrome-line: #e3e6ea; --chrome-text: #14171a; --chrome-muted: #5b636d;
+  --chrome-line-soft: #e3e6ea; --chrome-field: #eef0f3; --chrome-border: #c9ced5; --chrome-border-hover: #9aa2ad; --chrome-accent: #2563eb; --chrome-active: #e6eefc;
   /* The four status meanings, shared names with CardBox Club (docs/ux-design-system.md in CardBox). */
   --success: var(--ok-dot); --warning: var(--warn-dot); --danger: var(--bad-dot); --info: var(--accent);
   /* Photographic grey behind full-size card pictures, the same in both themes (Toby, 2026-10-11). Not on thumbnails. */
@@ -30,29 +32,31 @@
    are written twice, once per route, because a media query cannot sit inside a selector list. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0a1117; --surface: #131d25; --surface-2: #101820;
-    --line: #2a3540; --line-soft: #222d37; --line-strong: #384553;
+    --bg: #1a1a1a; --surface: #222222; --surface-2: #1e1e1e;
+    --line: #3a3d41; --line-soft: #2e3034; --line-strong: #4a4e53;
     --text: #f4f7fb; --text-2: #d5dce4; --muted: #aab4c0;
-    --accent-border: #5a8fff; --link: #72a0ff; --accent-soft: #182b48; --accent-soft-text: #9cbdff;
+    --accent: #2f65df; --accent-border: #4f86ff; --link: #82a7ff; --accent-soft: #182b48; --accent-soft-text: #9cbdff;
     --copper-soft: #2e2112; --copper-text: #f5b866;
-    --sel: #f4f7fb; --sel-text: #0a1117; --row-hl: #162231;
+    --sel: #f4f7fb; --sel-text: #1a1a1a; --row-hl: #262b33;
     --ok-bg: #12301f; --ok-text: #8ee5b0; --error: #ff7272; --banner: #2e2112; --banner-text: #f5d3a3;
-    --bad-bg: #3a1714; --bad-text: #ffb4ab; --ok-dot: #4ade80; --warn-dot: #f5b866; --bad-dot: #ff7272;
-    --chrome: #0b1218; --chrome-line: #2a3540;
+    --bad-bg: #3a1714; --bad-text: #ffb4ab; --ok-dot: #58d68d; --warn-dot: #f5b866; --bad-dot: #ff7272;
+    --chrome: #1b1b1b; --chrome-line: #3a3d41; --chrome-text: #f4f7fb; --chrome-muted: #aab4c0;
+    --chrome-line-soft: #3a3d41; --chrome-field: #2e2e2e; --chrome-border: #4a4e53; --chrome-border-hover: #6b7178; --chrome-accent: #4f86ff; --chrome-active: #182b48;
     --focus: 0 0 0 3px rgb(79 134 255 / 28%);
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #0a1117; --surface: #131d25; --surface-2: #101820;
-  --line: #2a3540; --line-soft: #222d37; --line-strong: #384553;
+  --bg: #1a1a1a; --surface: #222222; --surface-2: #1e1e1e;
+  --line: #3a3d41; --line-soft: #2e3034; --line-strong: #4a4e53;
   --text: #f4f7fb; --text-2: #d5dce4; --muted: #aab4c0;
-  --accent-border: #5a8fff; --link: #72a0ff; --accent-soft: #182b48; --accent-soft-text: #9cbdff;
+  --accent: #2f65df; --accent-border: #4f86ff; --link: #82a7ff; --accent-soft: #182b48; --accent-soft-text: #9cbdff;
   --copper-soft: #2e2112; --copper-text: #f5b866;
-  --sel: #f4f7fb; --sel-text: #0a1117; --row-hl: #162231;
+  --sel: #f4f7fb; --sel-text: #1a1a1a; --row-hl: #262b33;
   --ok-bg: #12301f; --ok-text: #8ee5b0; --error: #ff7272; --banner: #2e2112; --banner-text: #f5d3a3;
-  --bad-bg: #3a1714; --bad-text: #ffb4ab; --ok-dot: #4ade80; --warn-dot: #f5b866; --bad-dot: #ff7272;
-  --chrome: #0b1218; --chrome-line: #2a3540;
+  --bad-bg: #3a1714; --bad-text: #ffb4ab; --ok-dot: #58d68d; --warn-dot: #f5b866; --bad-dot: #ff7272;
+  --chrome: #1b1b1b; --chrome-line: #3a3d41; --chrome-text: #f4f7fb; --chrome-muted: #aab4c0;
+  --chrome-line-soft: #3a3d41; --chrome-field: #2e2e2e; --chrome-border: #4a4e53; --chrome-border-hover: #6b7178; --chrome-accent: #4f86ff; --chrome-active: #182b48;
   --focus: 0 0 0 3px rgb(79 134 255 / 28%);
   color-scheme: dark;
 }
@@ -74,12 +78,12 @@ h2 { font-size: 1.05rem; font-weight: 650; margin: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 :focus-visible { outline: none; box-shadow: var(--focus); }
 
-/* Top bar: always ink, like CardBox. */
+/* Top bar: cardbox.club's, white in Light and near-black in Dark. */
 .topbar { display: flex; align-items: center; gap: 24px; min-height: 64px; padding: 0 20px; background: var(--chrome);
   border-bottom: 1px solid var(--chrome-line); color: var(--chrome-text); flex-wrap: wrap; }
 .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--chrome-text); flex: none; }
 .wordmark { font-size: 20px; font-weight: 650; letter-spacing: -0.02em; white-space: nowrap; }
-.wordmark span { font-weight: 500; color: var(--copper); }
+.wordmark span { font-weight: 500; color: var(--chrome-muted); }
 .tabs { display: flex; align-items: stretch; align-self: stretch; overflow-x: auto; scrollbar-width: none; }
 .tabs a { display: flex; align-items: center; min-height: 64px; padding: 0 16px; color: var(--chrome-muted); text-decoration: none;
   font-size: 15px; font-weight: 500; border-bottom: 3px solid transparent; white-space: nowrap; }
