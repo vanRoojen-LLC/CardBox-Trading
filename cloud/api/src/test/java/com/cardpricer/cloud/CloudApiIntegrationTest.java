@@ -260,6 +260,15 @@ class CloudApiIntegrationTest {
     }
 
     @Test
+    void unknownPathsAndWrongMethodsAreClientErrorsNot500() throws Exception {
+        // Vulnerability scanners probing these paths produced the 2026-10-13 5xx spike.
+        assertEquals(404, call("GET", "/bin/.env", null, null).status());
+        assertEquals(404, call("GET", "/wp-admin/install.php", null, null).status());
+        assertEquals(404, call("GET", "/api/no-such-endpoint", null, null).status());
+        assertEquals(405, call("DELETE", "/login", null, null).status());
+    }
+
+    @Test
     void importsGzippedJsonLines() throws Exception {
         // Scryfall's bulk files are now gzipped JSON Lines; re-importing the fixture that way upserts the same rows.
         JsonNode cards;
