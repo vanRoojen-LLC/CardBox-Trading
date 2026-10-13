@@ -362,6 +362,14 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
                         {Number(priced.confidenceAdjust) < 1 && <span className="muted small">offer at {Math.round(Number(priced.confidenceAdjust) * 100)}%</span>}
                         {priced.review && <span className="flag small">Check this price</span>}
                       </span>}
+                      {priced && (priced.review || priced.confidence === 'low' || priced.confidence === 'none') && (
+                        <div className="line-price-guidance small">
+                          {priced.reasons.filter(r => r.kind === 'bad' || r.kind === 'warn').slice(0, 2).map((r, i) => <p key={i}>{r.text}</p>)}
+                          {priced.review
+                            ? <p>Review this line’s price evidence, then confirm “I checked the flagged prices” before saving.</p>
+                            : <p>Open the confidence badge to check the price sources before agreeing the offer.</p>}
+                        </div>
+                      )}
                     </div>
                     <div className="controls">
                       {finishes.length > 1
