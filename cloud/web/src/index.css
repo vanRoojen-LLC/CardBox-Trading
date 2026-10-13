@@ -727,7 +727,8 @@ button.headed { display: block; padding: 0; text-align: left; text-decoration: u
  * Inventory on phones: filters sit in one row that scrolls sideways and open as sheets from the bottom of the screen,
  * and each stock line is a card (name and price, then its details, then where it is, its count and actions).
  */
-.inv-mobile-tools { display: none; }
+.inv-mobile-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; }
+.inv-mobile-tools .check-all { display: none; }
 @media (max-width: 760px) {
   .inv-filters > select, .loc-picker { flex: 1 1 150px; min-width: 0; }
   .loc-picker select { flex: 1 1 0; min-width: 0; }
@@ -872,3 +873,16 @@ label.inline input { min-height: 0; width: 20px; height: 20px; }
   box-shadow: 0 -6px 20px rgb(0 0 0 / 10%); }
 .save-bar .ok { color: var(--ok-text); }
 .save-bar-actions { margin-left: auto; display: flex; gap: 8px; }
+
+/* Inventory keeps the next filing decision visible; extra metadata opens per line. */
+.inv-filter-details { flex-basis: 100%; }
+.inv-filter-details summary { cursor: pointer; width: fit-content; padding: 8px 0; color: var(--text-2); }
+.inv-row-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px 24px; margin: 0; white-space: normal; }
+.inv-row-details dt { color: var(--muted); font-size: 12px; }
+.inv-row-details dd { margin: 4px 0 0; overflow-wrap: anywhere; }
+.line-price-guidance { margin-top: 6px; color: var(--text-2); }
+.line-price-guidance p { margin: 4px 0; }
+@media (min-width: 641px) {
+  .inv-table { max-height: 70vh; overflow: auto; }
+  .inv-table thead th { position: sticky; top: 0; z-index: 2; background: var(--surface); }
+}

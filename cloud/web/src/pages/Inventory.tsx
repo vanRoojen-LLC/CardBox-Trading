@@ -58,6 +58,8 @@ const COLUMNS: { key: string; label: string; right?: boolean; sort?: string; fil
   { key: 'market', label: 'Market', right: true, sort: 'market', filter: 'price' }, { key: 'quantity', label: 'Qty', right: true, sort: 'quantity' },
 ]
 
+const SUMMARY_COLUMNS = COLUMNS.filter(c => ['card', 'where', 'market', 'quantity'].includes(c.key))
+
 function query(filters: Filters, extra: Record<string, string> = {}): string {
   const params = new URLSearchParams()
   for (const [k, values] of Object.entries(filters)) for (const v of values) if (v !== '') params.append(k, v)
@@ -346,11 +348,14 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
         )}
         <LocationPicker spots={spots} locationId={filterLocation} value={filters.storage?.[0] ?? ''} counts={underSpot}
           onChange={v => setFilter('storage', v ? [v] : [])} />
-        <div className="inv-chips">
+        <details className="inv-filter-details">
+          <summary>More filters</summary>
+          <div className="inv-chips">
           {FACETS.map(f => <FacetMenu key={f.key} facet={f} values={facets[f.key] ?? []} picked={filters[f.key] ?? []} onChange={v => setFilter(f.key, v)} />)}
           <PriceMenu min={filters.priceMin?.[0] ?? ''} max={filters.priceMax?.[0] ?? ''}
             onChange={(min, max) => setFilters(f => ({ ...f, priceMin: min ? [min] : [], priceMax: max ? [max] : [] }))} />
-        </div>
+          </div>
+        </details>
         {(chips.length > 0 || price) && (
           <div className="inv-active">
             {chips.map(c => (
@@ -401,7 +406,7 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
         </div>
       )}
 
-      {/* Phones hide the column headers, so selecting every line and sorting live here instead. */}
+      {/* Keep every sort available even when its metadata is inside row details. */}
       {items.length > 0 && (
         <div className="inv-mobile-tools">
           <label className="check-all"><input type="checkbox" checked={allVisible || allMatching} onChange={toggleAll} /> Select all shown</label>
@@ -412,12 +417,13 @@ export default function Inventory({ locations, registerLocationId, owner }: { lo
             onClick={() => setSort(s => ({ ...s, dir: s.dir === 'asc' ? 'desc' : 'asc' }))}>{sort.dir === 'asc' ? '▲' : '▼'}</button>
         </div>
       )}
-      <div className="table-wrap">
+      <div className="table-wrap inv-table" role="region" aria-label="Inventory lines" tabIndex={0}>
         <table className="grid inventory dense">
+          <caption className="sr-only">Stock on hand. Expand Details on a line for its metadata.</caption>
           <thead><tr>
             <th className="check"><input type="checkbox" aria-label="Select every line shown" checked={allVisible || allMatching} onChange={toggleAll} /></th>
-            {COLUMNS.map(c => (
-              <th key={c.key} className={c.right ? 'r' : ''} aria-sort={sort.key === c.sort ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}>
+            {SUMMARY_COLUMNS.map(c => (
+              <th key={c.key} scope="col" className={c.right ? 'r' : ''} aria-sort={sort.key === c.sort ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}>
                 <span className="th-inner">
                   {c.sort ? <button className="sort" title={`Sort by ${c.label.toLowerCase()}`} onClick={() => sortBy(c.sort!)}>{c.label}<span className="arrow" aria-hidden>{sort.key === c.sort ? (sort.dir === 'asc' ? '▲' : '▼') : ''}</span></button> : c.label}
                   {columnFilter(c)}
@@ -467,7 +473,7 @@ function LocationHeading({ item, several, spots, cards, picked, onPick }: {
   const path = item.storageId ? pathOf(spots, item.storageId) as Spot[] : []
   return (
     <tr className="loc-head">
-      <td colSpan={COLUMNS.length + 2}>
+      <td colSpan={SUMMARY_COLUMNS.length + 2}>
         <span className="crumbs">
           {several && <span className="muted">{item.location} › </span>}
           {path.length === 0 ? <span className="unshelved">Not put away</span> : path.map((s, i) => (
@@ -677,11 +683,12 @@ function InventoryRow({ item, several, locations, spots, selected, onSelect, mov
 }) {
   const [target, setTarget] = useState({ locationId: item.locationId, storageId: '', quantity: item.quantity })
   const [viewing, setViewing] = useState(false)
+  const [details, setDetails] = useState(false)
   const [why, setWhy] = useState<Why | null>(null)
   const toggleWhy = () => why ? setWhy(null) : api<Why>(`/api/app/inventory/${item.id}/why`).then(setWhy).catch(() => setWhy({ steps: [], destination: [] }))
   const synced = !!item.clubLinkId
   const treatments = (item.treatments ?? '').split(',').filter(Boolean).map(t => TREATMENTS[t] ?? titleCase(t))
-  const span = COLUMNS.length + 2
+  const span = SUMMARY_COLUMNS.length + 2
   return (
     <>
       <tr className={selected ? 'selected' : ''}>
@@ -690,28 +697,36 @@ function InventoryRow({ item, several, locations, spots, selected, onSelect, mov
         <td className="card-cell"><div className="card-id">
           <RowThumb item={item} onOpen={() => setViewing(true)} />
           <div><strong>{item.name}</strong>
-            {item.typeLine && <div className="muted small">{item.typeLine}</div>}</div>
+            <div className="muted small">{item.set.toUpperCase()} #{item.number} · {item.finish} · {item.condition}</div></div>
         </div></td>
-        <td className="set-cell" title={item.setName ?? undefined}><span className="set-code">{item.set.toUpperCase()}</span> <span className="muted">#{item.number}</span></td>
-        <td className="num c-year">{item.year ?? <span className="muted">—</span>}</td>
-        <td className="c-color"><ColorPips colors={item.colors} /></td>
-        <td className="c-rarity">{item.rarity ? <span className={`rarity ${item.rarity}`}>{item.rarity}</span> : <span className="muted">—</span>}</td>
-        <td className="c-finish"><span style={{ textTransform: 'capitalize' }}>{item.finish}</span>{treatments.length > 0 && <div className="muted small">{treatments.join(', ')}</div>}</td>
-        <td className="c-cond">{item.condition}</td>
         <td className="c-where">{several && <div className="muted small">{item.location}</div>}
           {item.path.length ? placeText(item.path) : <span className="unshelved">Not put away</span>}
           {item.destination?.length > 0 && <button type="button" className="headed link" aria-expanded={!!why}
             title="Where your storage rules send it. Click to see why." onClick={toggleWhy}>→ {placeText(item.destination)}</button>}</td>
-        <td className="c-collection">{synced ? item.clubCollection : <span className="muted">Store stock</span>}</td>
-        <td className="c-batch">{item.batchName ?? <span className="muted">—</span>}</td>
         <td className="r c-market">{money(item.market)}</td>
         <td className="r c-qty">
           {synced ? item.quantity : <QuantityStepper item={item} onQuantity={onQuantity} />}
         </td>
         <td className="r row-links">
+          <button className="link" aria-expanded={details} aria-controls={`inventory-details-${item.id}`} onClick={() => setDetails(!details)}>Details</button>
           <button className="link" onClick={onMove}>{moving ? 'Cancel' : 'Move'}</button>
         </td>
       </tr>
+      {details && (
+        <tr className="move-row"><td colSpan={span}>
+          <dl id={`inventory-details-${item.id}`} className="inv-row-details" aria-label={`${item.name} details`}>
+            <div><dt>Set</dt><dd>{item.setName ?? item.set.toUpperCase()} #{item.number}</dd></div>
+            <div><dt>Year</dt><dd>{item.year ?? 'Unknown'}</dd></div>
+            <div><dt>Type</dt><dd>{item.typeLine ?? 'Unknown'}</dd></div>
+            <div><dt>Color</dt><dd><ColorPips colors={item.colors} /></dd></div>
+            <div><dt>Rarity</dt><dd>{item.rarity || 'Unknown'}</dd></div>
+            <div><dt>Finish and treatment</dt><dd>{[item.finish, ...treatments].join(' · ')}</dd></div>
+            <div><dt>Condition</dt><dd>{item.condition}</dd></div>
+            <div><dt>Collection</dt><dd>{synced ? item.clubCollection : 'Store stock'}</dd></div>
+            <div><dt>Batch</dt><dd>{item.batchName ?? 'No batch'}</dd></div>
+          </dl>
+        </td></tr>
+      )}
       {why && (
         <tr className="move-row"><td colSpan={span}><WhyHere why={why} /></td></tr>
       )}
