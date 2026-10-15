@@ -36,9 +36,10 @@ public class GamesController {
     @GetMapping("/api/app/games")
     public Map<String, Object> appGames(HttpServletRequest request) {
         var user = CurrentUser.of(request);
+        var settings = acceptance.settings(user.tenantId());
         return Map.of("games", games.list(user.preview()).stream().map(g -> Map.<String, Object>of(
                 "key", g.key(), "segment", g.segment(), "name", g.name(), "preview", g.preview(),
-                "acceptingTrades", acceptance.accepting(user.tenantId(), g.segment()))).toList());
+                "acceptingTrades", settings.getOrDefault(g.segment(), true))).toList());
     }
 
     private static List<Map<String, Object>> view(List<TcgGames.Game> list) {

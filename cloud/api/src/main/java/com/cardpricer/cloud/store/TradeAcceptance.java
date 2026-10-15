@@ -5,6 +5,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Map;
 import java.util.UUID;
 
 /** A store's decision to accept new trades in a segment, independent of its existing stock and rates. */
@@ -21,6 +22,16 @@ public class TradeAcceptance {
                 SELECT coalesce((SELECT accepting FROM segment_trade_acceptance
                                  WHERE tenant_id = ? AND segment = ?), true)""",
                 Boolean.class, tenant, segment);
+    }
+
+    /** Read every explicit switch in one query when building the store's game picker. */
+    public Map<String, Boolean> settings(UUID tenant) {
+        return jdbc.query("SELECT segment, accepting FROM segment_trade_acceptance WHERE tenant_id = ?",
+                rs -> {
+                    var result = new java.util.HashMap<String, Boolean>();
+                    while (rs.next()) result.put(rs.getString(1), rs.getBoolean(2));
+                    return result;
+                }, tenant);
     }
 
     /** Serializes a switch with trade saves on the tenant row. */
