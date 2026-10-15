@@ -1,6 +1,7 @@
 package com.cardpricer.cloud.catalog;
 
 import com.cardpricer.cloud.auth.CurrentUser;
+import com.cardpricer.cloud.store.TradeAcceptance;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
@@ -19,9 +20,11 @@ import java.util.Map;
 @RestController
 public class GamesController {
     private final TcgGames games;
+    private final TradeAcceptance acceptance;
 
-    public GamesController(TcgGames games) {
+    public GamesController(TcgGames games, TradeAcceptance acceptance) {
         this.games = games;
+        this.acceptance = acceptance;
     }
 
     @GetMapping("/api/public/games")
@@ -32,7 +35,10 @@ public class GamesController {
 
     @GetMapping("/api/app/games")
     public Map<String, Object> appGames(HttpServletRequest request) {
-        return Map.of("games", view(games.list(CurrentUser.of(request).preview())));
+        var user = CurrentUser.of(request);
+        return Map.of("games", games.list(user.preview()).stream().map(g -> Map.<String, Object>of(
+                "key", g.key(), "segment", g.segment(), "name", g.name(), "preview", g.preview(),
+                "acceptingTrades", acceptance.accepting(user.tenantId(), g.segment()))).toList());
     }
 
     private static List<Map<String, Object>> view(List<TcgGames.Game> list) {

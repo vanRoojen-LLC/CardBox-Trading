@@ -17,8 +17,6 @@ public class RateRepository {
         this.jdbc = jdbc;
     }
 
-    /** The games a store can set its own rates for. Any other game, and a game without its own, uses the default. */
-    public static final List<String> GAMES = List.of("magic-the-gathering", "star-wars-unlimited");
     public static final String DEFAULT = "";
 
     /** The store's default rates, ascending by threshold. */

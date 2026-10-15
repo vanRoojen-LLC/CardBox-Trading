@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from './api'
 
 /** A game a card search can look in: `key` is what ?game= takes, `segment` the game stock is filed under. */
-export interface GameInfo { key: string; segment: string; name: string; preview: boolean }
+export interface GameInfo { key: string; segment: string; name: string; preview: boolean; acceptingTrades?: boolean }
 export type Game = string
 
 /** Trading's own catalogs, always offered, and shown before the list arrives. */
@@ -32,6 +32,9 @@ export function loadGames(scope: GameScope): Promise<GameInfo[]> {
     .catch(() => { delete loads[scope]; return NATIVE_GAMES })
   return loads[scope]!
 }
+
+/** A store owner changed acceptance; the next trade screen must read the new list. */
+export function refreshAppGames() { delete loads.app }
 
 /** The games for this scope: Magic and SWU at once, the rest when the list arrives. */
 export function useGames(scope: GameScope): GameInfo[] {
