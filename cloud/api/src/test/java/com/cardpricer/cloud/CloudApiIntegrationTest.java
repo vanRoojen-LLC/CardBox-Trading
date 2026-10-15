@@ -729,6 +729,51 @@ class CloudApiIntegrationTest {
     }
 
     @Test
+    void storeCanCloseOneSegmentToTradesWithoutLosingStockOrRates() throws Exception {
+        String owner = signup("Selective Store", "selective-" + UUID.randomUUID() + "@example.com");
+        String other = signup("Another Store", "other-" + UUID.randomUUID() + "@example.com");
+        String magic = "22222222-2222-2222-2222-222222222222";
+        String swu = call("GET", "/api/app/cards?game=swu&q=vader", owner, null)
+                .body().get(0).path("id").asText();
+        var magicLine = Map.of("cardId", magic, "finish", "normal", "condition", "NM", "quantity", 1);
+        var swuLine = Map.of("cardId", swu, "finish", "normal", "condition", "NM", "quantity", 1);
+        var magicTrade = Map.of("payment", "credit", "lines", List.of(magicLine));
+        var swuTrade = Map.of("payment", "credit", "lines", List.of(swuLine));
+        String setting = "/api/app/trade-acceptance?game=magic-the-gathering";
+
+        String staffEmail = "selective-staff-" + UUID.randomUUID() + "@example.com";
+        assertEquals(200, call("POST", "/api/app/staff", owner, Map.of("name", "Sam", "email", staffEmail)).status());
+        String staff = auth0SignIn("auth0|" + UUID.randomUUID(), staffEmail, true).cookie();
+        assertEquals(403, call("PUT", setting, staff, Map.of("accepting", false)).status());
+
+        assertTrue(call("GET", setting, owner, null).body().path("accepting").asBoolean());
+        assertEquals(400, call("GET", "/api/app/trade-acceptance?game=", owner, null).status());
+        assertEquals(400, call("PUT", setting, owner, Map.of()).status(), "the switch needs an explicit value");
+        assertEquals(200, call("PUT", "/api/app/rates?game=magic-the-gathering", owner, Map.of("rules", List.of(
+                Map.of("thresholdMin", 0, "creditRate", 0.6, "checkRate", 0.5)))).status());
+        String location = call("GET", "/api/app/store", owner, null).body().path("locations").get(0).path("id").asText();
+        assertEquals(200, call("POST", "/api/app/inventory", owner, Map.of("cardId", magic, "finish", "normal",
+                "condition", "NM", "quantity", 1, "locationId", location)).status());
+
+        assertEquals(200, call("PUT", setting, owner, Map.of("accepting", false)).status());
+        assertFalse(call("GET", setting, owner, null).body().path("accepting").asBoolean());
+        assertTrue(call("GET", setting, other, null).body().path("accepting").asBoolean(), "another store is independent");
+        assertFalse(call("GET", "/api/app/games", owner, null).body().path("games").get(0).path("acceptingTrades").asBoolean());
+        assertTrue(call("GET", "/api/app/games", owner, null).body().path("games").get(1).path("acceptingTrades").asBoolean());
+        assertEquals(400, call("POST", "/api/app/trades/quote", owner, magicTrade).status());
+        assertEquals(400, call("POST", "/api/app/trades", owner, magicTrade).status());
+        assertEquals(400, call("POST", "/api/app/trades/quote", owner,
+                Map.of("payment", "credit", "lines", List.of(magicLine, swuLine))).status());
+        assertEquals(200, call("POST", "/api/app/trades/quote", owner, swuTrade).status());
+        assertEquals(200, call("GET", "/api/app/inventory?q=ragavan", owner, null).status());
+        assertEquals(1, call("GET", "/api/app/inventory?q=ragavan", owner, null).body().path("items").size());
+        assertEquals(0.6, call("GET", "/api/app/rates?game=magic-the-gathering", owner, null)
+                .body().path("rules").get(0).path("creditRate").asDouble());
+        assertEquals(200, call("PUT", setting, owner, Map.of("accepting", true)).status());
+        assertEquals(200, call("POST", "/api/app/trades/quote", owner, magicTrade).status());
+    }
+
+    @Test
     void ownersEditTheStoreProfileAndLocations() throws Exception {
         String owner = signup("Profile Store", "p-" + UUID.randomUUID() + "@example.com");
         var store = call("GET", "/api/app/store", owner, null);
@@ -1747,6 +1792,18 @@ class CloudApiIntegrationTest {
                 "quantity", 1, "locationId", main)).status());
         var stock = call("GET", "/api/app/inventory?q=charizard", admin, null).body().path("items").get(0);
         assertEquals("pokemon", stock.path("game").asText());
+
+        // A newly discovered segment gets its own rates and acceptance switch without a code allowlist.
+        assertEquals(200, call("PUT", "/api/app/rates?game=pokemon", admin, Map.of("rules", List.of(
+                Map.of("thresholdMin", 0, "creditRate", 0.7, "checkRate", 0.6)))).status());
+        assertEquals(200, call("PUT", "/api/app/trade-acceptance?game=pokemon", admin,
+                Map.of("accepting", false)).status());
+        assertEquals(400, call("POST", "/api/app/trades/quote", admin, Map.of("payment", "credit",
+                "lines", List.of(Map.of("cardId", id, "finish", "foil", "condition", "NM", "quantity", 1)))).status());
+        assertEquals("pokemon", call("GET", "/api/app/inventory?q=charizard", admin, null)
+                .body().path("items").get(0).path("game").asText());
+        assertEquals(200, call("PUT", "/api/app/trade-acceptance?game=pokemon", admin,
+                Map.of("accepting", true)).status());
 
         // Its price has evidence like any other, and once stocked it is recorded in the price history.
         assertEquals(404, call("GET", "/api/public/cards/" + id + "/evidence?finish=foil", null, null).status(),

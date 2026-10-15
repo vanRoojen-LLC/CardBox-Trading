@@ -14,8 +14,9 @@ interface Elsewhere { game: Game; count: number; more: boolean; names: string[] 
  * search in its own game has come back empty: it asks the other games as its own request, so the search itself never
  * waits on it. Either switches the game in place (onPick) or links to the price check for that game (link).
  */
-export default function OtherGames({ query, game, onPick, link }: {
-  query: string; game: Game; onPick?: (game: Game) => void; link?: (game: Game, query: string) => string
+export default function OtherGames({ query, game, onPick, link, allowedKeys }: {
+  query: string; game: Game; onPick?: (game: Game) => void; link?: (game: Game, query: string) => string;
+  allowedKeys?: string[]
 }) {
   const [found, setFound] = useState<Elsewhere[]>([])
   useEffect(() => {
@@ -29,7 +30,7 @@ export default function OtherGames({ query, game, onPick, link }: {
     return () => controller.abort()
   }, [query, game])
 
-  return <>{found.map(e => {
+  return <>{found.filter(e => !allowedKeys || allowedKeys.includes(e.game)).map(e => {
     const matches = `${e.count}${e.more ? '+' : ''} ${e.count === 1 && !e.more ? 'match' : 'matches'} in ${label(e.game)}`
     return (
       <p key={e.game} className="elsewhere">
@@ -47,8 +48,11 @@ export default function OtherGames({ query, game, onPick, link }: {
  * search in a "More games" picker you can type into, with preview games under their own heading (only people on the
  * Preview list see those). `scope` says which list: the free price check's ('public') or a signed-in store's ('app').
  */
-export function GameSwitch({ game, onChange, scope = 'app' }: { game: Game; onChange: (game: Game) => void; scope?: GameScope }) {
-  const games = useGames(scope)
+export function GameSwitch({ game, onChange, scope = 'app', acceptingOnly = false }: {
+  game: Game; onChange: (game: Game) => void; scope?: GameScope; acceptingOnly?: boolean
+}) {
+  const allGames = useGames(scope)
+  const games = acceptingOnly ? allGames.filter(g => g.acceptingTrades !== false) : allGames
   const native = games.filter(g => g.key === 'mtg' || g.key === 'swu')
   const more = games.filter(g => g.key !== 'mtg' && g.key !== 'swu')
   return (

@@ -4,6 +4,7 @@ import com.cardpricer.cloud.auth.CurrentUser;
 import com.cardpricer.cloud.cardbox.CardBoxClient;
 import com.cardpricer.cloud.cardbox.CardBoxTokens;
 import com.cardpricer.cloud.cardbox.StoreNames;
+import com.cardpricer.cloud.catalog.TcgGames;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.cardpricer.cloud.web.ApiException;
 import com.cardpricer.model.BuyRateRule;
@@ -38,6 +39,7 @@ import java.util.UUID;
 public class StoreController {
     public record Rule(@NotNull BigDecimal thresholdMin, @NotNull BigDecimal creditRate, @NotNull BigDecimal checkRate) {}
     public record RatesBody(@NotNull @Size(min = 1, max = 20) List<@Valid Rule> rules) {}
+    public record AcceptanceBody(@NotNull Boolean accepting) {}
     /** {@code adjust} is the share of the normal offer paid at that level: 1 keeps it, 0.9 pays 90% of it. */
     public record ConfidenceRule(@NotNull @Pattern(regexp = "high|medium|low") String level, @NotNull BigDecimal adjust,
                                  boolean review) {}
@@ -52,15 +54,20 @@ public class StoreController {
                                @Size(max = 40) String phone, Boolean archived) {}
 
     private final RateRepository rates;
+    private final TradeAcceptance acceptance;
+    private final TcgGames games;
     private final ConfidenceRules confidenceRules;
     private final JdbcTemplate jdbc;
     private final CardBoxClient cardbox;
     private final CardBoxTokens tokens;
     private final StoreNames storeNames;
 
-    public StoreController(RateRepository rates, ConfidenceRules confidenceRules, JdbcTemplate jdbc, CardBoxClient cardbox,
+    public StoreController(RateRepository rates, TradeAcceptance acceptance, TcgGames games,
+                           ConfidenceRules confidenceRules, JdbcTemplate jdbc, CardBoxClient cardbox,
                            CardBoxTokens tokens, StoreNames storeNames) {
         this.rates = rates;
+        this.acceptance = acceptance;
+        this.games = games;
         this.confidenceRules = confidenceRules;
         this.jdbc = jdbc;
         this.cardbox = cardbox;
@@ -185,7 +192,7 @@ public class StoreController {
     @GetMapping("/rates")
     public Map<String, Object> rates(@RequestParam(defaultValue = "") String game, HttpServletRequest request) {
         UUID tenant = CurrentUser.of(request).tenantId();
-        game = game(game);
+        game = game(game, request);
         return Map.of("game", game, "own", game.isEmpty() || !rates.own(tenant, game).isEmpty(),
                 "rules", rates.rules(tenant, game).stream().map(r -> new Rule(r.thresholdMin, r.creditRate, r.checkRate)).toList());
     }
@@ -195,7 +202,7 @@ public class StoreController {
     public Map<String, Object> saveRates(@RequestParam(defaultValue = "") String game, @Valid @RequestBody RatesBody body,
                                          HttpServletRequest request) {
         CurrentUser user = requireOwner(request);
-        game = game(game);
+        game = game(game, request);
         var seen = new HashSet<BigDecimal>();
         List<BuyRateRule> rules = body.rules().stream().map(r -> {
             var rule = new BuyRateRule(r.thresholdMin().setScale(2, java.math.RoundingMode.HALF_UP), r.creditRate(), r.checkRate());
@@ -212,7 +219,7 @@ public class StoreController {
     @DeleteMapping("/rates")
     public Map<String, Object> resetRates(@RequestParam String game, HttpServletRequest request) {
         CurrentUser user = requireOwner(request);
-        game = game(game);
+        game = game(game, request);
         if (game.isEmpty()) throw ApiException.badRequest("The store's default rates can't be removed");
         rates.replace(user.tenantId(), game, List.of());
         return rates(game, request);
@@ -221,7 +228,7 @@ public class StoreController {
     @GetMapping("/confidence-rules")
     public Map<String, Object> confidenceRules(@RequestParam(defaultValue = "") String game, HttpServletRequest request) {
         UUID tenant = CurrentUser.of(request).tenantId();
-        game = game(game);
+        game = game(game, request);
         return Map.of("game", game, "own", game.isEmpty() || confidenceRules.hasOwn(tenant, game),
                 "rules", confidenceRules.rules(tenant, game).stream()
                         .map(r -> new ConfidenceRule(r.level().name(), r.adjust(), r.review())).toList());
@@ -231,7 +238,7 @@ public class StoreController {
     public Map<String, Object> saveConfidenceRules(@RequestParam(defaultValue = "") String game,
                                                    @Valid @RequestBody ConfidenceBody body, HttpServletRequest request) {
         CurrentUser user = requireOwner(request);
-        game = game(game);
+        game = game(game, request);
         var seen = new HashSet<String>();
         List<ConfidenceRules.Rule> rules = body.rules().stream().map(r -> {
             if (!seen.add(r.level())) throw ApiException.badRequest("Each confidence level can only appear once");
@@ -248,16 +255,33 @@ public class StoreController {
     @DeleteMapping("/confidence-rules")
     public Map<String, Object> resetConfidenceRules(@RequestParam String game, HttpServletRequest request) {
         CurrentUser user = requireOwner(request);
-        game = game(game);
+        game = game(game, request);
         if (game.isEmpty()) throw ApiException.badRequest("The store's default rules can't be removed");
         confidenceRules.replace(user.tenantId(), game, List.of());
         return confidenceRules(game, request);
     }
 
-    private static String game(String game) {
+    @GetMapping("/trade-acceptance")
+    public Map<String, Object> tradeAcceptance(@RequestParam String game, HttpServletRequest request) {
+        String segment = game(game, request);
+        if (segment.isEmpty()) throw ApiException.badRequest("Pick a segment");
+        return Map.of("game", segment, "accepting", acceptance.accepting(CurrentUser.of(request).tenantId(), segment));
+    }
+
+    @PutMapping("/trade-acceptance")
+    public Map<String, Object> saveTradeAcceptance(@RequestParam String game, @Valid @RequestBody AcceptanceBody body,
+                                                    HttpServletRequest request) {
+        CurrentUser user = requireOwner(request);
+        String segment = game(game, request);
+        if (segment.isEmpty()) throw ApiException.badRequest("Pick a segment");
+        acceptance.set(user.tenantId(), segment, body.accepting());
+        return tradeAcceptance(segment, request);
+    }
+
+    private String game(String game, HttpServletRequest request) {
         String g = game == null ? "" : game.trim();
-        if (!g.isEmpty() && !RateRepository.GAMES.contains(g))
-            throw ApiException.badRequest("game must be one of " + RateRepository.GAMES);
+        if (!g.isEmpty() && games.list(CurrentUser.of(request).preview()).stream().noneMatch(x -> x.segment().equals(g)))
+            throw ApiException.badRequest("Unknown segment");
         return g;
     }
 

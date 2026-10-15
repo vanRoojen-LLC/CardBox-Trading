@@ -125,6 +125,12 @@ public class CatalogRepository {
                 .stream().findFirst();
     }
 
+    /** The segment for a tradable card, including one whose price evidence has not arrived yet. */
+    public Optional<String> segment(UUID id) {
+        return jdbc.query("SELECT game FROM inventory_cards WHERE id = ?", (rs, i) -> rs.getString(1), id)
+                .stream().findFirst();
+    }
+
     public Optional<Instant> lastImport() {
         return jdbc.query("SELECT max(finished_at) FROM catalog_imports WHERE error IS NULL AND game = 'magic-the-gathering'",
                 (rs, i) -> rs.getTimestamp(1)).stream().filter(java.util.Objects::nonNull).map(java.sql.Timestamp::toInstant).findFirst();

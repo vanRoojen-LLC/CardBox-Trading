@@ -1,5 +1,6 @@
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import { api, type Me } from '../api'
+import { gameName, refreshAppGames, useGames } from '../games'
 
 /** `id` only keys the row on screen, so removing one row never shifts another's typing into it. */
 interface Rule { id: number; thresholdMin: string; creditRate: string; checkRate: string }
@@ -9,22 +10,21 @@ const pct = (rate: number) => String(Math.round(rate * 10000) / 100)
 let nextId = 1
 const values = (rules: Rule[]) => JSON.stringify(rules.map(({ thresholdMin, creditRate, checkRate }) => [thresholdMin, creditRate, checkRate]))
 
-const GAMES = [['', 'Every game'], ['magic-the-gathering', 'Magic'], ['star-wars-unlimited', 'Star Wars: Unlimited']] as const
-type Game = typeof GAMES[number][0]
-const gameName = (game: Game) => GAMES.find(([key]) => key === game)![1]
-const query = (game: Game) => game ? `?game=${game}` : ''
+type Game = string
+const query = (game: Game) => game ? `?game=${encodeURIComponent(game)}` : ''
 
 /** What each part of the page hands the one save bar: check its boxes, save if changed, or put back what is saved. */
 interface Part { check: () => string | null; save: () => Promise<boolean>; discard: () => void }
 
 export default function Rates({ me }: { me: Me }) {
+  const games = useGames('app')
   const [game, setGame] = useState<Game>('')
-  const [dirtyParts, setDirtyParts] = useState({ rates: false, trust: false })
-  const ratesPart = useRef<Part>(null), trustPart = useRef<Part>(null)
+  const [dirtyParts, setDirtyParts] = useState({ acceptance: false, rates: false, trust: false })
+  const acceptancePart = useRef<Part>(null), ratesPart = useRef<Part>(null), trustPart = useRef<Part>(null)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
-  const dirty = dirtyParts.rates || dirtyParts.trust
+  const dirty = dirtyParts.acceptance || dirtyParts.rates || dirtyParts.trust
   useEffect(() => { if (dirty) setMessage('') }, [dirty])
   // Leaving or reloading the page with unsaved changes asks first.
   useEffect(() => {
@@ -36,7 +36,8 @@ export default function Rates({ me }: { me: Me }) {
   /** One save for the whole page: every box is checked first, so nothing half-saves. */
   async function saveAll() {
     if (saving) return
-    const parts = [dirtyParts.rates && ratesPart.current, dirtyParts.trust && trustPart.current].filter(Boolean) as Part[]
+    const parts = [dirtyParts.acceptance && acceptancePart.current, dirtyParts.rates && ratesPart.current,
+      dirtyParts.trust && trustPart.current].filter(Boolean) as Part[]
     const problem = parts.map(p => p.check()).find(Boolean)
     if (problem) { setError(problem); setMessage(''); return }
     setSaving(true); setError('')
@@ -46,31 +47,35 @@ export default function Rates({ me }: { me: Me }) {
       if (ok) setMessage('Changes saved.')
     } finally { setSaving(false) }
   }
-  const discard = () => { ratesPart.current?.discard(); trustPart.current?.discard(); setError('') }
+  const discard = () => { acceptancePart.current?.discard(); ratesPart.current?.discard(); trustPart.current?.discard(); setError('') }
   const pick = (next: Game) => {
     if (next === game) return
     if (dirty && !window.confirm('Leave without saving your changes?')) return
+    setDirtyParts({ acceptance: false, rates: false, trust: false })
     setGame(next)
   }
   const owner = me.role === 'owner'
   return (
     <section className="rates">
       <h1>Buy rates</h1>
-      <div className="seg wide" role="tablist" aria-label="Rates for">
-        {GAMES.map(([key, label]) => (
-          <button key={key} type="button" role="tab" aria-selected={game === key} aria-pressed={game === key} onClick={() => pick(key)}>{label}</button>
-        ))}
-      </div>
+      <label style={{ maxWidth: 420 }}>Segment
+        <select value={game} onChange={e => pick(e.target.value)}>
+          <option value="">Every game (default rates)</option>
+          {games.map(g => <option key={g.segment} value={g.segment}>{g.name}</option>)}
+        </select>
+      </label>
       <p className="muted small" style={{ marginTop: 8 }}>{game
-        ? `${gameName(game)} cards use these rates and confidence rules. Until you save its own, it uses the ones under Every game.`
+        ? `${gameName(game) ?? game} cards use these rates and confidence rules. Until you save its own, it uses the ones under Every game.`
         : 'The store’s default rates and confidence rules. A game can have its own; pick it above.'}</p>
+      {game && <TradeAcceptance key={`acceptance${game}`} ref={acceptancePart} owner={owner} game={game}
+        name={gameName(game) ?? game} onDirty={d => setDirtyParts(p => ({ ...p, acceptance: d }))} />}
       <BuyRates key={`rates${game}`} ref={ratesPart} owner={owner} game={game} onDirty={d => setDirtyParts(p => ({ ...p, rates: d }))} />
       <ConfidenceRules key={`trust${game}`} ref={trustPart} owner={owner} game={game} onDirty={d => setDirtyParts(p => ({ ...p, trust: d }))} />
       {owner && (dirty || saving || message || error) && (
         <div className="save-bar" role="region" aria-label="Save changes">
           {error ? <span className="error" role="alert">{error}</span>
             : message && !dirty ? <span className="ok" role="status">{message}</span>
-            : <span role="status">Unsaved changes{dirtyParts.rates && dirtyParts.trust ? ' to rates and confidence rules' : dirtyParts.rates ? ' to rates' : ' to confidence rules'}</span>}
+            : <span role="status">Unsaved changes</span>}
           {dirty && <span className="save-bar-actions">
             <button type="button" className="secondary" disabled={saving} onClick={discard}>Discard</button>
             <button type="button" disabled={saving} onClick={saveAll}>{saving ? 'Saving…' : 'Save changes'}</button></span>}
@@ -78,6 +83,45 @@ export default function Rates({ me }: { me: Me }) {
       )}
     </section>
   )
+}
+
+/** The trade switch is separate from rates: stock and price checks still work while buying is closed. */
+function TradeAcceptance({ owner, game, name, onDirty, ref }: {
+  owner: boolean; game: Game; name: string; onDirty: (dirty: boolean) => void; ref: Ref<Part>
+}) {
+  const [accepting, setAccepting] = useState<boolean | null>(null)
+  const [saved, setSaved] = useState(true)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    api<{ accepting: boolean }>(`/api/app/trade-acceptance${query(game)}`)
+      .then(data => { setAccepting(data.accepting); setSaved(data.accepting) })
+      .catch(e => setError(e.message))
+  }, [game])
+  const dirty = accepting !== null && accepting !== saved
+  useEffect(() => { onDirty(dirty) }, [dirty])
+  useImperativeHandle(ref, () => ({
+    check: () => null,
+    save: async () => {
+      if (accepting === null) return true
+      try {
+        const data = await api<{ accepting: boolean }>(`/api/app/trade-acceptance${query(game)}`,
+          { method: 'PUT', body: { accepting } })
+        setAccepting(data.accepting); setSaved(data.accepting); setError(''); refreshAppGames()
+        return true
+      } catch (e) { setError(`Trade acceptance not saved: ${(e as Error).message}`); return false }
+    },
+    discard: () => { setAccepting(saved); setError('') },
+  }))
+  return <section aria-label={`${name} trade acceptance`}>
+    <h2>Accepting trades</h2>
+    <p className="lede">Close this segment to new trades while keeping its inventory and price checks available. Its buy rates stay saved for when you reopen it.</p>
+    {accepting === null ? <p className="muted">Loading…</p> : <label className="inline">
+      <input type="checkbox" checked={accepting} disabled={!owner} onChange={e => setAccepting(e.target.checked)} />
+      Accept {name} trades
+    </label>}
+    {!owner && <p className="muted">Only the store owner can change trade acceptance.</p>}
+    {error && <p className="error" role="alert">{error}</p>}
+  </section>
 }
 
 /** One game's buy-rate tiers, or the store's default. */

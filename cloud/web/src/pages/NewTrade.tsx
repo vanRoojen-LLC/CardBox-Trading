@@ -4,6 +4,7 @@ import { aborted, api, CONDITIONS, FINISHES, money, type Card } from '../api'
 import CardLightbox from '../CardLightbox'
 import SearchIcon from '../SearchIcon'
 import OtherGames, { GameSwitch, type Game } from '../OtherGames'
+import { useGames } from '../games'
 import { ConfidenceBadge, EvidencePanel, type ConfidenceLevel, type Reason } from '../PriceEvidence'
 
 interface Line { key: number; card: Card; finish: string; condition: string; quantity: number }
@@ -75,10 +76,12 @@ const lineId = (key: number) => `trade-line-${key}`
  * progress for this person and store, so switching store or signing in as someone else never shows it.
  */
 export default function NewTrade({ locationId, draftKey }: { locationId: string | null; draftKey: string }) {
+  const availableGames = useGames('app').filter(g => g.acceptingTrades !== false)
   const [draft] = useState(() => loadDraft(draftKey))
   const [query, setQuery] = useState('')
   // Which game's catalog the search looks in; a search that finds nothing offers the other.
   const [game, setGame] = useState<Game>('mtg')
+  const selectedGame = availableGames.some(g => g.key === game) ? game : (availableGames[0]?.key ?? game)
   const [results, setResults] = useState<Card[]>([])
   const [active, setActive] = useState(0)
   const [noMatch, setNoMatch] = useState<string | false>(false)
@@ -124,16 +127,16 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
   }, [draftKey, lines, payment, splitCredit, phone, customerName, checkNumber])
 
   useEffect(() => {
-    if (query.trim().length < 2) { setResults([]); setNoMatch(false); return }
+    if (query.trim().length < 2 || availableGames.length === 0) { setResults([]); setNoMatch(false); return }
     // Typing on cancels the last search, so a slow reply for "li" never replaces the results for "lightning".
     const controller = new AbortController()
     const timer = setTimeout(() => {
-      api<Card[]>(`/api/app/cards?game=${game}&q=${encodeURIComponent(query.trim())}`, { signal: controller.signal })
+      api<Card[]>(`/api/app/cards?game=${selectedGame}&q=${encodeURIComponent(query.trim())}`, { signal: controller.signal })
         .then(r => { setResults(r); setActive(0); setNoMatch(r.length === 0 ? query.trim() : false); setSearchError('') })
         .catch(e => { if (!aborted(e)) setSearchError(e.message) })
     }, 250)
     return () => { clearTimeout(timer); controller.abort() }
-  }, [query, game])
+  }, [query, selectedGame, availableGames.length])
 
   // A returning customer's name fills in once their full phone number is typed.
   useEffect(() => {
@@ -298,10 +301,11 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
           </p>
         )}
         <div className="picker">
-          <GameSwitch game={game} onChange={g => { setGame(g); setNoMatch(false); searchRef.current?.focus() }} />
+          <GameSwitch game={selectedGame} acceptingOnly onChange={g => { setGame(g); setNoMatch(false); searchRef.current?.focus() }} />
+          {availableGames.length === 0 && <p className="notice">This store is not accepting trades in any segment. The owner can reopen one under Buy rates.</p>}
           <div className="search">
             <SearchIcon />
-            <input ref={searchRef} autoFocus placeholder="Add a card: name, set or number, e.g. DMU 391" value={query}
+            <input ref={searchRef} autoFocus disabled={availableGames.length === 0} placeholder="Add a card: name, set or number, e.g. DMU 391" value={query}
                    onChange={e => setQuery(e.target.value)} onKeyDown={onSearchKey} aria-label="Add a card"
                    role="combobox" aria-autocomplete="list" aria-expanded={results.length > 0} aria-controls="matches"
                    aria-activedescendant={results[active] ? `match-${active}` : undefined} />
@@ -309,7 +313,8 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
           </div>
           {noMatch && query.trim().length >= 2 && <>
             <p className="muted">No cards found.</p>
-            <OtherGames query={noMatch} game={game} onPick={g => { setGame(g); setNoMatch(false); searchRef.current?.focus() }} />
+            <OtherGames query={noMatch} game={selectedGame} allowedKeys={availableGames.map(g => g.key)}
+              onPick={g => { setGame(g); setNoMatch(false); searchRef.current?.focus() }} />
           </>}
           {searchError && <p className="error" role="alert">{searchError}</p>}
           {results.length > 0 && (

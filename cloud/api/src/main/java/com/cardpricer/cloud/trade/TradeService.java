@@ -7,6 +7,7 @@ import com.cardpricer.cloud.catalog.PriceEvidence;
 import com.cardpricer.cloud.store.ConfidenceRules;
 import com.cardpricer.cloud.inventory.InventoryRepository;
 import com.cardpricer.cloud.store.RateRepository;
+import com.cardpricer.cloud.store.TradeAcceptance;
 import com.cardpricer.cloud.web.ApiException;
 import com.cardpricer.model.BuyRateRule;
 import com.cardpricer.model.Card;
@@ -58,6 +59,7 @@ public class TradeService {
 
     private final CatalogRepository catalog;
     private final RateRepository rates;
+    private final TradeAcceptance acceptance;
     private final JdbcTemplate jdbc;
     private final InventoryRepository inventory;
     private final PriceEvidence evidence;
@@ -65,12 +67,14 @@ public class TradeService {
     private final PricingService pricing = new PricingService();
     private final SettlementEngine engine = new SettlementEngine();
 
-    public TradeService(CatalogRepository catalog, RateRepository rates, JdbcTemplate jdbc, InventoryRepository inventory,
+    public TradeService(CatalogRepository catalog, RateRepository rates, TradeAcceptance acceptance,
+                        JdbcTemplate jdbc, InventoryRepository inventory,
                         PriceEvidence evidence, ConfidenceRules confidenceRules) {
         this.evidence = evidence;
         this.confidenceRules = confidenceRules;
         this.catalog = catalog;
         this.rates = rates;
+        this.acceptance = acceptance;
         this.jdbc = jdbc;
         this.inventory = inventory;
     }
@@ -91,6 +95,7 @@ public class TradeService {
         var evidenceByLine = evidence.evidence(inputs.stream().filter(i -> i.cardId() != null)
                 .map(i -> new PriceEvidence.Key(i.cardId(), i.finish() == null ? "normal" : i.finish())).toList(), Instant.now());
         List<PricedLine> lines = inputs.stream().map(input -> price(input, ratesFor, trustFor, evidenceByLine)).toList();
+        lines.stream().map(PricedLine::game).distinct().forEach(game -> acceptance.requireAccepting(tenant, game));
         List<SettlementEngine.Line> settlementLines = new ArrayList<>();
         for (int i = 0; i < lines.size(); i++) settlementLines.add(lines.get(i).settlementLine(i));
         var creditOnly = engine.settle(settlementLines, "credit", BigDecimal.ZERO, BigDecimal.ZERO);
@@ -125,7 +130,8 @@ public class TradeService {
         // How far the price can be trusted, and the blended value of every source Trading holds for it.
         var found = evidenceByLine.get(new PriceEvidence.Key(card.id(), finish));
         BigDecimal market = found != null && found.market() != null ? found.market() : tcgplayer;
-        String game = found == null ? RateRepository.DEFAULT : found.game();
+        String game = found == null ? catalog.segment(card.id()).orElseThrow(() ->
+                ApiException.badRequest("The card's segment is unavailable")) : found.game();
         BigDecimal base = pricing.applyPricingRules(market, card.rarity());
         BigDecimal valuation = pricing.applyConditionMultiplier(base, condition).setScale(2, RoundingMode.HALF_UP);
         BuyRateRule rule = RateRepository.match(rules.apply(game), valuation);
@@ -156,9 +162,11 @@ public class TradeService {
 
     @Transactional
     public UUID save(UUID tenant, UUID user, UUID location, Quote quote, String phone, String customerName, String checkNumber) {
-        UUID customer = upsertCustomer(tenant, phone, customerName);
         // Lock the tenant row so trade numbers stay sequential per store.
         jdbc.queryForObject("SELECT id FROM tenants WHERE id = ? FOR UPDATE", UUID.class, tenant);
+        // An owner may have closed a segment after the quote was prepared. Check again under the same lock as the switch.
+        quote.lines().stream().map(PricedLine::game).distinct().forEach(game -> acceptance.requireAccepting(tenant, game));
+        UUID customer = upsertCustomer(tenant, phone, customerName);
         long number = jdbc.queryForObject("SELECT coalesce(max(number), 0) + 1 FROM trades WHERE tenant_id = ?", Long.class, tenant);
         UUID id = UUID.randomUUID();
         var s = quote.settlement();
