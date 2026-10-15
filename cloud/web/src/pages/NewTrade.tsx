@@ -81,9 +81,7 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
   const [query, setQuery] = useState('')
   // Which game's catalog the search looks in; a search that finds nothing offers the other.
   const [game, setGame] = useState<Game>('mtg')
-  useEffect(() => {
-    if (availableGames.length && !availableGames.some(g => g.key === game)) setGame(availableGames[0].key)
-  }, [availableGames, game])
+  const selectedGame = availableGames.some(g => g.key === game) ? game : (availableGames[0]?.key ?? game)
   const [results, setResults] = useState<Card[]>([])
   const [active, setActive] = useState(0)
   const [noMatch, setNoMatch] = useState<string | false>(false)
@@ -133,12 +131,12 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
     // Typing on cancels the last search, so a slow reply for "li" never replaces the results for "lightning".
     const controller = new AbortController()
     const timer = setTimeout(() => {
-      api<Card[]>(`/api/app/cards?game=${game}&q=${encodeURIComponent(query.trim())}`, { signal: controller.signal })
+      api<Card[]>(`/api/app/cards?game=${selectedGame}&q=${encodeURIComponent(query.trim())}`, { signal: controller.signal })
         .then(r => { setResults(r); setActive(0); setNoMatch(r.length === 0 ? query.trim() : false); setSearchError('') })
         .catch(e => { if (!aborted(e)) setSearchError(e.message) })
     }, 250)
     return () => { clearTimeout(timer); controller.abort() }
-  }, [query, game, availableGames.length])
+  }, [query, selectedGame, availableGames.length])
 
   // A returning customer's name fills in once their full phone number is typed.
   useEffect(() => {
@@ -303,7 +301,7 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
           </p>
         )}
         <div className="picker">
-          <GameSwitch game={game} acceptingOnly onChange={g => { setGame(g); setNoMatch(false); searchRef.current?.focus() }} />
+          <GameSwitch game={selectedGame} acceptingOnly onChange={g => { setGame(g); setNoMatch(false); searchRef.current?.focus() }} />
           {availableGames.length === 0 && <p className="notice">This store is not accepting trades in any segment. The owner can reopen one under Buy rates.</p>}
           <div className="search">
             <SearchIcon />
@@ -315,7 +313,7 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
           </div>
           {noMatch && query.trim().length >= 2 && <>
             <p className="muted">No cards found.</p>
-            <OtherGames query={noMatch} game={game} allowedKeys={availableGames.map(g => g.key)}
+            <OtherGames query={noMatch} game={selectedGame} allowedKeys={availableGames.map(g => g.key)}
               onPick={g => { setGame(g); setNoMatch(false); searchRef.current?.focus() }} />
           </>}
           {searchError && <p className="error" role="alert">{searchError}</p>}
