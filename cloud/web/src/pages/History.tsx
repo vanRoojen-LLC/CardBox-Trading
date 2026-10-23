@@ -46,7 +46,8 @@ export function History({ locations }: { locations: StoreLocation[] }) {
   const shown = partial ? [] : trades ?? []
   const today = shown.filter(t => sameDay(new Date(t.created_at), new Date()))
   const capped = today.length >= 50
-  const sum = (key: 'credit_total' | 'check_total') => paymentTotals(today,key) + (capped ? '+' : '')
+  const sum = (key: 'credit_total' | 'check_total') => paymentTotals(today,key).map(total =>
+    <strong className="native-payment-total" key={total}>{total}{capped ? '+' : ''}</strong>)
 
   return (
     <section>
@@ -63,8 +64,8 @@ export function History({ locations }: { locations: StoreLocation[] }) {
       {!phone && trades && (
         <div className="stats">
           <div className="stat"><span>Trades today{location ? ' here' : ''}</span><strong>{capped ? '50+' : today.length}</strong></div>
-          <div className="stat copper"><span>Credit paid out today</span><strong>{sum('credit_total')}</strong></div>
-          <div className="stat"><span>Checks written today</span><strong>{sum('check_total')}</strong></div>
+          <div className="stat copper"><span>Credit paid out today</span>{sum('credit_total')}</div>
+          <div className="stat"><span>Checks written today</span>{sum('check_total')}</div>
         </div>
       )}
       {error && <p className="error">{error}</p>}
@@ -78,8 +79,8 @@ export function History({ locations }: { locations: StoreLocation[] }) {
                 <td className="num t-when">{when(t.created_at)}</td>
                 <td className="t-customer">{t.customer_name || (t.customer_phone ? 'Customer' : 'Walk-in')}<div className="muted small num">{phoneText(t.customer_phone)}</div></td>
                 <td className="r t-cards">{t.cards}<span className="t-unit"> card{t.cards === 1 ? '' : 's'}</span></td>
-                <td className="r credit t-credit">{Number(t.credit_total) > 0 ? <>{paymentMoney(t.credit_total,t.actual_payment_currency)}<span className="t-unit"> credit</span></> : <span className="t-none">—</span>}</td>
-                <td className="r t-check">{Number(t.check_total) > 0 ? <>{paymentMoney(t.check_total,t.actual_payment_currency)}<span className="t-unit"> check</span></> : <span className="t-none">—</span>}</td>
+                <td className="r credit t-credit">{Number(t.credit_total) > 0 ? <>{t.actual_payment_currency ? paymentMoney(t.credit_total,t.actual_payment_currency) : Number(t.credit_total).toFixed(2)}<span className="t-unit"> credit</span>{!t.actual_payment_currency && <small className="currency-unknown">Currency unrecorded</small>}</> : <span className="t-none">—</span>}</td>
+                <td className="r t-check">{Number(t.check_total) > 0 ? <>{t.actual_payment_currency ? paymentMoney(t.check_total,t.actual_payment_currency) : Number(t.check_total).toFixed(2)}<span className="t-unit"> check</span>{!t.actual_payment_currency && <small className="currency-unknown">Currency unrecorded</small>}</> : <span className="t-none">—</span>}</td>
                 {several && <td className="t-location">{t.location}</td>}
                 <td className="t-by">{t.created_by}</td>
                 <td className="t-csv"><a href={`/api/app/trades/${t.id}/pos.csv`} onClick={e => e.stopPropagation()}>CSV</a></td>

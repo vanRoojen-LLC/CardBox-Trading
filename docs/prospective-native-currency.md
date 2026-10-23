@@ -16,8 +16,8 @@ must first establish compatible receiver retention, then enable a producer revis
 existing pending/receipt/ACK transport remains off until its reviewed activation gate. Work must
 refresh from actual master after PR81 lands before touching its producer integration; never stack.
 
-Initial work is pure contract/design/tests and prospective capture against current master. Migration
-DDL follows the claimed number and reviewed contract. No paid calls, new credentials, live enabling,
+This branch implements prospective capture and a standalone monetary-domain contract against current
+master. Its additive DDL follows the claimed number and reviewed contract. No paid calls, new credentials, live enabling,
 production writes, retail checkout/refund implementation or arbitrary provider assumptions are in scope.
 
 ## Implemented capture and draft contract
@@ -67,5 +67,11 @@ EUR capture with unchanged allocations/authenticated confirmer, absent/invalid c
 constraint, failed-inventory transaction rollback, unchanged old quote/history/POS behavior, V34→V36
 prior-row/old-insert compatibility, precision and standalone v2 domain rules. Web production build and
 two native-format/grouped-total tests pass; the tests join the existing web CI job. Lint succeeds with
-existing repository warnings. Rendered synthetic checkout/history checks and latest-head CI are still
-being completed. No paid provider, new credential, production write or live enablement occurred.
+existing repository warnings. Rendered actual NewTrade/History checks used a synthetic fetch-only fixture outside the repository:
+blank default, checked EUR confirmation, quantity-change invalidation, exact save payload, native and
+unknown grouped totals, and desktop/mobile390/320 bounds passed. The first mobile pass exposed a
+crowded legacy unknown label; it was fixed with a separate small label and compact per-currency totals,
+then rechecked visually. Console had no errors/warnings. Evidence:
+`/private/tmp/native-currency-history-mobile-fixed.png` and the local fixture screenshots. Browser plugin
+unavailable; installed Playwright CLI used. Initial implementation Verify40037181112 and
+Cloud40037181647 were green; the mobile correction requires renewed latest-head CI. No paid provider, new credential, production write or live enablement occurred.

@@ -13,7 +13,9 @@ test('history totals never sum different currencies or unknown legacy amounts to
     {actual_payment_currency:'USD',credit_total:20,check_total:2},
     {actual_payment_currency:'EUR',credit_total:1,check_total:3},
     {actual_payment_currency:null,credit_total:4,check_total:5}]
-  const text=paymentTotals(rows,'credit_total')
+  const groups=paymentTotals(rows,'credit_total')
+  assert.equal(groups.length,3)
+  const text=groups.join(' · ')
   assert.match(text,/4.00 \(currency unrecorded\)/)
   assert.match(text,/EUR\s+13[.,]50/)
   assert.match(text,/USD\s+20[.,]00/)
