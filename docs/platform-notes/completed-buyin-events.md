@@ -27,16 +27,21 @@ line inside the existing save transaction, by default. A stable server-derived e
 origin + trade UUID + line number + schema version. Source identity is server-owned, never supplied by
 a caller. The frozen body includes quantity, condition, finish, original Trading card ID, exact or
 candidate Club IDs, separate check and credit totals, and separate guide/valuation amounts. It omits
-customer, user, phone, check number and free text. A SHA256 covers the exact stored canonical body;
+customer, user, phone, check number and free text. A SHA256 covers canonical UTF-8 JSON (recursively sorted object keys, no extra whitespace,
+non-ASCII unescaped, integer counts and decimal strings preserved);
 replaying an event key with different facts is an explicit conflict. No retrospective event backfill.
 
 Outbound transport is off until the receiver is ready; recording remains on to avoid losing history.
+The immutable server-owned origin is `cardbox.trading`; published container builds inject the exact
+source revision via `SOURCE_REVISION`/`APP_SOURCE_REVISION`. Local builds truthfully record `unknown`.
 `GET /api/partner/club-sync/transaction-events?limit=200` returns at most 200 pending events and their
 payload digests, with no high-watermark cursor that could skip an uncommitted lower sequence. Repeated
-reads return the same facts until ACK. `POST /transaction-events/ack` accepts at most 200 receipts:
+reads return the same facts until ACK. A small mutable delivery queue is inserted atomically with
+the event; pending reads scan only that queue and join events by primary key, never scan acknowledged
+history. `POST /transaction-events/ack` accepts at most 200 receipts:
 `{event_id,payload_sha256,receiver_receipt_id}`. Every key/hash must match; any missing or conflicting
-receipt rolls back the whole ACK batch (409). An exact replay is idempotent. ACK appends a delivery
-receipt; it never mutates the event. The receiver must commit durable evidence before ACK. A lost ACK
+receipt rolls back the whole ACK batch (409). An exact replay is idempotent. ACK appends a delivery receipt and removes its queue row in the same transaction; it never mutates
+the event. Failed ACK batches retain every queue row. The receiver must commit durable evidence before ACK. A lost ACK
 only repeats delivery and is deduplicated by the receiver's stable source-event key.
 
 Both routes reuse the existing `ClubSyncAuth` trusted M2M issuer/audience/signature/expiry/allowed-client
@@ -62,3 +67,15 @@ Prior art: [Spring transaction boundaries](https://docs.spring.io/spring-framewo
 keep the event and existing save under one transaction. [Auth0 access-token validation](https://auth0.com/docs/secure/tokens/access-tokens/validate-access-tokens)
 supports reuse of the current audience, scope and standard claim checks; existing allow-listed client
 validation remains mandatory.
+
+## Implementation validation
+
+The bounded Java 21 Maven run passed 22 tests with zero failures/errors/skips: the existing
+`ClubSyncIntegrationTest` with five new producer/ACK cases (21 tests total), plus the default-off
+transport unit test. Testcontainers applied all 35 Flyway migrations to disposable PostgreSQL 17;
+Auth0/JWKS was a local stand-in. Coverage includes split credit/check precision, canonical payload SHA,
+source revision, exact/candidate/unresolved identity, original event replay/conflict, complete trade
+and stock rollback on an event failure, ACK rollback/idempotence, append-only history enforcement,
+and 1,000 acknowledged history rows excluded from the pending queue. No runtime credentials or
+production/provider endpoints were used. The build ran in an official Java/Maven container on the
+existing dsh development Docker host; no host JDK, Maven or service was installed.
