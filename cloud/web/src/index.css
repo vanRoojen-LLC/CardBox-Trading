@@ -890,4 +890,4 @@ label.inline input { min-height: 0; width: 20px; height: 20px; }
 /* Recorded native payments stay distinct from unknown legacy currency, including narrow history rows. */
 .stat strong.native-payment-total { font-size: 1.15rem; line-height: 1.5; margin-top: 4px; overflow-wrap: anywhere; }
 .grid.trades .currency-unknown { display: block; max-width: 130px; margin-left: auto; font-size: .75rem; line-height: 1.35; white-space: normal; color: var(--muted); }
-.line .credit, .line .check { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.line .market, .line .credit, .line .check { min-width: 0; white-space: normal; overflow-wrap: anywhere; }

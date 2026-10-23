@@ -33,8 +33,8 @@ constraint; no migration sets a currency on any old row. API history/detail expo
 Checkout defaults blank and binds confirmation to the exact quote request and code. Any card,
 quantity, payment/split or currency change requires a fresh confirmation. Native payment amounts and
 unknown legacy amounts display separately; today's history totals group by currency (including the
-unknown group) instead of combining different currencies. Guide currency remains unrecorded and is
-never inferred from a payment confirmation or a dollar symbol. POS CSV columns/calculations remain
+unknown group) instead of combining different currencies. Guide currency remains unrecorded in checkout search, per-line/per-unit figures, totals and saved
+detail, and is never inferred from a payment confirmation or a dollar symbol. POS CSV columns/calculations remain
 unchanged.
 
 `NativeTransactionMoney.version2Domains` is a standalone draft, not a live emitter or an upgrader of
