@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { aborted, api, CONDITIONS, FINISHES, type Card } from '../api'
 import CardLightbox from '../CardLightbox'
-import { paymentMoney } from '../nativeMoney'
+import { paymentMoney, unrecordedMoneyNumber } from '../nativeMoney'
 import SearchIcon from '../SearchIcon'
 import OtherGames, { GameSwitch, type Game } from '../OtherGames'
 import { useGames } from '../games'
@@ -45,6 +45,11 @@ function loadDraft(key: string): Draft {
 let nextKey = 1
 
 const VALUE_HELP = 'The market price after your pricing rules (rarity minimums and the like). Offers are worked out from this.'
+
+function UnrecordedMoney({ value }: { value: number | string | null | undefined }) {
+  return <span className="unrecorded-money" aria-label={paymentMoney(value, null)}>{unrecordedMoneyNumber(value)}
+    {value != null && <small>Currency unrecorded</small>}</span>
+}
 
 /** Quantity you can type into (40 commons is one entry, not 39 presses). Out-of-range or blank input snaps back on blur. */
 function QuantityInput({ value, label, onChange }: { value: number; label: string; onChange: (n: number) => void }) {
@@ -231,7 +236,8 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
   const needsCheckNumber = checkPaid && checkNumber.trim() === ''
   const needsReview = current && !!quote?.review && !reviewed
   const needsCurrencyConfirmation = !!actualPaymentCurrency && (!/^[A-Z]{3}$/.test(actualPaymentCurrency) || !actualCurrencyConfirmed)
-  const payout = (value: number | undefined) => paymentMoney(value, actualPaymentCurrency)
+  const payout = (value: number | undefined) => actualPaymentCurrency
+    ? paymentMoney(value, actualPaymentCurrency) : <UnrecordedMoney value={value} />
   const canSave = !needsCurrencyConfirmation && lines.length > 0 && current && !(payment === 'partial' && splitCredit === '') && !needsCheckNumber && !needsReview && !saving
   const save = useCallback(async () => {
     if (!canSave || savingRef.current) return
@@ -336,7 +342,7 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
                       <span className="meta">{card.set.toUpperCase()} #{card.number} · <span style={{ textTransform: 'capitalize' }}>{card.rarity}</span> · {card.setName}</span>
                     </span>
                     <span className="prices">
-                      {finishesOf(card).map(f => <span key={f.key}><small>{f.label}</small>{paymentMoney(f.price(card), null)}</span>)}
+                      {finishesOf(card).map(f => <span key={f.key}><small>{f.label}</small>{<UnrecordedMoney value={f.price(card)} />}</span>)}
                     </span>
                   </button>
                 </li>
@@ -400,8 +406,8 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
                       </div>
                     </div>
                     {/* Not the market price: the value the store's pricing rules give the card (rarity floors and the like). */}
-                    <div className="market" title={VALUE_HELP}>{paymentMoney(times(priced?.valuationUnit, line.quantity), null)}
-                      <small>{line.quantity > 1 ? `${paymentMoney(priced?.valuationUnit, null)} each` : 'our value'}</small></div>
+                    <div className="market" title={VALUE_HELP}>{<UnrecordedMoney value={times(priced?.valuationUnit, line.quantity)} />}
+                      <small>{line.quantity > 1 ? `${unrecordedMoneyNumber(priced?.valuationUnit)} each` : 'our value'}</small></div>
                     <div className="credit">{payout(times(priced?.creditUnit, line.quantity))}<small>credit</small></div>
                     <div className="check">{payout(times(priced?.checkUnit, line.quantity))}<small>check</small></div>
                     {evidenceFor === line.key && (
@@ -431,7 +437,7 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
         </div>
 
         <div className="rail-card">
-          <div className="sum" title={VALUE_HELP}><span>Our value</span><strong>{paymentMoney(quote?.marketTotal, null)}</strong></div>
+          <div className="sum" title={VALUE_HELP}><span>Our value</span><strong>{<UnrecordedMoney value={quote?.marketTotal} />}</strong></div>
           <div className="seg wide" role="group" aria-label="Payout">
             {(['credit', 'check', 'partial'] as const).map(p => (
               <button key={p} type="button" aria-pressed={payment === p} onClick={() => setPayment(p)}>

@@ -1,3 +1,8 @@
+/** Number-only formatting for a view that separately labels its currency as unrecorded. */
+export function unrecordedMoneyNumber(value: number | string | null | undefined): string {
+  return value == null || value === '' || !Number.isFinite(Number(value)) ? '—' : Number(value).toFixed(2)
+}
+
 /** Currency is a recorded fact. Unknown amounts never acquire a currency from the formatter. */
 export function paymentMoney(value: number | string | null | undefined, currency?: string | null): string {
   if (value == null || value === '' || !Number.isFinite(Number(value))) return '—'

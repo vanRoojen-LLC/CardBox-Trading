@@ -1,10 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { paymentMoney, paymentTotals } from '../src/nativeMoney.ts'
+import { paymentMoney, paymentTotals, unrecordedMoneyNumber } from '../src/nativeMoney.ts'
 
 test('unknown currency is explicit and never defaults to a dollar symbol', () => {
   assert.equal(paymentMoney('12.50',null),'12.50 (currency unrecorded)')
   assert.equal(paymentMoney(null,'EUR'),'—')
+  assert.equal(unrecordedMoneyNumber('12.50'),'12.50')
   assert.match(paymentMoney('12.50','EUR'),/EUR/)
   assert.match(paymentMoney('12.50','EUR'),/12[.,]50/)
 })
