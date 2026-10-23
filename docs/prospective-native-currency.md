@@ -75,3 +75,11 @@ then rechecked visually. Console had no errors/warnings. Evidence:
 `/private/tmp/native-currency-history-mobile-fixed.png` and the local fixture screenshots. Browser plugin
 unavailable; installed Playwright CLI used. Initial implementation Verify40037181112 and
 Cloud40037181647 were green; the mobile correction requires renewed latest-head CI. No paid provider, new credential, production write or live enablement occurred.
+
+The latest currency image check exposed the recurring official ECR Maven manifest429 rate limit;
+API/web checks were green. The image acquisition helper now tries the same official images through
+Google's Docker Hub mirror, ECR and Docker Hub, tags the selected image under its local Docker Hub
+name and builds with `--pull=false`. Both CI and the existing publisher use that path. Deterministic
+stub checks cover first-mirror success, fallback and total failure; total failure stops before build.
+Compiler, application tests and real image build remain mandatory. This changes neither runtime
+credentials nor live activation. Renewed latest-head CI must prove the real build.
