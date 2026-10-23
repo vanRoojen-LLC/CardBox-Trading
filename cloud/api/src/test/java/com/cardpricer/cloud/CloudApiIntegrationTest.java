@@ -651,6 +651,57 @@ class CloudApiIntegrationTest {
     }
 
     @Test
+    void prospectiveCurrencyIsExplicitFrozenAndDoesNotConvertAllocations() throws Exception {
+        String owner = signup("Native currency", "currency-" + UUID.randomUUID() + "@example.com");
+        var lines = List.of(Map.of("cardId", "11111111-1111-1111-1111-111111111111", "quantity", 1));
+        var quote = call("POST", "/api/app/trades/quote", owner, Map.of("lines", lines, "payment", "credit"));
+        var body = new java.util.HashMap<String,Object>();body.put("lines",lines);body.put("payment","credit");
+        body.put("pricesReviewed",true);body.put("actualPaymentCurrency","EUR");
+        int count = jdbc.queryForObject("SELECT count(*) FROM trades",Integer.class);
+        assertEquals(400,call("POST","/api/app/trades",owner,body).status());
+        body.put("actualCurrencyConfirmed",true);
+        body.put("actualPaymentCurrency","ZZZ");
+        assertEquals(400,call("POST","/api/app/trades",owner,body).status());
+        assertEquals(count,jdbc.queryForObject("SELECT count(*) FROM trades",Integer.class));
+        body.put("actualPaymentCurrency","EUR");
+        var saved = call("POST","/api/app/trades",owner,body);
+        assertEquals(200,saved.status(),saved.raw());
+        assertEquals("EUR",saved.body().path("actual_payment_currency").asText());
+        assertFalse(saved.body().path("actual_currency_confirmed_at").isNull());
+        assertEquals(0,quote.body().path("settlement").path("credit").decimalValue()
+                .compareTo(saved.body().path("credit_total").decimalValue()));
+        UUID id = UUID.fromString(saved.body().path("id").asText());
+        var row = jdbc.queryForMap("SELECT created_by,actual_currency_confirmed_by FROM trades WHERE id=?",id);
+        assertEquals(row.get("created_by"),row.get("actual_currency_confirmed_by"));
+        assertThrows(org.springframework.dao.DataIntegrityViolationException.class,()->
+                jdbc.update("UPDATE trades SET actual_payment_currency=NULL WHERE id=?",id));
+        var legacy = call("POST","/api/app/trades",owner,Map.of("lines",lines,"payment","credit","pricesReviewed",true));
+        assertEquals(200,legacy.status(),legacy.raw());
+        assertTrue(legacy.body().path("actual_payment_currency").isNull());
+        assertTrue(legacy.body().path("actual_currency_confirmed_at").isNull());
+        var reread = call("GET","/api/app/trades/"+id,owner,null);
+        assertEquals(saved.body().path("actual_currency_confirmed_at"),reread.body().path("actual_currency_confirmed_at"));
+        assertTrue(call("GET","/api/app/trades",owner,null).body().findValuesAsText("actual_payment_currency").contains("EUR"));
+    }
+
+    @Test
+    void currencyConfirmationRollsBackWithFailedInventoryWrite() throws Exception {
+        String owner = signup("Currency rollback", "currency-rollback-" + UUID.randomUUID() + "@example.com");
+        int before = jdbc.queryForObject("SELECT count(*) FROM trades",Integer.class);
+        jdbc.execute("CREATE FUNCTION currency_test_fail_inventory() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic rollback'; END $$");
+        jdbc.execute("CREATE TRIGGER currency_test_fail_inventory BEFORE INSERT ON inventory_items FOR EACH ROW EXECUTE FUNCTION currency_test_fail_inventory()");
+        try {
+            var saved=call("POST","/api/app/trades",owner,Map.of("payment","credit","pricesReviewed",true,
+                    "actualPaymentCurrency","EUR","actualCurrencyConfirmed",true,"lines",List.of(Map.of("cardId","11111111-1111-1111-1111-111111111111","quantity",1))));
+            assertEquals(500,saved.status());
+            assertEquals(before,jdbc.queryForObject("SELECT count(*) FROM trades",Integer.class));
+        } finally {
+            jdbc.execute("DROP TRIGGER currency_test_fail_inventory ON inventory_items");
+            jdbc.execute("DROP FUNCTION currency_test_fail_inventory()");
+        }
+    }
+
+    @Test
     void quoteSaveHistoryAndPosExport() throws Exception {
         String owner = signup("OCC", "owner-" + UUID.randomUUID() + "@example.com");
         var lines = java.util.List.of(

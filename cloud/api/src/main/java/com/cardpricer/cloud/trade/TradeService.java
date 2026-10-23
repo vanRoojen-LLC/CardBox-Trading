@@ -162,19 +162,30 @@ public class TradeService {
 
     @Transactional
     public UUID save(UUID tenant, UUID user, UUID location, Quote quote, String phone, String customerName, String checkNumber) {
+        return save(tenant, user, location, quote, phone, customerName, checkNumber, null, false);
+    }
+
+    @Transactional
+    public UUID save(UUID tenant, UUID user, UUID location, Quote quote, String phone, String customerName,
+                     String checkNumber, String actualPaymentCurrency, Boolean actualCurrencyConfirmed) {
         // Lock the tenant row so trade numbers stay sequential per store.
         jdbc.queryForObject("SELECT id FROM tenants WHERE id = ? FOR UPDATE", UUID.class, tenant);
         // An owner may have closed a segment after the quote was prepared. Check again under the same lock as the switch.
         quote.lines().stream().map(PricedLine::game).distinct().forEach(game -> acceptance.requireAccepting(tenant, game));
+        var money = NativeTransactionMoney.confirm(actualPaymentCurrency, actualCurrencyConfirmed, user, Instant.now(),
+                quote.settlement().credit(), quote.settlement().check());
         UUID customer = upsertCustomer(tenant, phone, customerName);
         long number = jdbc.queryForObject("SELECT coalesce(max(number), 0) + 1 FROM trades WHERE tenant_id = ?", Long.class, tenant);
         UUID id = UUID.randomUUID();
         var s = quote.settlement();
         jdbc.update("""
                 INSERT INTO trades (id, tenant_id, number, customer_id, created_by, payment, credit_total, check_total,
-                                    market_total, check_number, location_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                    market_total, check_number, location_id, actual_payment_currency,
+                                    actual_currency_confirmed_by, actual_currency_confirmed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 id, tenant, number, customer, user, s.payment(), s.credit(), s.check(), s.market(),
-                checkNumber == null ? "" : checkNumber.trim(), location);
+                checkNumber == null ? "" : checkNumber.trim(), location, money == null ? null : money.currency(),
+                money == null ? null : money.confirmedBy(), money == null ? null : java.sql.Timestamp.from(money.confirmedAt()));
         List<Object[]> rows = new ArrayList<>();
         for (int i = 0; i < quote.lines().size(); i++) {
             PricedLine l = quote.lines().get(i);
