@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { aborted, api, CONDITIONS, FINISHES, money, type Card } from '../api'
+import { aborted, api, CONDITIONS, FINISHES, type Card } from '../api'
 import CardLightbox from '../CardLightbox'
+import { paymentMoney, unrecordedMoneyNumber } from '../nativeMoney'
 import SearchIcon from '../SearchIcon'
 import OtherGames, { GameSwitch, type Game } from '../OtherGames'
 import { useGames } from '../games'
@@ -28,9 +29,9 @@ interface Quote {
 }
 interface Saved { id: string; number: number }
 type Payment = 'credit' | 'check' | 'partial'
-interface Draft { lines: Line[]; payment: Payment; splitCredit: string; phone: string; customerName: string; checkNumber: string }
+interface Draft { lines: Line[]; payment: Payment; splitCredit: string; phone: string; customerName: string; checkNumber: string; actualPaymentCurrency: string }
 
-const EMPTY: Draft = { lines: [], payment: 'credit', splitCredit: '', phone: '', customerName: '', checkNumber: '' }
+const EMPTY: Draft = { lines: [], payment: 'credit', splitCredit: '', phone: '', customerName: '', checkNumber: '', actualPaymentCurrency: '' }
 
 /** A trade in progress survives moving to another page or reloading, until it is saved. Only this tab sees it. */
 function loadDraft(key: string): Draft {
@@ -44,6 +45,11 @@ function loadDraft(key: string): Draft {
 let nextKey = 1
 
 const VALUE_HELP = 'The market price after your pricing rules (rarity minimums and the like). Offers are worked out from this.'
+
+function UnrecordedMoney({ value }: { value: number | string | null | undefined }) {
+  return <span className="unrecorded-money" aria-label={paymentMoney(value, null)}>{unrecordedMoneyNumber(value)}
+    {value != null && <small>Currency unrecorded</small>}</span>
+}
 
 /** Quantity you can type into (40 commons is one entry, not 39 presses). Out-of-range or blank input snaps back on blur. */
 function QuantityInput({ value, label, onChange }: { value: number; label: string; onChange: (n: number) => void }) {
@@ -98,6 +104,8 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
   const [lookedUpName, setLookedUpName] = useState<string | null>(null)
   const [known, setKnown] = useState<string | null>(null)
   const [checkNumber, setCheckNumber] = useState(draft.checkNumber)
+  const [actualPaymentCurrency, setActualPaymentCurrency] = useState(draft.actualPaymentCurrency)
+  const [currencyConfirmation, setCurrencyConfirmation] = useState<string | null>(null)
   const [quote, setQuote] = useState<Quote | null>(null)
   // Separate so a quote that succeeds later never wipes a search or save error.
   const [searchError, setSearchError] = useState('')
@@ -122,9 +130,9 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
   useEffect(() => {
     try {
       if (lines.length === 0 && !phone && !customerName) sessionStorage.removeItem(draftKey)
-      else sessionStorage.setItem(draftKey, JSON.stringify({ lines, payment, splitCredit, phone, customerName, checkNumber }))
+      else sessionStorage.setItem(draftKey, JSON.stringify({ lines, payment, splitCredit, phone, customerName, checkNumber, actualPaymentCurrency }))
     } catch { /* storage blocked: the trade lasts until the page is left */ }
-  }, [draftKey, lines, payment, splitCredit, phone, customerName, checkNumber])
+  }, [draftKey, lines, payment, splitCredit, phone, customerName, checkNumber, actualPaymentCurrency])
 
   useEffect(() => {
     if (query.trim().length < 2 || availableGames.length === 0) { setResults([]); setNoMatch(false); return }
@@ -173,6 +181,8 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
 
   // A confirmation covers the prices staff looked at; any change to the trade asks again.
   useEffect(() => setReviewed(false), [request])
+  const currencyConfirmationKey = JSON.stringify({ request, actualPaymentCurrency })
+  const actualCurrencyConfirmed = currencyConfirmation === currencyConfirmationKey
 
   useEffect(() => {
     if (lines.length === 0) { setQuote(null); return }
@@ -225,7 +235,10 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
   const checkPaid = payment === 'check' || (payment === 'partial' && Number(quote?.settlement.check ?? 0) > 0)
   const needsCheckNumber = checkPaid && checkNumber.trim() === ''
   const needsReview = current && !!quote?.review && !reviewed
-  const canSave = lines.length > 0 && current && !(payment === 'partial' && splitCredit === '') && !needsCheckNumber && !needsReview && !saving
+  const needsCurrencyConfirmation = !!actualPaymentCurrency && (!/^[A-Z]{3}$/.test(actualPaymentCurrency) || !actualCurrencyConfirmed)
+  const payout = (value: number | undefined) => actualPaymentCurrency
+    ? paymentMoney(value, actualPaymentCurrency) : <UnrecordedMoney value={value} />
+  const canSave = !needsCurrencyConfirmation && lines.length > 0 && current && !(payment === 'partial' && splitCredit === '') && !needsCheckNumber && !needsReview && !saving
   const save = useCallback(async () => {
     if (!canSave || savingRef.current) return
     savingRef.current = true
@@ -233,15 +246,16 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
     try {
       const result = await api<Saved>('/api/app/trades', {
         method: 'POST',
-        body: { ...request, customerPhone: phone || undefined, customerName, checkNumber, locationId: locationId ?? undefined, pricesReviewed: reviewed },
+        body: { ...request, customerPhone: phone || undefined, customerName, checkNumber, locationId: locationId ?? undefined, pricesReviewed: reviewed,
+          actualPaymentCurrency: actualPaymentCurrency || undefined, actualCurrencyConfirmed },
       })
       setSaved(result)
-      setLines([]); setSelected(null); setEvidenceFor(null); setPhone(''); setCustomerName(''); setLookedUpName(null); setCheckNumber(''); setSplitCredit(''); setPayment('credit')
+      setLines([]); setSelected(null); setEvidenceFor(null); setPhone(''); setCustomerName(''); setLookedUpName(null); setCheckNumber(''); setSplitCredit(''); setPayment('credit'); setActualPaymentCurrency(''); setCurrencyConfirmation(null)
       setSaveError('')
       searchRef.current?.focus()
     } catch (e) { setSaveError((e as Error).message) }
     finally { savingRef.current = false; setSaving(false) }
-  }, [canSave, request, phone, customerName, checkNumber, locationId, reviewed])
+  }, [canSave, request, phone, customerName, checkNumber, locationId, reviewed, actualPaymentCurrency, actualCurrencyConfirmed, setActualPaymentCurrency, setCurrencyConfirmation])
 
   // Counter shortcuts: / search, 1-5 condition, F foil, + and - quantity, Delete removes, arrows move, Ctrl/Cmd+S save.
   useEffect(() => {
@@ -328,7 +342,7 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
                       <span className="meta">{card.set.toUpperCase()} #{card.number} · <span style={{ textTransform: 'capitalize' }}>{card.rarity}</span> · {card.setName}</span>
                     </span>
                     <span className="prices">
-                      {finishesOf(card).map(f => <span key={f.key}><small>{f.label}</small>{money(f.price(card))}</span>)}
+                      {finishesOf(card).map(f => <span key={f.key}><small>{f.label}</small>{<UnrecordedMoney value={f.price(card)} />}</span>)}
                     </span>
                   </button>
                 </li>
@@ -392,10 +406,10 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
                       </div>
                     </div>
                     {/* Not the market price: the value the store's pricing rules give the card (rarity floors and the like). */}
-                    <div className="market" title={VALUE_HELP}>{money(times(priced?.valuationUnit, line.quantity))}
-                      <small>{line.quantity > 1 ? `${money(priced?.valuationUnit)} each` : 'our value'}</small></div>
-                    <div className="credit">{money(times(priced?.creditUnit, line.quantity))}<small>credit</small></div>
-                    <div className="check">{money(times(priced?.checkUnit, line.quantity))}<small>check</small></div>
+                    <div className="market" title={VALUE_HELP}>{<UnrecordedMoney value={times(priced?.valuationUnit, line.quantity)} />}
+                      <small>{line.quantity > 1 ? `${unrecordedMoneyNumber(priced?.valuationUnit)} each` : 'our value'}</small></div>
+                    <div className="credit">{payout(times(priced?.creditUnit, line.quantity))}<small>credit</small></div>
+                    <div className="check">{payout(times(priced?.checkUnit, line.quantity))}<small>check</small></div>
                     {evidenceFor === line.key && (
                       <div className="line-evidence">
                         <EvidencePanel path={`/api/app/cards/${line.card.id}/evidence?finish=${line.finish}`} />
@@ -423,7 +437,7 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
         </div>
 
         <div className="rail-card">
-          <div className="sum" title={VALUE_HELP}><span>Our value</span><strong>{money(quote?.marketTotal)}</strong></div>
+          <div className="sum" title={VALUE_HELP}><span>Our value</span><strong>{<UnrecordedMoney value={quote?.marketTotal} />}</strong></div>
           <div className="seg wide" role="group" aria-label="Payout">
             {(['credit', 'check', 'partial'] as const).map(p => (
               <button key={p} type="button" aria-pressed={payment === p} onClick={() => setPayment(p)}>
@@ -436,18 +450,28 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
               <label>Store credit amount<input type="number" inputMode="decimal" min={0} step="0.01" value={splitCredit} onChange={e => setSplitCredit(e.target.value)} /></label>
               <div className="offer">
                 <div className="label">Pay out</div>
-                <div className="amount">{money(quote?.settlement.credit)}</div>
-                <p>credit, plus <strong className="num">{money(quote?.settlement.check)}</strong> by check</p>
+                <div className="amount">{payout(quote?.settlement.credit)}</div>
+                <p>credit, plus <strong className="num">{payout(quote?.settlement.check)}</strong> by check</p>
               </div>
             </>
           ) : (
             <div className="offer">
               <div className="label">{payment === 'check' ? 'Check offer' : 'Store credit offer'}</div>
-              <div className="amount">{money(offer)}</div>
+              <div className="amount">{payout(offer)}</div>
               <p>{payment === 'check' ? 'Store credit instead: ' : 'Check instead: '}
-                <strong className="num">{money(payment === 'check' ? quote?.creditOffer : quote?.checkOffer)}</strong></p>
+                <strong className="num">{payout(payment === 'check' ? quote?.creditOffer : quote?.checkOffer)}</strong></p>
             </div>
           )}
+          <label>Actual payment currency (optional)
+            <input value={actualPaymentCurrency} maxLength={3} autoComplete="off" list="payment-currency-codes"
+              placeholder="Three-letter code, e.g. EUR" onChange={e => setActualPaymentCurrency(e.target.value.toUpperCase())} />
+          </label>
+          <datalist id="payment-currency-codes">{['USD','EUR','GBP','CAD','AUD','NZD','JPY','CHF'].map(code => <option key={code} value={code} />)}</datalist>
+          <p className="muted small">Leave blank if unrecorded. This records the payment currency; it does not convert the offer or establish the currency of price guides.</p>
+          {actualPaymentCurrency && <label className="review-check">
+            <input type="checkbox" checked={actualCurrencyConfirmed} onChange={e => setCurrencyConfirmation(e.target.checked ? currencyConfirmationKey : null)} />
+            <span>These actual check and store-credit amounts are in {actualPaymentCurrency}.</span>
+          </label>}
           {payment !== 'credit' && (
             <label>Check number{checkPaid && <span className="muted small"> (required)</span>}
               <input value={checkNumber} required={checkPaid} aria-invalid={needsCheckNumber || undefined} onChange={e => setCheckNumber(e.target.value)} /></label>
@@ -465,7 +489,7 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
           {lines.length > 0 && !saving && (() => {
             const why = !current ? 'Updating the offer…' : payment === 'partial' && splitCredit === '' ? 'Enter the store credit amount to save.'
               : needsCheckNumber ? 'Enter the check number to save.'
-              : needsReview ? 'Check the flagged prices, then tick the box to save.' : ''
+              : needsReview ? 'Check the flagged prices, then tick the box to save.' : needsCurrencyConfirmation ? 'Confirm the actual payment currency, or leave it blank if unrecorded.' : ''
             return why && <p className="muted small" role="status" style={{ margin: 0, textAlign: 'center' }}>{why}</p>
           })()}
           <p className="muted small" style={{ margin: 0, textAlign: 'center' }}>Saving records the trade and gives you its POS CSV.</p>
@@ -476,7 +500,7 @@ export default function NewTrade({ locationId, draftKey }: { locationId: string 
       {lines.length > 0 && (
         <div className="trade-sticky">
           <span><small>{payment === 'partial' ? 'Pay out' : payment === 'check' ? 'Check offer' : 'Credit offer'}</small>
-            <strong className="num">{money(payment === 'partial' ? quote?.settlement.credit : offer)}</strong></span>
+            <strong className="num">{payout(payment === 'partial' ? quote?.settlement.credit : offer)}</strong></span>
           <button type="button" onClick={save} disabled={!canSave}>{saving ? 'Saving…' : 'Save trade'}</button>
         </div>
       )}

@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { aborted, api, money, phoneText, type StoreLocation } from '../api'
+import { aborted, api, phoneText, type StoreLocation } from '../api'
+import { paymentMoney, paymentTotals } from '../nativeMoney'
 
 interface TradeSummary {
   id: string; number: number; created_at: string; payment: string; credit_total: number; check_total: number
   market_total: number; customer_phone: string | null; customer_name: string | null; created_by: string; cards: number
-  location_id: string; location: string
+  location_id: string; location: string; actual_payment_currency: string | null; actual_currency_confirmed_at: string | null
 }
 
 const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString()
@@ -45,7 +46,8 @@ export function History({ locations }: { locations: StoreLocation[] }) {
   const shown = partial ? [] : trades ?? []
   const today = shown.filter(t => sameDay(new Date(t.created_at), new Date()))
   const capped = today.length >= 50
-  const sum = (key: 'credit_total' | 'check_total') => money(today.reduce((n, t) => n + Number(t[key] ?? 0), 0)) + (capped ? '+' : '')
+  const sum = (key: 'credit_total' | 'check_total') => paymentTotals(today,key).map(total =>
+    <strong className="native-payment-total" key={total}>{total}{capped ? '+' : ''}</strong>)
 
   return (
     <section>
@@ -62,8 +64,8 @@ export function History({ locations }: { locations: StoreLocation[] }) {
       {!phone && trades && (
         <div className="stats">
           <div className="stat"><span>Trades today{location ? ' here' : ''}</span><strong>{capped ? '50+' : today.length}</strong></div>
-          <div className="stat copper"><span>Credit paid out today</span><strong>{sum('credit_total')}</strong></div>
-          <div className="stat"><span>Checks written today</span><strong>{sum('check_total')}</strong></div>
+          <div className="stat copper"><span>Credit paid out today</span>{sum('credit_total')}</div>
+          <div className="stat"><span>Checks written today</span>{sum('check_total')}</div>
         </div>
       )}
       {error && <p className="error">{error}</p>}
@@ -77,8 +79,8 @@ export function History({ locations }: { locations: StoreLocation[] }) {
                 <td className="num t-when">{when(t.created_at)}</td>
                 <td className="t-customer">{t.customer_name || (t.customer_phone ? 'Customer' : 'Walk-in')}<div className="muted small num">{phoneText(t.customer_phone)}</div></td>
                 <td className="r t-cards">{t.cards}<span className="t-unit"> card{t.cards === 1 ? '' : 's'}</span></td>
-                <td className="r credit t-credit">{Number(t.credit_total) > 0 ? <>{money(t.credit_total)}<span className="t-unit"> credit</span></> : <span className="t-none">—</span>}</td>
-                <td className="r t-check">{Number(t.check_total) > 0 ? <>{money(t.check_total)}<span className="t-unit"> check</span></> : <span className="t-none">—</span>}</td>
+                <td className="r credit t-credit">{Number(t.credit_total) > 0 ? <>{t.actual_payment_currency ? paymentMoney(t.credit_total,t.actual_payment_currency) : Number(t.credit_total).toFixed(2)}<span className="t-unit"> credit</span>{!t.actual_payment_currency && <small className="currency-unknown">Currency unrecorded</small>}</> : <span className="t-none">—</span>}</td>
+                <td className="r t-check">{Number(t.check_total) > 0 ? <>{t.actual_payment_currency ? paymentMoney(t.check_total,t.actual_payment_currency) : Number(t.check_total).toFixed(2)}<span className="t-unit"> check</span>{!t.actual_payment_currency && <small className="currency-unknown">Currency unrecorded</small>}</> : <span className="t-none">—</span>}</td>
                 {several && <td className="t-location">{t.location}</td>}
                 <td className="t-by">{t.created_by}</td>
                 <td className="t-csv"><a href={`/api/app/trades/${t.id}/pos.csv`} onClick={e => e.stopPropagation()}>CSV</a></td>
@@ -114,6 +116,9 @@ export function TradeDetail() {
       <p className="muted" style={{ marginTop: 0 }}>{new Date(trade.created_at).toLocaleString()} · {trade.location} · by {trade.created_by}
         {trade.customer_phone && <> · {trade.customer_name || 'Customer'} <span className="num">{phoneText(trade.customer_phone)}</span></>}
         {trade.check_number && <> · check #{trade.check_number}</>}</p>
+      <p className="muted small">{trade.actual_payment_currency
+        ? `Actual payment currency ${trade.actual_payment_currency}, confirmed when this trade was saved.`
+        : 'Actual payment currency was not recorded.'} Guide currency was not recorded. Amounts are not converted.</p>
       <div className="table-wrap scroll">
         <table className="grid">
           <thead><tr><th>Card</th><th>Finish</th><th>Cond.</th><th className="r">Qty</th><th className="r">Value each</th><th className="r">Credit</th><th className="r">Check</th></tr></thead>
@@ -122,16 +127,16 @@ export function TradeDetail() {
               <tr key={l.line_no}>
                 <td><strong>{l.name}</strong><div className="muted small">{l.set_code.toUpperCase()} #{l.collector_number}</div></td>
                 <td style={{ textTransform: 'capitalize' }}>{l.finish}</td><td>{l.condition}</td><td className="r">{l.quantity}</td>
-                <td className="r">{money(l.valuation_unit)}</td><td className="r credit">{money(l.credit_alloc)}</td><td className="r">{money(l.check_alloc)}</td>
+                <td className="r">{paymentMoney(l.valuation_unit,null)}</td><td className="r credit">{paymentMoney(l.credit_alloc,trade.actual_payment_currency)}</td><td className="r">{paymentMoney(l.check_alloc,trade.actual_payment_currency)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
       <div className="totals">
-        <div className="sum" title="The market price after the store's pricing rules, which the offer was worked out from"><span>Our value</span><strong>{money(trade.market_total)}</strong></div>
-        <div className="sum"><span>Store credit paid</span><strong style={{ color: 'var(--copper-text)' }}>{money(trade.credit_total)}</strong></div>
-        <div className="sum"><span>Check paid</span><strong>{money(trade.check_total)}</strong></div>
+        <div className="sum" title="The market price after the store's pricing rules, which the offer was worked out from"><span>Our value</span><strong>{paymentMoney(trade.market_total,null)}</strong></div>
+        <div className="sum"><span>Store credit paid</span><strong style={{ color: 'var(--copper-text)' }}>{paymentMoney(trade.credit_total,trade.actual_payment_currency)}</strong></div>
+        <div className="sum"><span>Check paid</span><strong>{paymentMoney(trade.check_total,trade.actual_payment_currency)}</strong></div>
       </div>
       <div className="actions" style={{ justifyContent: 'flex-end' }}>
         <a className="button" href={`/api/app/trades/${trade.id}/pos.csv`}>Download POS CSV</a>
