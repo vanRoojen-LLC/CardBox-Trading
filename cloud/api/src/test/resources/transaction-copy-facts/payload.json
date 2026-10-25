@@ -1,0 +1,54 @@
+{
+  "origin": "cardbox.trading",
+  "deployment_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "store_tenant_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+  "trade_id": "11111111-2222-4333-8444-555555555555",
+  "line_no": 1,
+  "trading_card_id": "99999999-8888-4777-8666-555555555555",
+  "quantity": 1,
+  "finish": "normal",
+  "language": "ja",
+  "identity": {
+    "scope": "exact_printing",
+    "printing_id": "printing:魔法:é:🂡",
+    "candidate_printing_ids": [],
+    "mapping_source": "trading_catalog_links_at_save"
+  },
+  "completed_at": "2026-10-23T21:00:00Z",
+  "event_id": "cardbox.trading:buyin-copy-facts:11111111-2222-4333-8444-555555555555:1:v1",
+  "event_kind": "completed_buyin_copy_facts",
+  "schema_version": 1,
+  "parent": {
+    "event_id": "cardbox.trading:buyin:11111111-2222-4333-8444-555555555555:1:v1",
+    "payload_sha256": "ee5521f336d9c32ad658782f4a29e3fca3a30fc5a1d9a89dcfd8a6fc2b569a52"
+  },
+  "captured_at": "2026-10-23T21:00:00Z",
+  "actor_user_id": "12345678-1234-4234-8234-123456789abc",
+  "recorded_condition": {
+    "value": "NM",
+    "provenance": "saved_trade_line_may_include_legacy_default"
+  },
+  "copy_scope": "single_unit",
+  "facts": {
+    "condition": "NM",
+    "form": "graded",
+    "grading": {
+      "company": "鑑定 Café Ω",
+      "label": "9.50",
+      "certificate": null
+    },
+    "signature": "unknown",
+    "serial": {
+      "state": "numbered",
+      "number": "001/250"
+    },
+    "known_value_variant": "unknown"
+  },
+  "confirmation": {
+    "actor_user_id": "12345678-1234-4234-8234-123456789abc",
+    "confirmed_at": "2026-10-23T21:00:00Z",
+    "scope": "explicit_trade_save_confirmation"
+  },
+  "supersedes_event_id": null,
+  "valuation_admission": "held_buyin_not_retail_sale"
+}
