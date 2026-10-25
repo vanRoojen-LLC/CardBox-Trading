@@ -1,0 +1,37 @@
+{
+  "guide": {
+    "valuation_unit": "10.00",
+    "tcgplayer_unit": null,
+    "market_unit": "12.30"
+  },
+  "event_id": "cardbox.trading:buyin:11111111-2222-4333-8444-555555555555:1:v1",
+  "event_kind": "completed_buyin",
+  "schema_version": 1,
+  "origin": "cardbox.trading",
+  "deployment_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "trade_id": "11111111-2222-4333-8444-555555555555",
+  "store_tenant_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+  "line_no": 1,
+  "completed_at": "2026-10-23T21:00:00Z",
+  "currency": null,
+  "currency_state": "unrecorded",
+  "payment": "partial",
+  "quantity": 1,
+  "condition": "NM",
+  "finish": "normal",
+  "language": "ja",
+  "set_code": "Café Ω",
+  "collector_number": "∞/250",
+  "trading_card_id": "99999999-8888-4777-8666-555555555555",
+  "identity": {
+    "scope": "exact_printing",
+    "printing_id": "printing:魔法:é:🂡",
+    "candidate_printing_ids": [],
+    "mapping_source": "trading_catalog_links_at_save"
+  },
+  "consideration": {
+    "store_credit_total": "1.23",
+    "check_total": "4.56"
+  },
+  "valuation_admission": "held_buyin_and_currency_not_a_retail_sale"
+}
