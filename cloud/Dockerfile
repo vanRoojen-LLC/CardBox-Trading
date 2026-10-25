@@ -21,6 +21,8 @@ COPY --from=web /web/dist/ cloud/api/src/main/resources/static/
 RUN mvn -q -B -f cloud/api/pom.xml -DskipTests package
 
 FROM ${BASE_REGISTRY}/eclipse-temurin:21-jre-alpine
+ARG SOURCE_REVISION=unknown
+ENV APP_SOURCE_REVISION=${SOURCE_REVISION}
 RUN addgroup -S app && adduser -S app -G app
 WORKDIR /app
 COPY --from=api /repo/cloud/api/target/occ-pricer-cloud.jar app.jar

@@ -62,6 +62,7 @@ public class TradeService {
     private final TradeAcceptance acceptance;
     private final JdbcTemplate jdbc;
     private final InventoryRepository inventory;
+    private final CompletedBuyinEvents buyinEvents;
     private final PriceEvidence evidence;
     private final ConfidenceRules confidenceRules;
     private final PricingService pricing = new PricingService();
@@ -69,7 +70,7 @@ public class TradeService {
 
     public TradeService(CatalogRepository catalog, RateRepository rates, TradeAcceptance acceptance,
                         JdbcTemplate jdbc, InventoryRepository inventory,
-                        PriceEvidence evidence, ConfidenceRules confidenceRules) {
+                        PriceEvidence evidence, ConfidenceRules confidenceRules, CompletedBuyinEvents buyinEvents) {
         this.evidence = evidence;
         this.confidenceRules = confidenceRules;
         this.catalog = catalog;
@@ -77,6 +78,7 @@ public class TradeService {
         this.acceptance = acceptance;
         this.jdbc = jdbc;
         this.inventory = inventory;
+        this.buyinEvents = buyinEvents;
     }
 
     /**
@@ -194,6 +196,7 @@ public class TradeService {
             inventory.add(tenant, location, null, new InventoryRepository.Stock(l.cardId(), l.name(), l.setCode(),
                     l.collectorNumber(), l.rarity(), l.lang(), l.finish(), l.condition(), l.quantity()));
         }
+        buyinEvents.record(tenant, id);
         return id;
     }
 

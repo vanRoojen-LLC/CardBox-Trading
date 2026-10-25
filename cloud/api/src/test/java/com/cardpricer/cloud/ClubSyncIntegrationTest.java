@@ -4,6 +4,10 @@ import com.cardpricer.cloud.auth.SessionTokens;
 import com.cardpricer.cloud.clubsync.ClubSync;
 import com.cardpricer.cloud.clubsync.ClubSyncAuth;
 import com.cardpricer.cloud.store.StoreController;
+import com.cardpricer.cloud.trade.CompletedBuyinEvents;
+import com.cardpricer.cloud.trade.TradeService;
+import java.math.BigDecimal;
+import org.springframework.transaction.support.TransactionTemplate;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nimbusds.jose.JWSAlgorithm;
@@ -84,12 +88,17 @@ class ClubSyncIntegrationTest {
         registry.add("app.club-sync.enabled", () -> "true");
         registry.add("app.club-sync.audience", () -> AUDIENCE);
         registry.add("app.club-sync.client-ids", () -> CLUB_CLIENT);
+        registry.add("app.club-sync.transaction-events-enabled", () -> "true");
+        registry.add("app.source-revision", () -> "a".repeat(40));
     }
 
     @LocalServerPort int port;
     @Autowired JdbcTemplate jdbc;
     @Autowired SessionTokens sessions;
     @Autowired ClubSync clubSync;
+    @Autowired CompletedBuyinEvents buyinEvents;
+    @Autowired TradeService trades;
+    @Autowired TransactionTemplate transaction;
     final HttpClient http = HttpClient.newBuilder().proxy(HttpClient.Builder.NO_PROXY).build();
 
     record Response(int status, JsonNode body, String raw) {}
@@ -101,6 +110,7 @@ class ClubSyncIntegrationTest {
 
     @BeforeEach
     void store() {
+        jdbc.update("DELETE FROM catalog_printing_links WHERE printing_id IN ('exact-buyin-printing','candidate-a','candidate-b')");
         for (String[] card : List.of(new String[]{BOLT, "Lightning Bolt", "2x2", "117"}, new String[]{RAGAVAN, "Ragavan, Nimble Pilferer", "mh2", "138"},
                 new String[]{SOL_RING, "Sol Ring", "cmm", "410"}))
             jdbc.update("""
@@ -632,4 +642,145 @@ class ClubSyncIntegrationTest {
         assertEquals(4, jdbc.queryForObject("SELECT count(*) FROM inventory_adjustments WHERE count_id = ?::uuid", Integer.class, count));
         assertEquals(409, call("POST", "/api/app/counts/" + count + "/lines", null, owner, Map.of("cardId", BOLT, "quantity", 1)).status());
     }
+
+    UUID savedBuyin(int quantity, String payment) {
+        jdbc.update("UPDATE cards SET usd=10.00 WHERE id=?::uuid", BOLT);
+        UUID clerk = jdbc.queryForObject("SELECT id FROM users WHERE tenant_id=? LIMIT 1", UUID.class, tenant);
+        var quote = trades.quote(tenant, List.of(new TradeService.LineInput(UUID.fromString(BOLT), "normal", "NM", quantity)),
+                payment, "partial".equals(payment) ? new BigDecimal("1.23") : null, null);
+        return trades.save(tenant, clerk, trades.location(tenant, null), quote, null, null, "private-check-number");
+    }
+
+    String eventId(UUID trade) { return "cardbox.trading:buyin:" + trade + ":1:v1"; }
+
+    Map<String, Object> acknowledgment(String event, String hash, String receipt) {
+        return Map.of("event_id", event, "payload_sha256", hash, "receiver_receipt_id", receipt);
+    }
+
+    Response eventCall(String method, String suffix, Object body) throws Exception {
+        return call(method, "/api/partner/club-sync/transaction-events" + suffix,
+                token(CLUB_CLIENT, AUDIENCE, ClubSyncAuth.SCOPE), null, body);
+    }
+
+    @Test
+    void completedBuyinKeepsActualAllocationsCurrencyAndIdentitySeparateFromGuides() throws Exception {
+        jdbc.update("""
+                INSERT INTO catalog_printing_links(printing_id,game,card_id,finish,matched_by)
+                VALUES ('exact-buyin-printing','magic-the-gathering',?::uuid,'normal','scryfall')""", BOLT);
+        UUID trade = savedBuyin(3, "partial");
+        var saved = jdbc.queryForMap("SELECT credit_alloc,check_alloc,market_unit,valuation_unit FROM trade_lines WHERE trade_id=?", trade);
+        var event = jdbc.queryForMap("SELECT payload::text,payload_sha256 FROM completed_buyin_events WHERE event_id=?", eventId(trade));
+        JsonNode body = JSON.readTree((String) event.get("payload"));
+        String canonical = new ObjectMapper().enable(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
+                .writeValueAsString(JSON.convertValue(body, Map.class));
+        assertEquals(java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                .digest(canonical.getBytes(StandardCharsets.UTF_8))), event.get("payload_sha256"));
+        assertEquals("completed_buyin", body.path("event_kind").asText());
+        assertEquals("cardbox.trading", body.path("origin").asText());
+        assertEquals("a".repeat(40), body.path("deployment_revision").asText());
+        assertTrue(body.path("currency").isNull());
+        assertEquals("unrecorded", body.path("currency_state").asText());
+        assertEquals(3, body.path("quantity").asInt());
+        assertEquals("exact-buyin-printing", body.path("identity").path("printing_id").asText());
+        assertEquals("exact_printing", body.path("identity").path("scope").asText());
+        assertEquals("1.23", body.path("consideration").path("store_credit_total").asText());
+        assertEquals(saved.get("check_alloc").toString(), body.path("consideration").path("check_total").asText());
+        assertEquals(saved.get("market_unit").toString(), body.path("guide").path("market_unit").asText());
+        assertEquals(saved.get("valuation_unit").toString(), body.path("guide").path("valuation_unit").asText());
+        assertFalse(body.toString().contains("private-check-number"));
+        assertFalse(body.has("customer_id"));
+        assertEquals(3, jdbc.queryForObject("SELECT quantity FROM inventory_items WHERE tenant_id=? AND card_id=?::uuid", Integer.class, tenant, BOLT));
+        // An exact replay is harmless; an altered original is explicitly held rather than rewriting history.
+        transaction.executeWithoutResult(status -> buyinEvents.record(tenant, trade));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM completed_buyin_events WHERE trade_id=?", Integer.class, trade));
+        jdbc.update("UPDATE trade_lines SET credit_alloc=credit_alloc+0.01 WHERE trade_id=?", trade);
+        assertThrows(com.cardpricer.cloud.web.ApiException.class,
+                () -> transaction.executeWithoutResult(status -> buyinEvents.record(tenant, trade)));
+        assertEquals(body, JSON.readTree(jdbc.queryForObject("SELECT payload::text FROM completed_buyin_events WHERE event_id=?", String.class, eventId(trade))));
+    }
+
+    @Test
+    void buyinHistoryKeepsAmbiguousIdentityAndUnresolvedIdentityWithoutGuessing() throws Exception {
+        for (String printing : List.of("candidate-a", "candidate-b"))
+            jdbc.update("INSERT INTO catalog_printing_links(printing_id,game,card_id,finish,matched_by) VALUES (?,'magic-the-gathering',?::uuid,'normal','scryfall')", printing, BOLT);
+        UUID ambiguous = savedBuyin(1, "credit");
+        JsonNode body = JSON.readTree(jdbc.queryForObject("SELECT payload::text FROM completed_buyin_events WHERE trade_id=?", String.class, ambiguous));
+        assertEquals("candidate_printings", body.path("identity").path("scope").asText());
+        assertEquals(2, body.path("identity").path("candidate_printing_ids").size());
+        jdbc.update("DELETE FROM catalog_printing_links WHERE card_id=?::uuid", BOLT);
+        UUID unresolved = savedBuyin(1, "credit");
+        JsonNode unknown = JSON.readTree(jdbc.queryForObject("SELECT payload::text FROM completed_buyin_events WHERE trade_id=?", String.class, unresolved));
+        assertEquals("unresolved", unknown.path("identity").path("scope").asText());
+        assertEquals("candidate_printings", JSON.readTree(jdbc.queryForObject("SELECT payload::text FROM completed_buyin_events WHERE trade_id=?", String.class, ambiguous)).path("identity").path("scope").asText());
+    }
+
+    @Test
+    void buyinEventFailureRollsBackTheExistingSavedTradeAndInventory() {
+        jdbc.execute("ALTER TABLE completed_buyin_events ADD CONSTRAINT fixture_buyin_failure CHECK (tenant_id <> '" + tenant + "'::uuid)");
+        try {
+            assertThrows(org.springframework.dao.DataIntegrityViolationException.class, () -> savedBuyin(1, "credit"));
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM trades WHERE tenant_id=?", Integer.class, tenant));
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM trade_lines WHERE tenant_id=?", Integer.class, tenant));
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM inventory_items WHERE tenant_id=?", Integer.class, tenant));
+        } finally {
+            jdbc.execute("ALTER TABLE completed_buyin_events DROP CONSTRAINT fixture_buyin_failure");
+        }
+    }
+
+    @Test
+    void buyinPendingAndAckRequireTrustedMachineAndAckIsAtomicAndRepeatable() throws Exception {
+        String route = "/api/partner/club-sync/transaction-events";
+        assertEquals(401, call("GET", route, null, owner, null).status());
+        assertEquals(401, call("GET", route, token("someone-else", AUDIENCE, ClubSyncAuth.SCOPE), null, null).status());
+        assertEquals(401, call("GET", route, token(CLUB_CLIENT, "wrong-audience", ClubSyncAuth.SCOPE), null, null).status());
+        assertEquals(401, call("GET", route, token(CLUB_CLIENT, AUDIENCE, "read:other"), null, null).status());
+        assertEquals(400, eventCall("GET", "?limit=201", null).status());
+        UUID trade = savedBuyin(1, "check");
+        String event = eventId(trade);
+        String hash = jdbc.queryForObject("SELECT payload_sha256 FROM completed_buyin_events WHERE event_id=?", String.class, event);
+        var receipt = acknowledgment(event, hash, "catalog-receipt-1");
+        assertEquals(200, eventCall("GET", "?limit=1", null).status());
+        assertEquals(409, eventCall("POST", "/ack", Map.of("receipts", List.of(receipt,
+                acknowledgment("missing-event", "b".repeat(64), "missing")))).status());
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM completed_buyin_event_receipts WHERE event_id=?", Integer.class, event));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM completed_buyin_event_queue WHERE event_id=?", Integer.class, event));
+        assertEquals(409, eventCall("POST", "/ack", Map.of("receipts", List.of(acknowledgment(event, "b".repeat(64), "r")))).status());
+        assertEquals(200, eventCall("POST", "/ack", Map.of("receipts", List.of(receipt))).status());
+        assertEquals(200, eventCall("POST", "/ack", Map.of("receipts", List.of(receipt))).status());
+        assertEquals(409, eventCall("POST", "/ack", Map.of("receipts", List.of(acknowledgment(event, hash, "different")))).status());
+        assertFalse(eventCall("GET", "", null).raw().contains(event));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM completed_buyin_event_queue WHERE event_id=?", Integer.class, event));
+        assertThrows(org.springframework.dao.DataAccessException.class, () -> jdbc.update("UPDATE completed_buyin_events SET payload='{}' WHERE event_id=?", event));
+        assertThrows(org.springframework.dao.DataAccessException.class, () -> jdbc.update("DELETE FROM completed_buyin_events WHERE event_id=?", event));
+        assertThrows(org.springframework.dao.DataAccessException.class, () -> jdbc.execute("TRUNCATE completed_buyin_events CASCADE"));
+    }
+
+
+    @Test
+    void acknowledgedHistoryDoesNotFillOrStarveTheSmallPendingQueue() throws Exception {
+        UUID trade = savedBuyin(1, "credit");
+        String original = eventId(trade);
+        jdbc.update("""
+                INSERT INTO completed_buyin_events(event_id,tenant_id,trade_id,line_no,schema_version,payload_sha256,payload)
+                SELECT 'cardbox.trading:buyin:' || trade_id || ':' || n || ':v1',tenant_id,trade_id,n,1,payload_sha256,
+                       payload || jsonb_build_object('event_id','cardbox.trading:buyin:' || trade_id || ':' || n || ':v1', 'line_no',n)
+                FROM completed_buyin_events CROSS JOIN generate_series(2,1001) n WHERE event_id=?""", original);
+        jdbc.update("""
+                INSERT INTO completed_buyin_event_receipts(event_id,payload_sha256,receiver_receipt_id)
+                SELECT event_id,payload_sha256,'fixture-receipt-' || line_no FROM completed_buyin_events
+                WHERE trade_id=? AND line_no>1""", trade);
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM completed_buyin_event_queue WHERE event_id=?", Integer.class, original));
+        var pending = eventCall("GET", "?limit=1", null);
+        // Other tests' unacknowledged events may precede this store, but history never becomes queue work.
+        assertEquals(1, pending.body().path("events").size());
+        long thisTrade = java.util.stream.StreamSupport.stream(eventCall("GET", "?limit=200", null).body().path("events").spliterator(), false)
+                .filter(e -> e.path("payload").path("trade_id").asText().equals(trade.toString())).count();
+        assertEquals(1, thisTrade, "all 1000 completed historical receipts stay outside pending work");
+        assertEquals(1001, jdbc.queryForObject("SELECT count(*) FROM completed_buyin_events WHERE trade_id=?", Integer.class, trade));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM completed_buyin_event_queue q JOIN completed_buyin_events e USING(event_id) WHERE e.trade_id=?", Integer.class, trade));
+        assertThrows(org.springframework.dao.DataIntegrityViolationException.class, () -> jdbc.update("""
+                INSERT INTO completed_buyin_events(event_id,tenant_id,trade_id,line_no,schema_version,payload_sha256,payload)
+                VALUES ('missing-keys',?,?,1,1,?,'{"origin":"cardbox.trading"}')""", tenant, UUID.randomUUID(), "a".repeat(64)));
+    }
+
 }
