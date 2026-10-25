@@ -17,6 +17,7 @@ management:
   endpoints.web.exposure.include: health
   endpoint.health.probes.enabled: true
 app:
+  source-revision: ${APP_SOURCE_REVISION:unknown}
   session-secret: ${APP_SESSION_SECRET}
   secure-cookie: ${APP_SECURE_COOKIE:true}
   # Auth0 Universal Login, in the same tenant as cardbox.club. AUTH0_DOMAIN may be the tenant domain or its custom login domain.
@@ -36,6 +37,8 @@ app:
     enabled: ${CLUB_SYNC_ENABLED:false}
     audience: ${CLUB_SYNC_AUDIENCE:https://cardbox.trading/api}
     client-ids: ${CLUB_SYNC_CLIENT_IDS:}
+    # Recording is always on; transport waits for the governed catalog receiver.
+    transaction-events-enabled: ${CLUB_TRANSACTION_EVENTS_ENABLED:false}
   # Help & feedback reports are saved here and, when GITHUB_ISSUES_TOKEN is set (a fine-grained token with Issues
   # read/write on this repository only), filed as sanitized GitHub issues. Without a token, reports are only saved.
   support:
