@@ -886,3 +886,16 @@ label.inline input { min-height: 0; width: 20px; height: 20px; }
   .inv-table { max-height: 70vh; overflow: auto; }
   .inv-table thead th { position: sticky; top: 0; z-index: 2; background: var(--surface); }
 }
+
+/* Recorded native payments stay distinct from unknown legacy currency, including narrow history rows. */
+.stat strong.native-payment-total { font-size: 1.15rem; line-height: 1.5; margin-top: 4px; overflow-wrap: anywhere; }
+.grid.trades .currency-unknown { display: block; max-width: 130px; margin-left: auto; font-size: .75rem; line-height: 1.35; white-space: normal; color: var(--muted); }
+.line .market, .line .credit, .line .check { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+
+.unrecorded-money { display: inline-block; }
+.unrecorded-money small { display: block; white-space: normal; overflow-wrap: normal; font-size: .75rem; font-weight: 400; line-height: 1.4; color: var(--muted); }
+.sum .unrecorded-money { text-align: right; }
+@media (max-width: 420px) {
+  .line { grid-template-areas: "thumb card card remove" "market market credit credit" "controls controls controls controls"; }
+  .line .market, .line .credit { align-self: start; }
+}

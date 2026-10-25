@@ -117,14 +117,20 @@ jobs:
         working-directory: cloud/web
       - run: npm run build
         working-directory: cloud/web
+      - run: npm test
+        working-directory: cloud/web
   image:
     needs: changes
     if: needs.changes.outputs.image == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
+      - name: Verify official image fallback
+        run: bash .github/scripts/test-pull-build-images.sh
+      - name: Acquire official build images
+        run: bash .github/scripts/pull-build-images.sh
       - name: Build container image
-        run: docker build --build-arg SOURCE_REVISION="${GITHUB_SHA}" --build-arg BASE_REGISTRY=public.ecr.aws/docker/library -f cloud/Dockerfile -t cardbox-trading:ci .
+        run: docker build --pull=false --build-arg SOURCE_REVISION="${GITHUB_SHA}" --build-arg BASE_REGISTRY=docker.io/library -f cloud/Dockerfile -t cardbox-trading:ci .
 
   # Publishes master's image to GHCR once every check above is green (Toby approved a public image, 2026-10-10).
   # The Rackspace Spot Cloudspace runs ghcr.io/vanroojen-llc/cardbox-trading:master and moves to each new digest
@@ -141,6 +147,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v5
+      - name: Acquire official build images
+        run: bash .github/scripts/pull-build-images.sh
       - name: Build and push the image
         env:
           GH_TOKEN: ${{ github.token }}
@@ -148,7 +156,7 @@ jobs:
           set -euo pipefail
           image=ghcr.io/vanroojen-llc/cardbox-trading
           echo "$GH_TOKEN" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
-          docker build --build-arg SOURCE_REVISION="${GITHUB_SHA}" --build-arg BASE_REGISTRY=public.ecr.aws/docker/library -f cloud/Dockerfile \
+          docker build --pull=false --build-arg SOURCE_REVISION="${GITHUB_SHA}" --build-arg BASE_REGISTRY=docker.io/library -f cloud/Dockerfile \
             --label org.opencontainers.image.source="https://github.com/${GITHUB_REPOSITORY}" \
             --label org.opencontainers.image.revision="${GITHUB_SHA}" \
             -t "$image:sha-${GITHUB_SHA}" -t "$image:master" .

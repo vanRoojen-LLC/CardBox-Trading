@@ -32,7 +32,8 @@ public class TradeController {
     public record QuoteRequest(List<TradeService.LineInput> lines, String payment, BigDecimal credit, BigDecimal check) {}
     public record SaveRequest(List<TradeService.LineInput> lines, String payment, BigDecimal credit, BigDecimal check,
                               @Size(max = 40) String customerPhone, @Size(max = 120) String customerName,
-                              @Size(max = 40) String checkNumber, UUID locationId, Boolean pricesReviewed) {}
+                              @Size(max = 40) String checkNumber, UUID locationId, Boolean pricesReviewed,
+                              @Size(max = 3) String actualPaymentCurrency, Boolean actualCurrencyConfirmed) {}
 
     private final TradeService trades;
     private final CatalogRepository catalog;
@@ -114,7 +115,8 @@ public class TradeController {
         if (quote.review() && !Boolean.TRUE.equals(body.pricesReviewed()))
             throw ApiException.badRequest("Some prices are flagged for review. Check them, then tick \"I checked the flagged prices\".");
         UUID location = trades.location(user.tenantId(), body.locationId());
-        UUID id = trades.save(user.tenantId(), user.userId(), location, quote, body.customerPhone(), body.customerName(), body.checkNumber());
+        UUID id = trades.save(user.tenantId(), user.userId(), location, quote, body.customerPhone(), body.customerName(), body.checkNumber(),
+                body.actualPaymentCurrency(), body.actualCurrencyConfirmed());
         putAway.arrived(() -> putAway.tradeArrived(user.tenantId(), location, quote.lines().stream().map(TradeService.PricedLine::cardId).distinct().toList()));
         return trade(id, request);
     }
@@ -129,7 +131,7 @@ public class TradeController {
         return jdbc.queryForList("""
                 SELECT t.id, t.number, t.created_at, t.payment, t.credit_total, t.check_total, t.market_total,
                        c.phone AS customer_phone, c.name AS customer_name, u.name AS created_by,
-                       t.location_id, loc.name AS location,
+                       t.location_id, loc.name AS location, t.actual_payment_currency, t.actual_currency_confirmed_at,
                        (SELECT sum(quantity) FROM trade_lines l WHERE l.trade_id = t.id) AS cards
                 FROM trades t LEFT JOIN customers c ON c.id = t.customer_id JOIN users u ON u.id = t.created_by
                      JOIN locations loc ON loc.id = t.location_id
@@ -144,7 +146,8 @@ public class TradeController {
         var rows = jdbc.queryForList("""
                 SELECT t.id, t.number, t.created_at, t.payment, t.credit_total, t.check_total, t.market_total,
                        t.check_number, c.phone AS customer_phone, c.name AS customer_name, u.name AS created_by,
-                       t.location_id, loc.name AS location
+                       t.location_id, loc.name AS location, t.actual_payment_currency, t.actual_currency_confirmed_at,
+                       t.actual_currency_confirmed_by
                 FROM trades t LEFT JOIN customers c ON c.id = t.customer_id JOIN users u ON u.id = t.created_by
                      JOIN locations loc ON loc.id = t.location_id
                 WHERE t.id = ? AND t.tenant_id = ?""", id, tenant);

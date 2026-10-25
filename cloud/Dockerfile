@@ -1,7 +1,7 @@
 # Build from the repository root: docker build -f cloud/Dockerfile .
 # The API compiles a few Swing-free classes straight from the desktop app's src/ tree.
-# CI passes BASE_REGISTRY=public.ecr.aws/docker/library: GitHub-hosted runners share IPs, and Docker Hub's
-# anonymous pull limit failed the image job with 429 Too Many Requests (PR #65). Same official images.
+# CI acquires these official images through bounded independent mirror fallback, tags the Docker Hub
+# names locally and builds with --pull=false; shared runner IPs can throttle any single mirror.
 ARG BASE_REGISTRY=docker.io/library
 
 FROM ${BASE_REGISTRY}/node:22-alpine AS web
