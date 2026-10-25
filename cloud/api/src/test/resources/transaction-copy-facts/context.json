@@ -1,0 +1,11 @@
+{
+  "context_version": 1,
+  "store_tenant_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+  "actor_user_id": "12345678-1234-4234-8234-123456789abc",
+  "line_no": 1,
+  "trading_card_id": "99999999-8888-4777-8666-555555555555",
+  "quantity": 1,
+  "condition": "NM",
+  "finish": "normal",
+  "language": "ja"
+}
