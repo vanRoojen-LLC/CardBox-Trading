@@ -24,4 +24,4 @@ Project maintainers may remove, edit, or reject contributions that do not align 
 
 ## Reporting
 
-Report unacceptable behavior by opening a GitHub issue or contacting the maintainers directly. All reports will be reviewed and handled confidentially.
+Report unacceptable behavior by contacting the maintainers directly and privately. Do not open a public GitHub issue. All reports will be reviewed and handled confidentially.

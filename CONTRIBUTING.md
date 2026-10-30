@@ -1,10 +1,10 @@
-# Contributing to OCC Card Pricer
+# Contributing to CardBox Trading
 
 Thank you for your interest in contributing. This document explains how to report issues and submit changes.
 
 ## Reporting Issues
 
-Open a GitHub issue with:
+This repository is public and does not use its GitHub Issues tracker. Report the problem in the CardBox repository's issue tracker with the `product:trading` label, and include:
 
 - A clear title describing the problem or request
 - Steps to reproduce (for bugs)
